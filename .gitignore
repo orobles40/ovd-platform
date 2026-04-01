@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+mlx-env/
+*.egg-info/
+
+# Rust
+target/
+
+# Node / Bun
+node_modules/
+dist/
+ts-dist/
+.turbo/
+
+# Entorno
+.env
+.DS_Store
+*.log
+logs/
+
+# Fine-tuning — datos y modelos grandes
+src/finetune/data/synthetic.jsonl
+src/finetune/data/merged.jsonl
+src/finetune/data/batch1.jsonl
+src/finetune/data/mlx/
+src/finetune/models/
+src/finetune/adapters/
+src/finetune/fused/
+
+# Build outputs
+*.gguf
+*.safetensors
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,165 @@
+# OVD Platform — Sync semanal con upstream anomalyco/opencode
+# Copyright 2026 Omar Robles
+#
+# Cada lunes a las 08:00 UTC verifica si hay commits nuevos en el upstream.
+# Si los hay, crea una rama sync/upstream-<fecha> y abre un PR automático.
+# El PR incluye el diff de módulos críticos y el conteo de cambios.
+
+name: Upstream Sync Check
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # lunes 08:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Solo analizar, no crear PR (true/false)"
+        default: "false"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-check:
+    name: Check upstream for new commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout OVD main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/anomalyco/opencode.git
+
+      - name: Fetch upstream
+        run: git fetch upstream --quiet
+
+      - name: Analyze divergence
+        id: analyze
+        run: |
+          MERGE_BASE=$(git merge-base HEAD upstream/dev 2>/dev/null || echo "")
+          if [ -z "$MERGE_BASE" ]; then
+            echo "upstream_new=0" >> $GITHUB_OUTPUT
+            echo "No merge-base found — skipping"
+            exit 0
+          fi
+
+          UPSTREAM_NEW=$(git log "${MERGE_BASE}..upstream/dev" --oneline | wc -l | tr -d ' ')
+          UPSTREAM_SHA=$(git rev-parse --short upstream/dev)
+
+          echo "upstream_new=${UPSTREAM_NEW}"    >> $GITHUB_OUTPUT
+          echo "upstream_sha=${UPSTREAM_SHA}"    >> $GITHUB_OUTPUT
+          echo "merge_base=${MERGE_BASE}"        >> $GITHUB_OUTPUT
+
+          echo "=== Upstream divergence ==="
+          echo "New commits in upstream: ${UPSTREAM_NEW}"
+          echo "Upstream HEAD:  ${UPSTREAM_SHA}"
+          echo "Merge base:     ${MERGE_BASE}"
+
+          if [ "${UPSTREAM_NEW}" -gt 0 ]; then
+            echo ""
+            echo "=== Upstream commits ==="
+            git log "${MERGE_BASE}..upstream/dev" --oneline | head -30
+
+            echo ""
+            echo "=== Files changed in upstream (OVD-relevant) ==="
+            git diff "${MERGE_BASE}..upstream/dev" --name-only | grep -E \
+              "packages/opencode/src/(server|auth|lsp|provider|agent)|package\.json|bun\.lock" \
+              | head -20 || echo "(none in critical paths)"
+          fi
+
+      - name: Skip if already synced
+        if: steps.analyze.outputs.upstream_new == '0'
+        run: |
+          echo "Already in sync with upstream — nothing to do."
+
+      - name: Create sync branch
+        if: |
+          steps.analyze.outputs.upstream_new != '0' &&
+          github.event.inputs.dry_run != 'true'
+        id: sync
+        run: |
+          SYNC_BRANCH="sync/upstream-$(date +%Y%m%d)"
+          echo "sync_branch=${SYNC_BRANCH}" >> $GITHUB_OUTPUT
+
+          git checkout -b "${SYNC_BRANCH}"
+
+          if git merge upstream/dev \
+              --no-ff \
+              -m "chore(sync): merge upstream @ ${{ steps.analyze.outputs.upstream_sha }}
+
+${{ steps.analyze.outputs.upstream_new }} commit(s) nuevos del upstream anomalyco/opencode.
+Merge base: ${{ steps.analyze.outputs.merge_base }}"; then
+            echo "merge_ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "merge_ok=false" >> $GITHUB_OUTPUT
+            git merge --abort || true
+          fi
+
+      - name: Push sync branch
+        if: |
+          steps.analyze.outputs.upstream_new != '0' &&
+          steps.sync.outputs.merge_ok == 'true' &&
+          github.event.inputs.dry_run != 'true'
+        run: git push origin ${{ steps.sync.outputs.sync_branch }}
+
+      - name: Open PR
+        if: |
+          steps.analyze.outputs.upstream_new != '0' &&
+          steps.sync.outputs.merge_ok == 'true' &&
+          github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "${{ steps.sync.outputs.sync_branch }}" \
+            --title "chore(sync): upstream anomalyco/opencode @ ${{ steps.analyze.outputs.upstream_sha }}" \
+            --body "$(cat <<'BODY'
+## Sync con upstream anomalyco/opencode
+
+Commits nuevos en upstream: **${{ steps.analyze.outputs.upstream_new }}**
+Upstream HEAD: \`${{ steps.analyze.outputs.upstream_sha }}\`
+Merge base: \`${{ steps.analyze.outputs.merge_base }}\`
+
+### Checklist antes de merge a main
+
+- [ ] Revisar diff en módulos base: `packages/opencode/src/server/server.ts`, `package.json`
+- [ ] Verificar que los módulos OVD no fueron afectados: `src/ovd/`, `src/tenant/`
+- [ ] `bun run typecheck` sin errores
+- [ ] `bun test` sin regresiones
+- [ ] Actualizar `CREDITS.md` si hay nuevas features del upstream relevantes
+
+### Módulos OVD protegidos (no deben verse afectados)
+
+| Path | Propósito |
+|------|-----------|
+| `packages/opencode/src/ovd/` | OVD Bridge, RAG, Cycle Log, Indexer |
+| `packages/opencode/src/tenant/` | Multi-tenancy, auth, RLS |
+| `packages/opencode/src/server/routes/ovd.ts` | OVD API routes |
+| `packages/opencode/src/server/routes/dashboard.ts` | Dashboard operaciones |
+| `src/engine/` | LangGraph engine |
+| `src/finetune/` | Fine-tuning pipeline |
+
+---
+_Generado automáticamente por el workflow upstream-sync_
+BODY
+)"
+
+      - name: Report conflict (no PR)
+        if: |
+          steps.analyze.outputs.upstream_new != '0' &&
+          steps.sync.outputs.merge_ok == 'false'
+        run: |
+          echo "::warning::El merge con upstream tiene conflictos. Sync manual requerido."
+          echo "Ejecutar localmente: ./scripts/sync-upstream.sh"
+          exit 1

@@ -1,0 +1,38 @@
+# OVD Platform — MLX Fine-tuning config
+# Modelo: Qwen2.5-Coder-7B-Instruct-4bit
+# Dataset: 312 ejemplos (avg 1065 tokens)
+# Hardware: M1 Pro 16 GB
+
+model: "models/qwen2.5-coder-7b-4bit"
+data: "data/mlx"
+train: true
+seed: 42
+
+# Training
+batch_size: 2
+iters: 500
+learning_rate: 1.0e-4
+warmup: 50
+weight_decay: 0.01
+grad_checkpoint: true   # crítico para 16 GB
+
+# Evaluación
+val_batches: 20
+steps_per_report: 25
+steps_per_eval: 100
+save_every: 100
+
+# LoRA
+lora_layers: 16
+lora_parameters:
+  rank: 16
+  alpha: 32
+  dropout: 0.1
+  scale: 10.0
+
+# Dataset
+mask_prompt: true
+max_seq_length: 2048
+
+# Salida
+adapter_path: "adapters"

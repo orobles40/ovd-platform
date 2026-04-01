@@ -1,0 +1,183 @@
+# OVD Platform — CI/CD para el binario TUI `ovd`
+#
+# Se activa cuando se crea un tag v*.*.* en main.
+# Genera binarios para macOS (universal), Linux (musl) y Windows.
+# Los artefactos se publican como GitHub Release.
+
+name: TUI Release
+
+on:
+  push:
+    tags:
+      - 'tui/v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ── macOS (Apple Silicon + Intel → universal binary) ──────────────────────
+  build-macos:
+    name: macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src/tui/Cargo.lock') }}
+
+      - name: Build ARM64
+        run: |
+          cd src/tui
+          cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: |
+          cd src/tui
+          cargo build --release --target x86_64-apple-darwin
+
+      - name: Crear universal binary
+        run: |
+          lipo -create -output ovd-macos-universal \
+            src/tui/target/aarch64-apple-darwin/release/ovd \
+            src/tui/target/x86_64-apple-darwin/release/ovd
+
+      - name: Upload artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovd-macos-universal
+          path: ovd-macos-universal
+
+  # ── Linux (x86_64, binario estático musl) ──────────────────────────────────
+  build-linux:
+    name: Linux x86_64 (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Instalar musl tools
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src/tui/Cargo.lock') }}
+
+      - name: Build
+        run: |
+          cd src/tui
+          cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Copiar artefacto
+        run: cp src/tui/target/x86_64-unknown-linux-musl/release/ovd ovd-linux-x86_64
+
+      - name: Upload artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovd-linux-x86_64
+          path: ovd-linux-x86_64
+
+  # ── Windows (x86_64) ───────────────────────────────────────────────────────
+  build-windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/tui/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src/tui/Cargo.lock') }}
+
+      - name: Build
+        run: |
+          cd src/tui
+          cargo build --release
+
+      - name: Upload artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovd-windows-x86_64.exe
+          path: src/tui/target/release/ovd.exe
+
+  # ── GitHub Release ─────────────────────────────────────────────────────────
+  release:
+    name: Publicar Release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Extraer versión del tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/tui/}" >> $GITHUB_OUTPUT
+
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OVD TUI ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## OVD TUI ${{ steps.version.outputs.VERSION }}
+
+            Binario `ovd` — herramienta de línea de comandos para equipos de desarrollo Omar Robles.
+
+            ### Instalación
+
+            **macOS (Apple Silicon / Intel):**
+            ```bash
+            curl -L https://github.com/omarrobles/ovd-platform/releases/download/tui/${{ steps.version.outputs.VERSION }}/ovd-macos-universal -o /usr/local/bin/ovd
+            chmod +x /usr/local/bin/ovd
+            ```
+
+            **Linux:**
+            ```bash
+            curl -L https://github.com/omarrobles/ovd-platform/releases/download/tui/${{ steps.version.outputs.VERSION }}/ovd-linux-x86_64 -o /usr/local/bin/ovd
+            chmod +x /usr/local/bin/ovd
+            ```
+
+            **Windows:** Descargar `ovd-windows-x86_64.exe` y agregar al PATH.
+
+            ### Primera ejecución
+            ```bash
+            ovd
+            # El wizard de onboarding te guiará para configurar la conexión.
+            ```
+          files: |
+            dist/ovd-macos-universal/ovd-macos-universal
+            dist/ovd-linux-x86_64/ovd-linux-x86_64
+            dist/ovd-windows-x86_64.exe/ovd.exe
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false

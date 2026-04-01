@@ -1,0 +1,51 @@
+[package]
+name = "ovd-tui"
+version = "0.1.0"
+edition = "2021"
+description = "OVD Platform — TUI para equipos de desarrollo Omar Robles"
+authors = ["Omar Robles <dev@omarrobles.dev>"]
+
+[[bin]]
+name = "ovd"
+path = "src/main.rs"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP cliente → FastAPI OVD
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+
+# Serialización
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Config y paths
+dirs = "5"
+anyhow = "1"
+thiserror = "2"
+
+# SSE streaming
+eventsource-stream = "0.2"
+futures-util = "0.3"
+
+# Editor de texto multi-línea para el input de feedback (UX-01)
+tui-textarea = { version = "0.7", features = ["crossterm"] }
+
+# Logs internos
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

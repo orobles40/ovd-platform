@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ovd-client"
+version = "0.1.0"
+description = "OVD Platform Python SDK — cliente tipado para la API OVD"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Omar Robles", email = "dev@omarrobles.devoud" }]
+
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",   # mock para httpx
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ovd_client*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

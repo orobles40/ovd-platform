@@ -1,0 +1,32 @@
+# OVD Platform — Dependencias para fine-tuning open source (GAP-013b)
+# Instalar en entorno con GPU CUDA (VRAM mínima: 16GB para 7B, 32GB para 14B)
+#
+# Instalación rápida:
+#   pip install -r requirements_oss.txt
+#   pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+#
+# Para LlamaFactory (alternativa a Unsloth):
+#   pip install llamafactory
+#   pip install pyyaml
+
+# Core ML
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.28.0
+peft>=0.10.0
+trl>=0.8.0
+bitsandbytes>=0.43.0    # QLoRA (4-bit quantization)
+sentencepiece>=0.2.0
+tokenizers>=0.19.0
+
+# GGUF conversion (para Ollama)
+# llama-cpp-python se instala separado con soporte CUDA:
+#   CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install llama-cpp-python
+
+# HTTP client (registro en Model Registry)
+httpx>=0.27.0
+
+# Utilidades
+tqdm>=4.66.0
+numpy>=1.26.0

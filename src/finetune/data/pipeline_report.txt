@@ -1,0 +1,18 @@
+OVD Platform — Pipeline SM1 — 2026-03-27 19:39:07
+============================================================
+
+Configuración:
+  Sintéticos solicitados : 10
+  min_qa_score           : 0.80
+  require_approval       : true
+  exclude_auto_approve   : true
+  org_id filter          : todos
+
+Resultados:
+  synthetic.jsonl        : 0 ejemplos
+  real_cycles.jsonl      : no generado
+  merged.jsonl           : no generado (dry-run o errores)
+
+Siguiente paso:
+  Subir dataset a Anthropic fine-tuning console o usar la API:
+  https://console.anthropic.com/settings/models
