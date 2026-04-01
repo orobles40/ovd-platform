@@ -616,6 +616,16 @@ Para cuando la plataforma tenga múltiples clientes en producción.
 | 5.15 | TLS / HTTPS para el Bridge y Engine | Nginx reverse proxy con cert | ✅ |
 | 5.16 | Health checks y auto-restart de servicios | Políticas en docker-compose | ✅ |
 
+### 5.F — Distribución del TUI
+| # | Tarea | Descripción | Estado |
+|---|-------|-------------|--------|
+| 5.17 | Script de instalación `install.sh` | `curl \| sh` que descarga el binario correcto según plataforma (macOS ARM64/x86, Linux) y lo instala en `~/.local/bin/ovd`. Igual a como funcionan `claude` o `gemini` CLI. | 💡 |
+| 5.18 | GitHub Releases con binarios multiplataforma | Automatizar con `tui-release.yml` ya existente: compilar y subir binarios para macOS ARM64, macOS x86, Linux musl en cada tag. | 💡 |
+| 5.19 | Comando `ovd` disponible en PATH | El binario se llama `ovd` (no `ovd-tui`). El script de instalación configura el PATH automáticamente. | 💡 |
+| 5.20 | Soporte Homebrew (opcional — fase posterior) | `brew tap omarrobles/ovd && brew install ovd`. Evaluar cuando haya base de usuarios externa. | 💡 |
+
+> **Contexto (2026-04-01):** La distribución vía script de instalación es la ruta más directa para que cualquier desarrollador instale el TUI con un solo comando, al igual que Claude Code o Gemini CLI. El workflow `tui-release.yml` ya compila binarios multiplataforma — falta el script de instalación y publicar en GitHub Releases.
+
 ---
 
 ## Resumen de estado
