@@ -9,7 +9,7 @@ train: true
 seed: 42
 
 # Training
-batch_size: 2
+batch_size: 1          # reducido de 2 para evitar OOM en M1 Pro 16 GB
 iters: 500
 learning_rate: 1.0e-4
 warmup: 50
@@ -20,7 +20,7 @@ grad_checkpoint: true   # crítico para 16 GB
 val_batches: 20
 steps_per_report: 25
 steps_per_eval: 100
-save_every: 100
+save_every: 25          # checkpoint cada 25 iters (antes: 100) para no perder progreso
 
 # LoRA
 lora_layers: 16
@@ -32,7 +32,7 @@ lora_parameters:
 
 # Dataset
 mask_prompt: true
-max_seq_length: 2048
+max_seq_length: 1024   # reducido de 2048 por RAM; algunos ejemplos llegan hasta 1934 tokens y se truncan
 
 # Salida
 adapter_path: "adapters"

@@ -82,11 +82,8 @@ async def seed_project(
     extra_docs: list[dict] | None = None,
 ) -> int:
     """
-    Semilla el RAG con el perfil del proyecto y documentos adicionales.
-
-    Llama al Bridge para indexar:
-    1. El Project Profile como documento RAG de tipo 'constraints'
-    2. Documentos adicionales pasados por el llamador (ej: docs de arquitectura)
+    Semilla el RAG con documentos adicionales del proyecto.
+    Indexa directamente en pgvector via rag.py (sin Bridge).
 
     Retorna el número de documentos indexados.
     Si el RAG no está habilitado, retorna 0 sin hacer nada.
@@ -94,14 +91,14 @@ async def seed_project(
     if not RAG_ENABLED:
         return 0
 
+    if not extra_docs:
+        return 0
+
     try:
-        result = _http("POST", f"/ovd/project/{project_id}/rag/seed", jwt_token, {
-            "orgId": org_id,
-            "extraDocs": extra_docs or [],
-        })
-        return result.get("indexed", 0)
-    except RuntimeError as e:
-        # No bloquear el ciclo si el seed falla
+        import rag as _rag
+        n = await _rag.index_chunks_async(extra_docs, project_id, org_id)
+        return n
+    except Exception as e:
         print(f"[rag_seed] Warning: seed fallido para {project_id}: {e}", file=sys.stderr)
         return 0
 
@@ -110,54 +107,31 @@ def retrieve_context(
     query: str,
     org_id: str,
     project_id: str,
-    jwt_token: str,
+    jwt_token: str = "",
 ) -> str:
     """
     Recupera contexto relevante del RAG para el feature request dado.
     Retorna un bloque de texto formateado para inyectar en system_sdd.
     Si no hay resultados o el RAG no está habilitado, retorna string vacio.
+    Busca directamente en pgvector via rag.py (sin Bridge).
     """
     if not RAG_ENABLED:
         return ""
 
     try:
-        result = _http(
-            "GET",
-            f"/ovd/rag/search?query={urllib.parse.quote(query)}&projectId={project_id}&topK={RAG_TOP_K}",
-            jwt_token,
-        )
-        docs = result.get("results", [])
+        import rag as _rag
+        return _rag.search(query, project_id)
     except Exception as e:
         print(f"[rag_seed] Warning: RAG search fallido: {e}", file=sys.stderr)
         return ""
-
-    if not docs:
-        return ""
-
-    # Filtrar por score mínimo
-    relevant = [d for d in docs if d.get("score", 0) >= RAG_MIN_SCORE]
-    if not relevant:
-        return ""
-
-    # Construir bloque de contexto
-    lines = [f"Se encontraron {len(relevant)} documentos relevantes del proyecto:"]
-    for i, doc in enumerate(relevant, 1):
-        score = doc.get("score", 0)
-        title = doc.get("document", {}).get("title", "sin título")
-        content = doc.get("document", {}).get("content", "")
-        doc_type = doc.get("document", {}).get("doc_type", "")
-        lines.append(f"\n### [{i}] {title} (tipo: {doc_type}, similitud: {score:.2f})")
-        lines.append(content[:800])  # truncar para no sobrecargar el prompt
-
-    return "\n".join(lines)
 
 
 def seed_from_file(
     file_path: str,
     org_id: str,
     project_id: str,
-    jwt_token: str,
-    doc_type: str = "markdown",
+    jwt_token: str = "",
+    doc_type: str = "doc",
 ) -> bool:
     """
     Indexa un archivo de texto (markdown, txt) como documento RAG del proyecto.
@@ -168,30 +142,26 @@ def seed_from_file(
         print(f"[rag_seed] Error: archivo no encontrado: {file_path}", file=sys.stderr)
         return False
 
-    content = p.read_text(encoding="utf-8")
-    title = p.stem.replace("-", " ").replace("_", " ").title()
-
     try:
-        result = _http("POST", "/ovd/rag/index", jwt_token, {
-            "orgId": org_id,
-            "projectId": project_id,
-            "docType": doc_type,
-            "title": title,
-            "content": content,
-            "source": str(p),
-        })
-        print(f"[rag_seed] Indexado: {title} ({result.get('chunks', '?')} chunks)")
-        return True
-    except RuntimeError as e:
+        import sys as _sys
+        import rag as _rag
+        from knowledge.chunkers import chunk_doc, chunk_codebase
+        chunker = chunk_codebase if doc_type == "codebase" else chunk_doc
+        chunks = list(chunker(p))
+        chunk_dicts = [
+            {"content": c.content, "doc_type": c.doc_type,
+             "source_file": c.source_file, "metadata": c.metadata}
+            for c in chunks
+        ]
+        n = _rag.index_chunks(chunk_dicts, project_id, org_id)
+        print(f"[rag_seed] Indexado: {p.name} ({n} chunks)")
+        return n > 0
+    except Exception as e:
         print(f"[rag_seed] Error indexando {file_path}: {e}", file=sys.stderr)
         return False
 
 
-# ---------------------------------------------------------------------------
-# Importar urllib.parse para quote
-# ---------------------------------------------------------------------------
-
-import urllib.parse  # noqa: E402 (importado aquí para mantener orden en el archivo)
+import urllib.parse  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

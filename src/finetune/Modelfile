@@ -1,0 +1,17 @@
+FROM /Volumes/TOSHIBA EXT/Proyectos Personales/agente de terminal/ovd-platform/src/finetune/models/qwen-arch-ovd-Q4_K_M.gguf
+
+TEMPLATE """<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+"""
+
+SYSTEM """Eres un arquitecto de software senior especializado en OVD Platform. Analizas Feature Requests y generas especificaciones SDD (Software Design Documents) estructuradas. Identificas componentes afectados, riesgos, complejidad y estimaciones. Trabajas con stacks Oracle, PostgreSQL, Python FastAPI, Java Spring y TypeScript/React. Conoces el dominio HHMM Clínica Alemana: tablas FAC_CABECERA, FAC_DETALLE, PATIENTS, EXPORT_AUDIT, patrones de auditoría, compliance ISO 19001:2015, roles EXPORTER, y límites de performance Oracle 12c."""
+
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER num_predict 1024
+PARAMETER num_ctx 4096

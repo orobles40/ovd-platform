@@ -1,5 +1,5 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-03-31
+**Última actualización:** 2026-04-06
 **Versión actual:** v0.4.0-tui-iterative-sdd
 
 Este documento es la fuente de verdad del estado del proyecto.
@@ -683,3 +683,68 @@ Decisiones pendientes:
 8. **SC** — L0 Platform, self-service onboarding, Keycloak, schema-per-tenant
 
 > Ver análisis completo de alineamiento arquitectónico en `docs/ARCHITECTURE_EVOLUTION.md`
+
+---
+
+## FASE PP — Inspiración Paperclip
+
+> **AVISO IMPORTANTE:** Antes de implementar cualquier ítem PP, revisar el repositorio fuente
+> `https://github.com/paperclipai/paperclip` para verificar cambios, licencia y decisiones de diseño.
+> Estas propuestas son adaptaciones conceptuales, NO copias directas de código.
+
+Propuestas derivadas del análisis de Paperclip (2026-04-01). Cada ítem requiere revisión técnica
+antes de entrar a sprint.
+
+| # | Propuesta | Descripción | Prioridad | Complejidad | Estado |
+|---|-----------|-------------|-----------|-------------|--------|
+| PP-01 | Budget Enforcement por agente | Límite de tokens/costo por agente configurable desde dashboard; el engine corta ejecución si se supera | Alta | Baja | ⬜ |
+| PP-02 | Heartbeat System formalizado | Señales periódicas de vida desde agentes hacia el engine; detectar agentes colgados y reiniciar automáticamente | Media | Media | ⬜ |
+| PP-03 | Atomic Task Checkout | Cada tarea se "toma" atómicamente (sin doble asignación entre agentes); coordinación via PostgreSQL advisory locks o similar | Alta | Baja | ⬜ |
+| PP-04 | Workspace Portability (import/export) | Exportar workspace completo (historial, configuración, agentes) a JSON/ZIP; importar en otra instancia | Media | Media | ⬜ |
+| PP-05 | Org Chart en Dashboard | Visualización del árbol de agentes activos: qué agente invocó a cuál, estado actual, costo acumulado | Media | Media | ⬜ |
+| PP-06 | Plugin / Extension System | API formal para registrar MCP servers y agentes externos; reemplaza el enfoque ad-hoc actual | Baja | Alta | 💡 |
+
+### Notas de revisión pre-implementación
+
+- **PP-01**: Evaluar si usar `langchain_core.callbacks.BaseCallbackHandler` o middleware propio en FastAPI
+- **PP-02**: Revisar si LangGraph ya expone hooks de heartbeat nativos antes de implementar custom
+- **PP-03**: Confirmar que `pg_advisory_lock` es suficiente o si se necesita Redis para multi-instancia
+- **PP-04**: Definir qué se incluye en el export (¿vectores RAG?, ¿modelos fine-tuned?)
+- **PP-05**: Evaluar librería de grafos para React (reactflow vs dagre-d3) antes de diseñar
+
+---
+
+## FASE OB — Inspiración Obsidian
+
+> **AVISO IMPORTANTE:** Antes de implementar cualquier ítem OB, profundizar en la funcionalidad
+> original de Obsidian y analizar cómo adaptarla al contexto de OVD (agentes, RAG, ciclos de desarrollo).
+> Estas propuestas son adaptaciones conceptuales derivadas del análisis del 2026-04-06.
+> Ningún ítem debe entrar a sprint sin pasar primero por una sesión de diseño técnico.
+
+Propuestas derivadas del análisis comparativo Obsidian vs OVD (2026-04-06), ordenadas por prioridad.
+
+| # | Propuesta | Descripción | Prioridad | Complejidad | Estado |
+|---|-----------|-------------|-----------|-------------|--------|
+| OB-01 | Filtro de metadatos en RAG (Dataview-like) | Combinar búsqueda semántica con filtros estructurados por metadatos (`qa_score`, `project_id`, `fecha`); hoy solo hay similitud vectorial | Alta | Baja | 💡 |
+| OB-02 | YAML Frontmatter en delivery reports | Estandarizar metadatos de `ovd-delivery-*.md` con frontmatter formal; eliminar parseo por regex en el chunker | Alta | Baja | 💡 |
+| OB-03 | Templates para Feature Request | Plantillas de FR por tipo de tarea (Nueva API, Fix bug, Migración schema); guían al usuario en el TUI con campos estructurados | Media | Baja | 💡 |
+| OB-04 | Backlinks por componente | Registro automático de qué ciclos tocaron cada componente/archivo; trazabilidad inversa desde artefacto hacia FRs | Alta | Media | 💡 |
+| OB-05 | Semantic Search en Dashboard | Exponer la búsqueda semántica del RAG al usuario humano en el dashboard; hoy solo la usan los agentes | Media | Media | 💡 |
+| OB-06 | Graph View de ciclos y componentes | Visualización interactiva de relaciones entre FRs, SDDs y artefactos; detectar hotspots del sistema | Media | Alta | 💡 |
+| OB-07 | Canvas de planificación de sprints | Tablero visual para organizar y priorizar FRs antes de ejecutarlos; complementa la vista lista del dashboard | Baja | Alta | 💡 |
+| OB-08 | Publish — Portal de documentación | Generar sitio estático navegable desde SDDs y delivery reports; entregable de documentación técnica para el cliente | Media | Alta | 💡 |
+
+### Notas de revisión pre-implementación
+
+> **Regla general:** cada ítem OB requiere una sesión dedicada de análisis antes de diseñar o codificar.
+> El objetivo es entender en profundidad cómo lo resuelve Obsidian y qué adaptaciones necesita el contexto OVD.
+
+- **OB-01**: Revisar soporte de filtros por metadatos en pgvector (operador `<->` + `WHERE`); evaluar si el Bridge necesita nueva ruta o se extiende la existente
+- **OB-02**: Definir esquema YAML estándar para los informes; verificar compatibilidad con el chunker `delivery` existente en `chunkers.py`
+- **OB-03**: Analizar cómo Obsidian implementa templates con variables dinámicas; diseñar el flujo en el TUI (pantalla de selección de template antes del input FR)
+- **OB-04**: Definir dónde almacenar los backlinks (pgvector, tabla PostgreSQL, o archivo markdown por componente); evaluar impacto en el chunker `codebase`
+- **OB-05**: Revisar la API de búsqueda del Bridge (`/ovd/rag/search`); diseñar el componente React de búsqueda semántica en el dashboard
+- **OB-06**: Evaluar librería de grafos para React (reactflow vs dagre-d3 vs d3-force); definir qué nodos y edges representar (FR, SDD, componente, ciclo)
+- **OB-07**: Analizar Obsidian Canvas vs alternativas (react-flow, excalidraw embebido); definir qué datos persisten y cómo se sincronizan con el engine
+- **OB-08**: Evaluar generadores de sitio estático compatibles con markdown (Astro, VitePress, MkDocs); definir qué información es pública vs privada
+- **PP-06**: Depende de PP-03; no iniciar hasta que PP-03 esté estable en producción

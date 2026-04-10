@@ -1,0 +1,16 @@
+# Config temporal para evaluar el modelo BASE sin adapter
+# Usado solo en Fase 4 — test de baseline
+
+model: "models/qwen2.5-coder-7b-4bit"
+data: "data/mlx"
+train: false
+seed: 42
+
+# Sin adapter_path — modelo base puro
+val_batches: 20
+max_seq_length: 1024
+mask_prompt: true
+
+# Test
+test: true
+test_batches: 500

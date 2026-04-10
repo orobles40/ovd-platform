@@ -56,27 +56,38 @@ async def run(
     project_id: str,
     source_path: str | pathlib.Path,
     doc_type: str,
-    bridge_url: str,
-    jwt_token: str,
+    bridge_url: str = "",
+    jwt_token: str = "",
     batch_size: int = _BATCH_SIZE,
     dry_run: bool = False,
 ) -> BootstrapResult:
     """
     Ejecuta el bootstrap de conocimiento para un proyecto.
 
+    Indexa directamente en pgvector via rag.py (sin Bridge TypeScript).
+    Los parámetros bridge_url y jwt_token se mantienen por compatibilidad
+    pero ya no se usan.
+
     Args:
         org_id:      ID de la organización
         project_id:  ID del proyecto/workspace
         source_path: Ruta al directorio o archivo a indexar
-        doc_type:    Tipo de documento (codebase|doc|schema|contract|ticket)
-        bridge_url:  URL del Bridge (e.g. http://localhost:3000)
-        jwt_token:   JWT de autenticación
+        doc_type:    Tipo de documento (codebase|doc|schema|contract|ticket|delivery)
+        bridge_url:  Ignorado — mantenido por compatibilidad
+        jwt_token:   Ignorado — mantenido por compatibilidad
         batch_size:  Chunks enviados en paralelo
-        dry_run:     Si True, genera chunks pero no los envía al Bridge
+        dry_run:     Si True, genera chunks pero no los indexa
 
     Returns:
         BootstrapResult con estadísticas de la operación
     """
+    import sys
+    import os
+    # Agregar el directorio del engine al path para importar rag.py
+    engine_dir = pathlib.Path(__file__).parent.parent / "engine"
+    if str(engine_dir) not in sys.path:
+        sys.path.insert(0, str(engine_dir))
+
     source_path = pathlib.Path(source_path)
     if not source_path.exists():
         raise FileNotFoundError(f"Ruta no encontrada: {source_path}")
@@ -90,7 +101,7 @@ async def run(
     log.info("knowledge.bootstrap: %d chunks generados", len(chunks))
 
     if dry_run:
-        log.info("knowledge.bootstrap: dry_run=True — no se enviará nada al Bridge")
+        log.info("knowledge.bootstrap: dry_run=True — no se indexará nada")
         return BootstrapResult(
             doc_type=doc_type,
             source=str(source_path),
@@ -104,26 +115,31 @@ async def run(
     failed = 0
     errors: list[str] = []
 
-    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-        for batch_start in range(0, len(chunks), batch_size):
-            batch = chunks[batch_start: batch_start + batch_size]
-            tasks = [
-                _index_chunk(client, chunk, org_id, project_id, bridge_url, jwt_token)
-                for chunk in batch
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
-                if isinstance(r, Exception):
-                    failed += 1
-                    errors.append(str(r))
-                    log.warning("knowledge.bootstrap: error indexando chunk — %s", r)
-                else:
-                    indexed += 1
+    # Indexar en lotes directamente via rag.py (sin Bridge)
+    import rag as _rag
+    for batch_start in range(0, len(chunks), batch_size):
+        batch = chunks[batch_start: batch_start + batch_size]
+        batch_dicts = [
+            {
+                "content": c.content,
+                "doc_type": c.doc_type,
+                "source_file": c.source_file,
+                "metadata": c.metadata,
+            }
+            for c in batch
+        ]
+        try:
+            n = await _rag.index_chunks_async(batch_dicts, project_id, org_id)
+            indexed += n
+        except Exception as e:
+            failed += len(batch)
+            errors.append(str(e))
+            log.warning("knowledge.bootstrap: error indexando lote — %s", e)
 
-            log.info(
-                "knowledge.bootstrap: progreso %d/%d chunks (%d fallidos)",
-                batch_start + len(batch), len(chunks), failed,
-            )
+        log.info(
+            "knowledge.bootstrap: progreso %d/%d chunks (%d fallidos)",
+            batch_start + len(batch), len(chunks), failed,
+        )
 
     result = BootstrapResult(
         doc_type=doc_type,
