@@ -21,6 +21,6 @@ export const authApi = {
   me: () =>
     api.get<MeResponse>('/auth/me').then((r) => r.data),
 
-  logout: (refresh_token: string) =>
-    api.post('/auth/logout', { refresh_token }),
+  logout: () =>
+    api.post('/auth/logout'),  // cookie HttpOnly enviada automáticamente (MEDIUM-04)
 }

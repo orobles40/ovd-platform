@@ -475,7 +475,7 @@ async def get_stats(
                 COUNT(DISTINCT project_id)        AS active_projects
             FROM ovd_cycle_logs
             WHERE org_id = %s
-              AND time_created >= NOW() - INTERVAL '%s days'
+              AND time_created >= NOW() - (%s * INTERVAL '1 day')
             """,
             (org_id, days),
         )
@@ -486,7 +486,7 @@ async def get_stats(
             """
             SELECT fr_type, COUNT(*) as cnt
             FROM ovd_cycle_logs
-            WHERE org_id = %s AND time_created >= NOW() - INTERVAL '%s days'
+            WHERE org_id = %s AND time_created >= NOW() - (%s * INTERVAL '1 day')
               AND fr_type IS NOT NULL
             GROUP BY fr_type ORDER BY cnt DESC
             """,

@@ -29,15 +29,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const data = await authApi.login(email, password)
     localStorage.setItem('ovd_access_token', data.access_token)
-    localStorage.setItem('ovd_refresh_token', data.refresh_token)
+    // refresh_token viene en cookie HttpOnly — no se almacena en localStorage (MEDIUM-04)
     const me = await authApi.me()
     setUser(me)
   }
 
   const logout = () => {
-    const refresh = localStorage.getItem('ovd_refresh_token')
-    if (refresh) authApi.logout(refresh).catch(() => {})
-    localStorage.clear()
+    authApi.logout().catch(() => {})  // cookie HttpOnly enviada automáticamente
+    localStorage.removeItem('ovd_access_token')
     setUser(null)
   }
 

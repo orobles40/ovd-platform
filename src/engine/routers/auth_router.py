@@ -16,7 +16,7 @@ import logging
 import os
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.hash import argon2 as _argon2_hash
 from pydantic import BaseModel
@@ -55,7 +55,7 @@ class LoginResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 class MeResponse(BaseModel):
@@ -130,11 +130,28 @@ async def inject_current_user(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+_COOKIE_MAX_AGE = 7 * 24 * 3600  # 7 días en segundos
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    """Establece el refresh token como cookie HttpOnly."""
+    response.set_cookie(
+        key="ovd_refresh_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=_COOKIE_MAX_AGE,
+        path="/auth",
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, request: Request):
+async def login(body: LoginRequest, request: Request, response: Response):
     """
     Autentica al usuario con email + contraseña.
-    Retorna access_token (JWT, 1h) + refresh_token (opaco, 7d).
+    Retorna access_token (JWT, 1h). El refresh_token se emite en cookie
+    HttpOnly (MEDIUM-04) y también en el body para compatibilidad con el TUI.
     """
     user = await _get_user_by_email(body.email)
     if not user:
@@ -170,6 +187,7 @@ async def login(body: LoginRequest, request: Request):
 
     log.info("auth: login exitoso — email=%s org=%s", body.email, user["org_id"])
 
+    _set_refresh_cookie(response, pair.refresh_token)
     return LoginResponse(
         access_token=pair.access_token,
         refresh_token=pair.refresh_token,
@@ -179,11 +197,21 @@ async def login(body: LoginRequest, request: Request):
 
 
 @router.post("/refresh", response_model=LoginResponse)
-async def refresh(body: RefreshRequest, request: Request):
-    """Rota el refresh token y emite un nuevo par de tokens."""
+async def refresh(
+    request: Request,
+    response: Response,
+    body: RefreshRequest | None = None,
+    ovd_refresh_token: str | None = Cookie(default=None),
+):
+    """Rota el refresh token y emite un nuevo par de tokens.
+    Acepta el token desde cookie HttpOnly (web) o body (TUI).
+    """
+    raw_token = (body.refresh_token if body else None) or ovd_refresh_token
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token requerido")
     try:
         from auth import verify_refresh_token
-        record = await verify_refresh_token(body.refresh_token)
+        record = await verify_refresh_token(raw_token)
 
         async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
             row = await conn.execute(
@@ -193,7 +221,7 @@ async def refresh(body: RefreshRequest, request: Request):
         role = r[0] if r else "developer"
 
         pair = await refresh_access_token(
-            raw_refresh_token=body.refresh_token,
+            raw_refresh_token=raw_token,
             role=role,
             user_agent=request.headers.get("User-Agent", ""),
             ip_address=request.client.host if request.client else "",
@@ -201,6 +229,7 @@ async def refresh(body: RefreshRequest, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
+    _set_refresh_cookie(response, pair.refresh_token)
     return LoginResponse(
         access_token=pair.access_token,
         refresh_token=pair.refresh_token,
@@ -210,9 +239,18 @@ async def refresh(body: RefreshRequest, request: Request):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(body: RefreshRequest):
-    """Revoca el refresh token (logout)."""
-    await revoke_refresh_token(body.refresh_token, reason="logout")
+async def logout(
+    response: Response,
+    body: RefreshRequest | None = None,
+    ovd_refresh_token: str | None = Cookie(default=None),
+):
+    """Revoca el refresh token (logout).
+    Acepta el token desde cookie HttpOnly (web) o body (TUI).
+    """
+    raw_token = (body.refresh_token if body else None) or ovd_refresh_token
+    if raw_token:
+        await revoke_refresh_token(raw_token, reason="logout")
+    response.delete_cookie("ovd_refresh_token", path="/auth")
 
 
 @router.get("/me", response_model=MeResponse)
