@@ -14,19 +14,20 @@ Este repositorio es **ovd-platform**, un fork de OpenCode mantenido por Omar Rob
 
 ```
 src/
-├── ovd-engine/     Python — FastAPI + LangGraph (puerto 8001)
-├── tui/            Rust — TUI terminal (ratatui)
-├── ovd-dashboard/  TypeScript — React 19 + Vite (puerto 5173)
-├── finetune/       Pipeline de fine-tuning (pausado)
-└── knowledge/      Base de conocimiento RAG
-docs/               SDD, ROADMAP, ADRs
+├── engine/         Python — FastAPI + LangGraph (puerto 8001)
+├── tui/            Rust — TUI terminal (ratatui + crossterm)
+├── dashboard/      TypeScript — React 19 + Vite (puerto 5173)
+├── finetune/       Pipeline de fine-tuning (pausado — créditos API)
+├── knowledge/      Base de conocimiento RAG
+└── mcp/            MCP server
+docs/               SDD, ROADMAP, ADRs, security reports
 ```
 
 ## Para levantar el entorno
 
 ```bash
 # Engine (desde la raíz del repo)
-cd src/engine && uvicorn api:app --port 8001
+cd src/engine && uv sync && .venv/bin/uvicorn api:app --port 8001
 
 # Dashboard
 cd src/dashboard && bun dev
@@ -41,14 +42,51 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-03-27)
+## Estado actual (2026-04-08)
 
-- **Sprints completados:** S3 → S16T (TUI completa, engine, dashboard, GitHub PAT, RAG, fine-tuning)
-- **Sin commit:** S16T, UX-01/02/03, SEC-01 (cambios en working tree)
-- **Pendiente prioritario:** probar S16T en vivo, BUG-01 (cursor login), S16T.F (exportar informe)
+- **Sprints completados:** S3 → S17T + SEC + RAG-directo + Fase A tests
+- **Tests:** 314/314 pasando (279 Python + 35 Rust)
+- **Sin commit:** S17T+SEC+RAG+FaseA (cambios en working tree desde 2026-03-28)
+- **Pendiente prioritario:** Fase B tests E2E (E-01, E-04), fix BUG-005, commits pendientes
+- **Pendiente seguridad:** MEDIUM-02 (INTERVAL SQL), MEDIUM-04 (refresh token HttpOnly), LOW-02 (PAT en OVDState), LOW-03 (rate limiting login)
+
+## RAG
+
+- **Estado:** activo (`OVD_RAG_ENABLED=true`)
+- **Modelo embeddings:** `nomic-embed-text` vía Ollama local
+- **Implementación:** directo en pgvector sin Bridge (`src/engine/rag.py`)
+- **Bootstrap OVD Platform:** 1617 chunks indexados (docs/ + src/engine/ + CLAUDE.md)
+- **Auto-index post-ciclo:** `_index_delivery_report` en graph.py llama a knowledge.bootstrap
+- **Nota:** PostgreSQL (`postgres_db`) no tiene restart policy — hay que levantarlo manualmente si Docker Desktop se reinicia: `docker start postgres_db`
+
+## Metodología de desarrollo
+
+Este proyecto usa **Superpowers** como framework de desarrollo.
+Referencia completa: `docs/SUPERPOWERS_OVD.md`
+
+### Reglas obligatorias
+- No implementar código sin plan previo (`writing-plans`)
+- TDD estricto para **nodos nuevos** — RED-GREEN-REFACTOR
+- Código legacy (fases 1–S17T, nodos WF4 existentes) no requiere cobertura retroactiva
+- Siempre ejecutar `verification-before-completion` antes de declarar una tarea lista
+
+### Bloque de inicio de sesión
+Al retomar desarrollo, incluir este contexto en el primer mensaje:
+
+```
+Context: I'm continuing development of OVD (Oficina Virtual de Desarrollo).
+- Stack: LangGraph + FastAPI + pgvector + Ollama (embeddings) + Multi-LLM router (Claude/OpenAI/Ollama) + Oracle 19c (vía MCP server)
+- Status: S3→S17T completados, WF4 en desarrollo
+- Existing code: do not redesign or refactor already completed phases
+- Next task: [DESCRIBIR TAREA CONCRETA]
+
+Skip brainstorming for completed phases. Jump directly to writing-plans
+or subagent-driven-development for the next task.
+```
 
 ## Reglas de trabajo
 
-- Siempre abrir Claude Code desde esta carpeta (`opencode/`)
+- Siempre abrir Claude Code desde la carpeta raíz del repo (`ovd-platform/`)
+- **Registrar cambios en este CLAUDE.md al final de cada sesión** — rutas, estado de sprints, credenciales
 - Hacer commit al final de cada sesión de trabajo
 - Rama de features: `dev`, merge a `main` vía PR
