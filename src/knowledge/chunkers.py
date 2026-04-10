@@ -531,7 +531,8 @@ def _split_text(text: str, max_chars: int) -> list[str]:
             if newline_pos > start + max_chars // 2:
                 end = newline_pos + 1
         chunks.append(text[start:end])
-        start = end - _CHUNK_OVERLAP if end < len(text) else end
+        next_start = end - _CHUNK_OVERLAP if end < len(text) else end
+        start = max(next_start, start + 1)
     return chunks
 
 

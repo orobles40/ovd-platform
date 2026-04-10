@@ -44,10 +44,9 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-08)
 
-- **Sprints completados:** S3 → S17T + SEC + RAG-directo + Fase A tests
-- **Tests:** 314/314 pasando (279 Python + 35 Rust)
-- **Sin commit:** S17T+SEC+RAG+FaseA (cambios en working tree desde 2026-03-28)
-- **Pendiente prioritario:** Fase B tests E2E (E-01, E-04), fix BUG-005, commits pendientes
+- **Sprints completados:** S3 → S17T + SEC + RAG-directo + Fase A tests + Fase B E2E
+- **Tests:** 471/471 pasando (436 Python + 35 Rust)
+- **Pendiente prioritario:** MEDIUM-02 (INTERVAL SQL), MEDIUM-04 (refresh token HttpOnly), BUG-04 (security agent 0/100)
 - **Pendiente seguridad:** MEDIUM-02 (INTERVAL SQL), MEDIUM-04 (refresh token HttpOnly), LOW-02 (PAT en OVDState), LOW-03 (rate limiting login)
 
 ## RAG
