@@ -46,8 +46,8 @@ cd src/tui && cargo build && cargo run
 
 - **Sprints completados:** S3 → S17T + SEC + RAG-directo + Fase A tests + Fase B E2E
 - **Tests:** 471/471 pasando (436 Python + 35 Rust)
-- **Pendiente prioritario:** MEDIUM-02 (INTERVAL SQL), MEDIUM-04 (refresh token HttpOnly), BUG-04 (security agent 0/100)
-- **Pendiente seguridad:** MEDIUM-02 (INTERVAL SQL), MEDIUM-04 (refresh token HttpOnly), LOW-02 (PAT en OVDState), LOW-03 (rate limiting login)
+- **Pendiente prioritario:** BUG-04 (security agent 0/100 con Ollama), features S15T.H, S15T.I
+- **Seguridad:** todos los hallazgos MEDIUM y LOW corregidos (ver docs/security/SEC-2026-03-28.md). Solo queda SEC-01 estructural (ownership validation session delivery)
 
 ## RAG
 

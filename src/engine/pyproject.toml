@@ -30,6 +30,7 @@ dependencies = [
     "langchain-postgres>=0.0.17",
     "langchain-ollama>=1.1.0",
     "psycopg2-binary>=2.9.11",
+    "slowapi>=0.1.9",
 ]
 
 [tool.pytest.ini_options]

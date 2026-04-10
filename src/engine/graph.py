@@ -2112,6 +2112,7 @@ async def create_pr(state: OVDState) -> dict:
 
     return {
         "github_pr": pr_result,
+        "github_token": "",   # LOW-02: limpiar PAT del checkpointer tras uso
         "messages": state.get("messages", []) + [{
             "role": "agent",
             "content": msg_content,

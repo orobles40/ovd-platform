@@ -49,6 +49,10 @@ from routers.auth_router import router as auth_router
 from routers.api_v1 import router as api_v1_router
 # S11.G — Nightly Web Researcher scheduler
 import nightly_researcher
+# LOW-03 — Rate limiting en endpoints de autenticación
+from rate_limiter import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 # ---------------------------------------------------------------------------
 # Estado global del engine
@@ -81,6 +85,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# LOW-03: registrar rate limiter y handler de límite excedido
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # S12 — routers de API pública
 app.include_router(auth_router)

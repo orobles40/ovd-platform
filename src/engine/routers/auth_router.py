@@ -21,6 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.hash import argon2 as _argon2_hash
 from pydantic import BaseModel
 
+from rate_limiter import limiter
 from auth import (
     AccessTokenPayload,
     TokenPair,
@@ -147,6 +148,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("10/minute")   # LOW-03: máx 10 intentos de login por minuto por IP
 async def login(body: LoginRequest, request: Request, response: Response):
     """
     Autentica al usuario con email + contraseña.
@@ -197,6 +199,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
 
 @router.post("/refresh", response_model=LoginResponse)
+@limiter.limit("20/minute")   # LOW-03: máx 20 rotaciones de token por minuto por IP
 async def refresh(
     request: Request,
     response: Response,
