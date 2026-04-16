@@ -34,6 +34,8 @@ dependencies = [
     "python-multipart>=0.0.26",
     # Fase A — MCP Client (context7 + servidores futuros)
     "mcp>=1.0",
+    # Migraciones de esquema (runtime — necesario en entrypoint Docker)
+    "alembic>=1.18.4",
 ]
 
 [tool.pytest.ini_options]
@@ -49,7 +51,6 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "alembic>=1.18.4",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
 ]

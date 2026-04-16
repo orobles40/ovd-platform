@@ -1,0 +1,13 @@
+# Excluir venv local — Docker crea el suyo propio con uv sync
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Tests y archivos de desarrollo
+tests/
+*.md
+
+# Archivos de entorno local
+.env
+.env.*

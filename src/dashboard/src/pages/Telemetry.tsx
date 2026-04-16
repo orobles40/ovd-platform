@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
-import { ovdApi, type TelemetryDay, type AgentTokens } from '../api/ovd'
+import { ovdApi, type AgentTokens } from '../api/ovd'
 import {
   AreaChart, Area,
   BarChart, Bar,
