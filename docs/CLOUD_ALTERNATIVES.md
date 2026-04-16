@@ -243,15 +243,20 @@ Lo que sí es viable en cloud son las **versiones destiladas de DeepSeek-R1**, q
 
 #### Agentes especializados — Implementación de código (backend / frontend / database / devops)
 
-| Modelo | RAM Q4 | Fortaleza | Debilidad |
-|--------|--------|-----------|-----------|
-| **qwen2.5-coder:14b** ⭐ | ~9 GB | Salto de calidad sobre 7B, mismo modelo base | Doble de RAM que 7B |
-| qwen2.5-coder:7b | ~5 GB | Actual en uso, rápido | Calidad limitada en Oracle/Java |
-| qwen2.5-coder:32b | ~20 GB | Mejor calidad de código | Necesita 32+ GB RAM total |
-| deepseek-coder-v2:16b | ~10 GB | Fuerte en Python/TypeScript | Menos maduro en Oracle/Java |
-| codestral:22b | ~13 GB | Modelo Mistral especializado en código | No disponible en Ollama aún |
+**Qwen3-Coder ya existe** — lanzado en 2025, disponible en Ollama. Hay dos variantes relevantes:
 
-**Recomendado: `qwen2.5-coder:14b`** — mejora concreta sobre el 7B actual (mejor razonamiento en contextos Java/Oracle), sin triplicar la RAM.
+| Modelo | Arquitectura | RAM requerida (Q4) | Velocidad CPU | Velocidad GPU RTX4090 |
+|--------|-------------|-------------------|--------------|----------------------|
+| **qwen3-coder-next** | MoE 80B / 3B activos | ~48 GB | no viable en 32GB | ~90 tok/s ✅ |
+| qwen2.5-coder:32b | Denso 32B | ~20 GB | ~5 tok/s | ~45 tok/s |
+| **qwen2.5-coder:14b** | Denso 14B | ~9 GB | ~12 tok/s | ~80 tok/s |
+| qwen2.5-coder:7b | Denso 7B | ~5 GB | ~20 tok/s | ~120 tok/s |
+| deepseek-coder-v2:16b | MoE 236B / 21B activos | ~12 GB | ~8 tok/s | ~70 tok/s |
+
+**Qwen3-Coder-Next** (MoE 80B, 3B activos): arquitectura muy eficiente en velocidad de inferencia porque solo activa 3B parámetros por token. Entrenado en 800K tareas de programación verificables, soporta 370 lenguajes, contexto de 256K tokens. Es el mejor modelo de código open-source disponible localmente — pero sus pesos completos pesan ~48 GB en Q4, lo que lo hace inviable en CPU de 32 GB y requiere GPU con 24+ GB de VRAM.
+
+**Recomendado en CPU 32GB: `qwen2.5-coder:14b`** — cabe junto con R1:14b, buena calidad en Java/Oracle/Python.
+**Recomendado con GPU (RTX 4090 24GB): `qwen3-coder-next`** — el mejor modelo de código open-source disponible hoy, velocidad excelente.
 
 #### Embeddings RAG
 
@@ -265,12 +270,46 @@ Lo que sí es viable en cloud son las **versiones destiladas de DeepSeek-R1**, q
 
 ---
 
-### 6.3 Configuraciones recomendadas en DigitalOcean
+### 6.3 GPU vs CPU — La pregunta clave
 
-#### Configuración A — CPU pura, equilibrio (recomendada para empezar)
+**DigitalOcean no tiene GPU accesible para este caso:** su único droplet GPU es el H100 80GB a $4.46/hr = **$3,211/mes**. Completamente inviable.
+
+Para GPU, se necesita un proveedor separado. La arquitectura recomendada es:
 
 ```
-Droplet: General Purpose g-8vcpu-32gb
+DO Basic 4 GB ($24/mes)   →  servicios: Engine + Postgres + NATS + Dashboard
+RunPod / Vast.ai           →  servidor Ollama con GPU
+```
+
+| Proveedor GPU | GPU | VRAM | Precio/hr | 24/7 mes | 8h/día mes |
+|--------------|-----|------|----------|----------|-----------|
+| RunPod | RTX 4090 | 24 GB | $0.44 | $317 | $106 |
+| Vast.ai (comunidad) | RTX 4090 | 24 GB | $0.15–0.30 | $108–216 | $36–72 |
+| Hetzner GPU | RTX 4000 | 20 GB | €0.58 | ~$430 | ~$143 |
+| Lambda Labs | A100 40 GB | 40 GB | $1.10 | $792 | $264 |
+
+**Análisis GPU vs CPU según horario de uso:**
+
+| Escenario | CPU DO 32GB | GPU RunPod 24/7 | GPU RunPod 8h/día ⭐ |
+|-----------|------------|----------------|---------------------|
+| Costo/mes | $252 | $24 + $317 = **$341** | $24 + $106 = **$130** |
+| Velocidad ciclo | ~6 min | ~45 seg | ~45 seg |
+| Disponibilidad | 24/7 instantáneo | 24/7 instantáneo | Solo en horario activo |
+| Cold start | — | — | 1–2 min al encender |
+
+**Conclusión GPU vs CPU:**
+- Si el equipo usa OVD en horario laboral (8h/día): **GPU on-demand es $122/mes más barato que CPU y 8x más rápido**
+- Si se necesita disponibilidad 24/7: CPU ($252) es más barato que GPU ($341)
+- RTX 4090 con 24GB VRAM puede cargar R1:14b (~9GB) + Qwen3-Coder-Next (~14GB activos) simultáneamente
+
+---
+
+### 6.4 Configuraciones recomendadas
+
+#### Configuración A — CPU pura (sin GPU, datos 100% privados)
+
+```
+Droplet: General Purpose g-8vcpu-32gb — DO
   vCPU: 8 dedicados | RAM: 32 GB | SSD: 100 GB | Precio: ~$252/mes
 
 Modelos Ollama:
@@ -278,95 +317,98 @@ Modelos Ollama:
   Agentes código:      qwen2.5-coder:14b   Q4_K_M  ~9 GB
   Embeddings:          nomic-embed-text            ~274 MB
 
-Memoria estimada en uso:
-  OS + Docker:         ~2 GB
-  Engine + Postgres + NATS + Dashboard:  ~3 GB
-  Ollama (1 modelo en memoria a la vez): ~9 GB
-  Buffer:              ~9 GB
-  Total:               ~23 GB de 32 GB  ← viable
+Memoria en uso:
+  OS + Docker:                          ~2 GB
+  Engine + Postgres + NATS + Dashboard: ~3 GB
+  Ollama (swap entre modelos):          ~9 GB
+  Buffer:                               ~9 GB
+  Total:                  ~23 GB de 32 GB ← viable
 ```
 
-**Consideración clave:** Ollama mantiene 1 modelo cargado en RAM a la vez por defecto. Al cambiar de modelo (de R1 a Coder), hay un swap de ~5-10 segundos. Configurable con `OLLAMA_MAX_LOADED_MODELS=2` si la RAM lo permite.
+**Consideración:** Ollama carga 1 modelo a la vez por defecto. Swap entre R1 y Coder: ~5-10 segundos.
 
-**Velocidad de ciclo estimada (CPU, sin GPU):**
+**Velocidad de ciclo (CPU, sin GPU):**
 - analyze_fr (R1:14b, ~300 tokens): ~25 segundos
 - generate_sdd (R1:14b, ~800 tokens): ~67 segundos
 - 4 agentes código (Coder:14b, ~600 tokens c/u): ~200 segundos
-- **Total estimado por ciclo: ~5-7 minutos** (vs 2-3 min actual con Claude API)
+- **Total por ciclo: ~5–7 minutos**
 
 ---
 
-#### Configuración B — CPU con modelos más potentes (mayor calidad, más costo)
+#### Configuración B — GPU on-demand, horario laboral ⭐ RECOMENDADA para datos sensibles
 
 ```
-Droplet: Memory-Optimized m-8vcpu-64gb
-  vCPU: 8 dedicados | RAM: 64 GB | SSD: 50 GB | Precio: ~$420/mes
+DO Basic 4 GB ($24/mes)
+  Servicios permanentes: Engine + Postgres + NATS + Dashboard
 
-Modelos Ollama:
-  Agente principal:    deepseek-r1:32b     Q4_K_M  ~20 GB
-  Agentes código:      qwen2.5-coder:32b   Q4_K_M  ~20 GB
-  Embeddings:          nomic-embed-text            ~274 MB
+RunPod RTX 4090 24GB ($0.44/hr, encender al iniciar jornada, apagar al terminar)
+  Ollama server remoto (URL configurable en OVD_OLLAMA_HOST)
+  Agente principal:    deepseek-r1:14b     Q4_K_M  ~9 GB VRAM
+  Agentes código:      qwen3-coder-next    Q4_K_M  ~14 GB VRAM activos
+  Ambos modelos simultáneos:              ~23 GB de 24 GB VRAM ← ajustado
 
-Memoria estimada en uso:
-  OS + servicios:      ~5 GB
-  Ollama (2 modelos simultáneos): ~40 GB
-  Buffer:              ~19 GB
-  Total:               ~45 GB de 64 GB  ← viable con OLLAMA_MAX_LOADED_MODELS=2
+Embeddings: nomic-embed-text en mismo RunPod (~274 MB VRAM adicional)
 ```
 
-**Velocidad de ciclo estimada:**
-- analyze_fr (R1:32b): ~3 tok/s → 100 tokens = ~33 segundos
-- generate_sdd (R1:32b): 800 tokens = ~267 segundos
-- **Total estimado por ciclo: ~12-15 minutos** — lento para uso intensivo
+**Velocidad de ciclo (GPU RTX 4090):**
+- analyze_fr (R1:14b, ~300 tokens): ~4 segundos
+- generate_sdd (R1:14b, ~800 tokens): ~10 segundos
+- 4 agentes código (Qwen3-Coder-Next, ~600 tokens c/u): ~26 segundos
+- **Total por ciclo: ~1 minuto** (6x más rápido que CPU)
+
+**Costo total (8h/día, 22 días laborales/mes):**
+
+| Concepto | Costo |
+|---------|-------|
+| DO Basic 4 GB (24/7) | $24 |
+| RunPod RTX 4090 (176 hr/mes) | $77 |
+| Dominio + backup | $2 |
+| **Total** | **~$103/mes** |
 
 ---
 
-#### Configuración C — Híbrida (infraestructura barata + API de inferencia) ⭐ RECOMENDADA
-
-La mejor relación costo/calidad/velocidad para uso intermitente de equipo:
+#### Configuración C — GPU 24/7 (siempre disponible, máximo rendimiento)
 
 ```
-Droplet: Basic 4 GB / $24 mes (o Hetzner CX22 / $9 mes)
-  Solo servicios: Engine + Postgres + NATS + Dashboard
+DO Basic 4 GB ($24/mes) + RunPod RTX 4090 24/7 ($317/mes)
+Total: ~$341/mes
 
-Agente principal (razonamiento) → Groq Cloud API:
-  Modelo:   deepseek-r1-distill-llama-70b
-  Velocidad: ~300 tok/s (30x más rápido que CPU local)
-  Costo:     $0.75/M tokens entrada + $0.99/M tokens salida
-
-Agentes código → Together.ai API:
-  Modelo:   Qwen2.5-Coder-32B-Instruct
-  Velocidad: ~100 tok/s
-  Costo:     $0.80/M tokens entrada + $0.80/M tokens salida
-
-Embeddings → OpenAI:
-  Modelo:   text-embedding-3-small
-  Costo:    $0.02/1M tokens
+Mismos modelos que Config B
+Disponibilidad: 24/7 sin cold start
 ```
 
-**Costo de API por ciclo OVD (estimado):**
-- analyze_fr + generate_sdd (R1, ~3K tokens): ~$0.004
-- 4 agentes código (Coder32B, ~8K tokens total): ~$0.013
-- **Costo por ciclo: ~$0.017 (menos de 2 centavos)**
-- 100 ciclos/mes: ~$1.70 en APIs de modelos
-
-**Velocidad de ciclo:** 1-3 minutos (vs 5-7 min CPU o 12-15 min CPU 32B)
+Tiene sentido si el equipo trabaja en zonas horarias distintas o hay uso nocturno.
 
 ---
 
-### 6.4 Comparativa de configuraciones
+#### Configuración D — CPU 64 GB (modelos grandes, sin GPU)
 
-| | Config A (CPU 32GB) | Config B (CPU 64GB) | Config C Híbrida ⭐ |
-|--|--------------------|--------------------|-------------------|
-| VPS/mes | $252 | $420 | $24 |
-| API modelos/mes (100 ciclos) | $0 | $0 | ~$2 |
-| **Total/mes** | **$252** | **$420** | **~$26** |
-| Calidad razonamiento | R1:14b (buena) | R1:32b (excelente) | R1:70B via Groq (excelente) |
-| Calidad código | Coder:14b (buena) | Coder:32b (excelente) | Coder:32B via Together (excelente) |
-| Velocidad por ciclo | ~6 min | ~13 min | ~2 min |
-| Sin dependencia API | ✅ | ✅ | ❌ (requiere Groq + Together) |
-| Datos en cloud propio | ✅ | ✅ | Prompts van a terceros |
-| Confidencialidad prompts | ✅ | ✅ | ⚠️ revisar TOS Groq/Together |
+```
+Droplet: Memory-Optimized m-8vcpu-64gb — DO
+  vCPU: 8 | RAM: 64 GB | Precio: ~$420/mes
+
+Modelos:
+  deepseek-r1:32b     Q4_K_M  ~20 GB
+  qwen2.5-coder:32b   Q4_K_M  ~20 GB
+  Total con servicios: ~45 GB ← viable
+
+Velocidad: ~5 tok/s → ciclo ~12–15 min — no recomendado para uso intensivo
+```
+
+---
+
+### 6.5 Comparativa de configuraciones
+
+| | A (CPU 32GB) | B (GPU 8h/día) ⭐ | C (GPU 24/7) | D (CPU 64GB) |
+|--|-------------|-----------------|-------------|-------------|
+| **Costo/mes** | **$252** | **$103** | **$341** | **$420** |
+| Modelo razonamiento | R1:14b | R1:14b | R1:14b | R1:32b |
+| Modelo código | Coder:14b | Qwen3-Coder-Next | Qwen3-Coder-Next | Coder:32b |
+| Calidad código | Buena | **Excelente** | **Excelente** | Muy buena |
+| Velocidad ciclo | ~6 min | ~1 min | ~1 min | ~12 min |
+| Disponibilidad | 24/7 | Horario laboral | 24/7 | 24/7 |
+| Datos privados | ✅ | ✅ | ✅ | ✅ |
+| Complejidad ops | Baja | Media | Media | Baja |
 
 ---
 
