@@ -1,0 +1,447 @@
+<mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1480" math="0" shadow="1">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- ═══════════ TÍTULO ═══════════ -->
+    <mxCell id="2" value="&lt;b&gt;&lt;font style=&quot;font-size:18px;&quot;&gt;OVD Platform — Arquitectura General v0.6.0&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;Oficina Virtual de Desarrollo · Omar Robles · 2026-04-16&lt;/font&gt;"
+      style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;"
+      vertex="1" parent="1">
+      <mxGeometry x="380" y="15" width="760" height="50" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ SECCIÓN: INTERFACES DE USUARIO ═══════════ -->
+    <mxCell id="3" value="&lt;b&gt;Interfaces de Usuario&lt;/b&gt;"
+      style="swimlane;startSize=26;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#00008B;fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="50" y="75" width="660" height="110" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="4" value="&lt;b&gt;TUI (Terminal)&lt;/b&gt;&lt;br&gt;Rust · Ratatui · Crossterm&lt;br&gt;Binario standalone distribuible"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="75" y="118" width="195" height="58" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="5" value="&lt;b&gt;Dashboard Web&lt;/b&gt;&lt;br&gt;React 19 · Vite · Tailwind&lt;br&gt;Puerto 5173"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="345" y="118" width="195" height="58" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ SECCIÓN: OVD ENGINE ═══════════ -->
+    <mxCell id="6" value="&lt;b&gt;&lt;font style=&quot;font-size:12px;&quot;&gt;OVD Engine — FastAPI (Puerto 8001)&lt;/font&gt;&lt;/b&gt;"
+      style="swimlane;startSize=30;fillColor=#f9f9f9;strokeColor=#555555;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="50" y="222" width="1290" height="730" as="geometry"/>
+    </mxCell>
+
+    <!-- Auth + API v1 -->
+    <mxCell id="7" value="&lt;b&gt;Auth + API REST v1&lt;/b&gt;&lt;br&gt;&lt;hr/&gt;POST /auth/login|refresh|logout&lt;br&gt;GET  /auth/me&lt;br&gt;&lt;br&gt;/api/v1/orgs/{id}/projects&lt;br&gt;/api/v1/orgs/{id}/cycles&lt;br&gt;/api/v1/orgs/{id}/stats&lt;br&gt;/api/v1/orgs/{id}/knowledge&lt;br&gt;/api/v1/orgs/{id}/telemetry&lt;br&gt;/api/v1/orgs/{id}/admin/users&lt;br&gt;/api/v1/orgs/{id}/admin/skills"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="70" y="278" width="205" height="265" as="geometry"/>
+    </mxCell>
+
+    <!-- LangGraph container -->
+    <mxCell id="8" value="&lt;b&gt;LangGraph — Ciclo FR → Entrega&lt;/b&gt;"
+      style="swimlane;startSize=26;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#006600;fontStyle=1;fontSize=11;"
+      vertex="1" parent="1">
+      <mxGeometry x="303" y="262" width="560" height="678" as="geometry"/>
+    </mxCell>
+
+    <!-- LangGraph nodes -->
+    <mxCell id="9" value="&lt;b&gt;1. analyze_fr&lt;/b&gt;&lt;br&gt;Clasifica tipo y complejidad del FR"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="305" width="190" height="44" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="10" value="&lt;b&gt;2. web_research_node&lt;/b&gt;&lt;br&gt;(condicional) Investiga CVEs y APIs"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="365" width="190" height="44" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="11" value="&lt;b&gt;3. generate_sdd&lt;/b&gt;&lt;br&gt;4 artefactos: requirements, design,&lt;br&gt;constraints, tasks"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="425" width="190" height="52" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="12" value="&lt;b&gt;4. human_approval&lt;/b&gt; ⏸&lt;br&gt;INTERRUPT — espera al arquitecto&lt;br&gt;aprobar / revisar / rechazar"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=10;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="494" width="190" height="54" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="13" value="&lt;b&gt;5. route_agents&lt;/b&gt;&lt;br&gt;Elige agentes según tareas del SDD"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="564" width="190" height="44" as="geometry"/>
+    </mxCell>
+
+    <!-- Agents parallel container -->
+    <mxCell id="14" value="&lt;b&gt;6. agent_executor — Fan-out paralelo (Send())&lt;/b&gt;"
+      style="swimlane;startSize=24;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=10;dashed=0;"
+      vertex="1" parent="1">
+      <mxGeometry x="313" y="624" width="540" height="80" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="15" value="&lt;b&gt;backend&lt;/b&gt;"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#82b366;fontColor=#ffffff;strokeColor=#006600;fontSize=11;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="320" y="643" width="118" height="52" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="16" value="&lt;b&gt;frontend&lt;/b&gt;"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#82b366;fontColor=#ffffff;strokeColor=#006600;fontSize=11;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="449" y="643" width="118" height="52" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="17" value="&lt;b&gt;database&lt;/b&gt;"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#82b366;fontColor=#ffffff;strokeColor=#006600;fontSize=11;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="578" y="643" width="118" height="52" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="18" value="&lt;b&gt;devops&lt;/b&gt;"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#82b366;fontColor=#ffffff;strokeColor=#006600;fontSize=11;fontStyle=1;"
+      vertex="1" parent="1">
+      <mxGeometry x="707" y="643" width="118" height="52" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="19" value="&lt;b&gt;7. security_audit&lt;/b&gt;&lt;br&gt;OWASP Top 10 · Secrets · RLS multi-tenant"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="720" width="190" height="46" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="20" value="&lt;b&gt;8. qa_review&lt;/b&gt;&lt;br&gt;Cumplimiento SDD · calidad · TDD"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="782" width="190" height="46" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="21" value="&lt;b&gt;9. deliver&lt;/b&gt;&lt;br&gt;Artefactos + informe Markdown · Git branch + PR"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="490" y="844" width="190" height="46" as="geometry"/>
+    </mxCell>
+
+    <!-- ── Soporte dentro del Engine ── -->
+    <mxCell id="22" value="&lt;b&gt;LLM Router&lt;/b&gt;&lt;br&gt;Selecciona proveedor por Stack Registry:&lt;br&gt;Oracle/legacy → Claude&lt;br&gt;Stack moderno → Ollama (local)"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="900" y="278" width="250" height="90" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="23" value="&lt;b&gt;MCP Client Pool (Fase A)&lt;/b&gt;&lt;br&gt;context7 vía npx stdio subprocess&lt;br&gt;Docs de librerías en tiempo real&lt;br&gt;Agentes: backend · frontend · database · devops"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="900" y="386" width="250" height="100" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="24" value="&lt;b&gt;RAG — pgvector&lt;/b&gt;&lt;br&gt;Búsqueda semántica sobre 1617+ chunks&lt;br&gt;Embeddings: nomic-embed-text (Ollama)&lt;br&gt;Auto-indexa informes de entrega"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="900" y="504" width="250" height="100" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="25" value="&lt;b&gt;Web Researcher&lt;/b&gt;&lt;br&gt;DuckDuckGo / Tavily&lt;br&gt;Sintetiza con LLM → indexa en RAG&lt;br&gt;Nightly job proactivo"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="900" y="622" width="250" height="100" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="26" value="&lt;b&gt;Skills externos (S18)&lt;/b&gt;&lt;br&gt;ui-ux-pro-max → BM25 → {ui_context}&lt;br&gt;superpowers → embebido en templates&lt;br&gt;Actualización vía /admin/skills"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="900" y="740" width="250" height="90" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ INFRAESTRUCTURA LOCAL ═══════════ -->
+    <mxCell id="27" value="&lt;b&gt;Infraestructura Local&lt;/b&gt;"
+      style="text;html=1;strokeColor=none;fillColor=none;fontStyle=1;fontSize=11;align=left;"
+      vertex="1" parent="1">
+      <mxGeometry x="55" y="975" width="220" height="25" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="30" value="&lt;b&gt;PostgreSQL + pgvector&lt;/b&gt;&lt;br&gt;Docker: postgres_db&lt;br&gt;pgvector/pgvector:pg16 · Puerto 5432&lt;br&gt;RLS · Checkpointer · RAG store"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#555555;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="55" y="1005" width="215" height="80" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="31" value="&lt;b&gt;Ollama (local)&lt;/b&gt;&lt;br&gt;LLM: qwen2.5-coder:7b&lt;br&gt;Embeddings: nomic-embed-text&lt;br&gt;Puerto 11434"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#555555;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="295" y="1005" width="215" height="80" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ SERVICIOS EXTERNOS ═══════════ -->
+    <mxCell id="40" value="&lt;b&gt;Servicios Externos&lt;/b&gt;"
+      style="text;html=1;strokeColor=none;fillColor=none;fontStyle=1;fontSize=11;align=center;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="228" width="220" height="26" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="41" value="&lt;b&gt;Claude API&lt;/b&gt;&lt;br&gt;claude-sonnet-4-6&lt;br&gt;claude-haiku-4-5"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="265" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="42" value="&lt;b&gt;OpenAI API&lt;/b&gt;&lt;br&gt;gpt-4o / gpt-4o-mini&lt;br&gt;(opcional por proyecto)"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="345" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="43" value="&lt;b&gt;GitHub&lt;/b&gt;&lt;br&gt;Branch automático post-ciclo&lt;br&gt;Commit + Pull Request"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="425" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="44" value="&lt;b&gt;NATS JetStream&lt;/b&gt;&lt;br&gt;Eventos post-ciclo&lt;br&gt;Retroalimentación RAG"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="505" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="45" value="&lt;b&gt;context7 (npm)&lt;/b&gt;&lt;br&gt;@upstash/context7-mcp&lt;br&gt;Docs: React, FastAPI, Alembic…"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="585" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="46" value="&lt;b&gt;Web (DuckDuckGo)&lt;/b&gt;&lt;br&gt;Investigación proactiva&lt;br&gt;CVEs · deprecaciones · APIs"
+      style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;"
+      vertex="1" parent="1">
+      <mxGeometry x="1390" y="665" width="210" height="62" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ FLECHAS PRINCIPALES ═══════════ -->
+    <mxCell id="50" value="HTTP + SSE streaming"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.12;entryY=0;entryDx=0;entryDy=0;"
+      edge="1" source="4" target="6" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="51" value="REST + SSE streaming"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.28;entryY=0;entryDx=0;entryDy=0;"
+      edge="1" source="5" target="6" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="52" value="Checkpointer + pgvector + RLS"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.07;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;"
+      edge="1" source="6" target="30" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="53" value="LLM calls + Embeddings"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.22;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;"
+      edge="1" source="6" target="31" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="54" value=""
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.3;entryX=0;entryY=0.5;"
+      edge="1" source="22" target="41" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="55" value=""
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
+      edge="1" source="22" target="42" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="56" value=""
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+      edge="1" source="22" target="31" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="57" value="stdio subprocess"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
+      edge="1" source="23" target="45" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="58" value=""
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
+      edge="1" source="25" target="46" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="59" value="Branch + PR automático"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.85;exitY=1;entryX=0;entryY=0.5;"
+      edge="1" source="6" target="43" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="60" value="Eventos post-ciclo"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0.9;exitY=1;entryX=0;entryY=0.5;"
+      edge="1" source="6" target="44" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- ═══════════ FLECHAS FLUJO LANGGRAPH ═══════════ -->
+    <mxCell id="71" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="9" target="10" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="72" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="10" target="11" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="73" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="11" target="12" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="74" value="&lt;font color=&quot;#d6b656&quot;&gt;revisión&lt;/font&gt;"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;strokeColor=#d6b656;exitX=0;exitY=0.5;entryX=0;entryY=0.5;"
+      edge="1" source="12" target="11" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="458" y="521"/>
+          <mxPoint x="458" y="451"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="75" value="aprobado"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="12" target="13" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="76" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="13" target="14" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="77" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="14" target="19" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="78" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="19" target="20" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="79" value="aprobado"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="20" target="21" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="80" value="&lt;font color=&quot;#b85450&quot;&gt;retry ≤3&lt;/font&gt;"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;strokeColor=#b85450;exitX=1;exitY=0.5;entryX=1;entryY=0.5;"
+      edge="1" source="19" target="14" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="840" y="743"/>
+          <mxPoint x="840" y="664"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="81" value="&lt;font color=&quot;#d6b656&quot;&gt;retry ≤3&lt;/font&gt;"
+      style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;strokeColor=#d6b656;exitX=1;exitY=0.5;entryX=1;entryY=0.7;"
+      edge="1" source="20" target="14" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="855" y="805"/>
+          <mxPoint x="855" y="678"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    <!-- ═══════════ NOTAS EXPLICATIVAS ═══════════ -->
+    <mxCell id="200" value="&lt;b&gt;— NOTAS EXPLICATIVAS —&lt;/b&gt;"
+      style="text;html=1;strokeColor=none;fillColor=none;fontStyle=1;fontSize=12;align=center;"
+      vertex="1" parent="1">
+      <mxGeometry x="550" y="1110" width="400" height="30" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 1: TUI -->
+    <mxCell id="101" value="&lt;b&gt;TUI — Terminal UI (Rust)&lt;/b&gt;&lt;br&gt;Binario standalone multiplataforma (macOS ARM/x86,&lt;br&gt;Linux, Windows). Consume la misma FastAPI.&lt;br&gt;&lt;br&gt;• &lt;b&gt;--from-file &amp;lt;ruta&amp;gt;&lt;/b&gt;: carga un .md como FR al iniciar&lt;br&gt;• &lt;b&gt;Ctrl+O&lt;/b&gt;: carga de archivo interactiva en formulario&lt;br&gt;• Aprobación SDD: aprobar / revisar / rechazar&lt;br&gt;• DeliveryScreen: resumen de artefactos generados"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="50" y="1150" width="290" height="165" as="geometry"/>
+    </mxCell>
+    <mxCell id="101a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="101" target="4" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 2: Dashboard -->
+    <mxCell id="102" value="&lt;b&gt;Dashboard Web (React)&lt;/b&gt;&lt;br&gt;Interfaz de administración completa.&lt;br&gt;Roles: admin / developer / viewer.&lt;br&gt;&lt;br&gt;• Lanzador FR con streaming SSE en vivo&lt;br&gt;• Panel de aprobaciones con polling 10s&lt;br&gt;• Telemetría: QA trend, costo, tokens/agente&lt;br&gt;• RAG Bootstrap: indexar documentos al cliente&lt;br&gt;• &lt;b&gt;/admin/skills&lt;/b&gt;: actualizar repos externos"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="370" y="1150" width="290" height="165" as="geometry"/>
+    </mxCell>
+    <mxCell id="102a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="102" target="5" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 3: Auth + Multi-tenancy -->
+    <mxCell id="103" value="&lt;b&gt;Auth + Multi-tenancy&lt;/b&gt;&lt;br&gt;JWT HS256 (access 1h) + refresh token 7d.&lt;br&gt;Roles: admin / developer / viewer.&lt;br&gt;Rate limiting en endpoints de autenticación.&lt;br&gt;&lt;br&gt;• RLS activado en 13 tablas OVD&lt;br&gt;• Toda query filtra por &lt;b&gt;org_id&lt;/b&gt;&lt;br&gt;• AuditLogger registra acceso a secrets&lt;br&gt;• Aislamiento garantizado a nivel de BD"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="690" y="1150" width="290" height="165" as="geometry"/>
+    </mxCell>
+    <mxCell id="103a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="103" target="7" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 4: human_approval (INTERRUPT) -->
+    <mxCell id="104" value="&lt;b&gt;human_approval — INTERRUPT&lt;/b&gt;&lt;br&gt;El grafo se pausa aquí esperando al arquitecto.&lt;br&gt;El estado persiste en PostgreSQL (checkpointer)&lt;br&gt;— puede retomarse días después.&lt;br&gt;&lt;br&gt;• &lt;b&gt;Aprobar&lt;/b&gt;: continúa al fan-out de agentes&lt;br&gt;• &lt;b&gt;Revisar&lt;/b&gt;: vuelve a generate_sdd con feedback&lt;br&gt;• &lt;b&gt;Rechazar&lt;/b&gt;: termina el ciclo&lt;br&gt;• Historial de revisiones acumulado"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffe6cc;strokeColor=#d6b656;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="1010" y="1150" width="290" height="165" as="geometry"/>
+    </mxCell>
+    <mxCell id="104a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#d6b656;"
+      edge="1" source="104" target="12" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 5: Agentes especializados -->
+    <mxCell id="105" value="&lt;b&gt;Agentes especializados (tool calling)&lt;/b&gt;&lt;br&gt;Se ejecutan en paralelo vía LangGraph Send().&lt;br&gt;Cada agente usa &lt;b&gt;bind_tools()&lt;/b&gt; con:&lt;br&gt;&lt;br&gt;• write_file / read_file / edit_file / list_files&lt;br&gt;• &lt;b&gt;context7&lt;/b&gt;: docs de librerías en tiempo real&lt;br&gt;• Leen archivos existentes antes de escribir&lt;br&gt;• System prompts con metodología Superpowers:&lt;br&gt;  TDD iron law + verification-before-completion"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="50" y="1340" width="310" height="175" as="geometry"/>
+    </mxCell>
+    <mxCell id="105a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="105" target="14" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 6: Security + QA -->
+    <mxCell id="106" value="&lt;b&gt;security_audit + qa_review&lt;/b&gt;&lt;br&gt;Nodos independientes post fan-out.&lt;br&gt;&lt;br&gt;Security revisa:&lt;br&gt;• OWASP Top 10 · secrets · RLS bypass · SSRF&lt;br&gt;• Score 0-100, severity: none/low/medium/high&lt;br&gt;&lt;br&gt;QA revisa:&lt;br&gt;• Cumplimiento SDD · calidad · TDD checklist&lt;br&gt;• Si falla: retry ≤3 veces → escala a humano"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="390" y="1340" width="310" height="175" as="geometry"/>
+    </mxCell>
+    <mxCell id="106a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="106" target="19" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 7: PostgreSQL -->
+    <mxCell id="107" value="&lt;b&gt;PostgreSQL + pgvector (Docker)&lt;/b&gt;&lt;br&gt;Tres roles críticos simultáneos:&lt;br&gt;&lt;br&gt;• &lt;b&gt;Checkpointer LangGraph&lt;/b&gt;: persiste estado del grafo&lt;br&gt;  entre sesiones (human_approval puede durar días)&lt;br&gt;• &lt;b&gt;pgvector&lt;/b&gt;: almacena embeddings RAG por proyecto&lt;br&gt;• &lt;b&gt;RLS en 13 tablas&lt;/b&gt;: aislamiento multi-tenant&lt;br&gt;&lt;br&gt;⚠ Sin restart policy — iniciar manualmente:&lt;br&gt;&lt;code&gt;docker start postgres_db&lt;/code&gt;"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="730" y="1340" width="310" height="175" as="geometry"/>
+    </mxCell>
+    <mxCell id="107a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="107" target="30" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+    <!-- Nota 8: RAG + context7 -->
+    <mxCell id="108" value="&lt;b&gt;RAG + MCP context7&lt;/b&gt;&lt;br&gt;RAG indexa: código, docs, contratos, tickets,&lt;br&gt;informes de entrega del proyecto.&lt;br&gt;&lt;br&gt;• Inyecta {rag_context} en SDD y agentes&lt;br&gt;• Bootstrap: 1617+ chunks (docs/ + src/engine/)&lt;br&gt;&lt;br&gt;context7 (MCP) complementa el RAG:&lt;br&gt;• Resuelve docs de librerías externas en tiempo real&lt;br&gt;• No requiere indexar cada librería manualmente&lt;br&gt;• Inicia con el engine vía npx stdio"
+      style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#ffffcc;strokeColor=#999900;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;"
+      vertex="1" parent="1">
+      <mxGeometry x="1070" y="1340" width="310" height="175" as="geometry"/>
+    </mxCell>
+    <mxCell id="108a" style="dashed=1;endArrow=open;endFill=0;strokeColor=#999900;"
+      edge="1" source="108" target="24" parent="1">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+
+  </root>
+</mxGraphModel>
