@@ -20,6 +20,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    postgresql-client \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,49 @@
+# OVD Platform — Caddyfile
+# C09: sustituir {$DOMAIN} con el dominio real en .env.prod (ej: ovd.omarrobles.dev)
+# Caddy gestiona TLS automáticamente vía Let's Encrypt.
+#
+# Con DOMAIN=localhost → HTTP only (dev/staging sin certificado)
+# Con DOMAIN=ovd.omarrobles.dev → HTTPS automático
+
+{$DOMAIN:localhost} {
+
+    # Health check del proxy (usado por Docker healthcheck)
+    handle /health.txt {
+        respond "ok" 200
+    }
+
+    # Engine: API REST, SSE, auth
+    handle /api/* {
+        reverse_proxy ovd-engine:8001
+    }
+    handle /session/* {
+        reverse_proxy ovd-engine:8001
+    }
+    handle /auth/* {
+        reverse_proxy ovd-engine:8001
+    }
+    handle /health {
+        reverse_proxy ovd-engine:8001
+    }
+
+    # Dashboard React (catch-all)
+    handle {
+        reverse_proxy ovd-dashboard:80
+    }
+
+    # Cabeceras de seguridad
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Logs estructurados
+    log {
+        output stderr
+        format json
+        level INFO
+    }
+}

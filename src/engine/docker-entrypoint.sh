@@ -31,4 +31,13 @@ echo "[entrypoint] Ejecutando migraciones Alembic..."
 alembic upgrade head
 echo "[entrypoint] Migraciones completadas."
 
+# Aplicar datos iniciales (idempotente — ON CONFLICT DO NOTHING)
+SEED_FILE="/app/migrations/seed_prod.sql"
+if [ -f "$SEED_FILE" ] && [ -n "$DATABASE_URL" ]; then
+    echo "[entrypoint] Aplicando seed_prod.sql..."
+    psql "$DATABASE_URL" -f "$SEED_FILE" -v ON_ERROR_STOP=1 \
+        && echo "[entrypoint] Seed completado." \
+        || echo "[entrypoint] WARN: seed_prod.sql falló (tabla ya poblada o error ignorado)"
+fi
+
 exec "$@"
