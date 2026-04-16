@@ -542,6 +542,124 @@ ollama create ovd-arch-assistant -f src/finetune/Modelfile
 
 ---
 
+## FASE 5 — Despliegue Cloud (Prerrequisito FASE C)
+
+**Objetivo:** el engine corre en un servidor accesible por el equipo vía HTTPS. El TUI apunta a la URL cloud. El dashboard web se sirve desde un dominio propio.
+
+**Fecha de identificación:** 2026-04-16
+**Estado general:** ⬜ Pendiente — todos los bloqueantes identificados
+
+---
+
+### GAP-CLOUD-01 — Infraestructura base (BLOQUEANTE P0)
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C01.A | Proveedor VPS seleccionado | VPS con mínimo 4 GB RAM, 2 vCPU, 40 GB SSD. Ver `docs/CLOUD_ALTERNATIVES.md` para opciones y costos | ⬜ |
+| C01.B | Dominio y DNS | Dominio propio (ej: `ovd.omarrobles.dev`). Registrar y apuntar A-record al IP del VPS | ⬜ |
+| C01.C | TLS — certificado Let's Encrypt | nginx como reverse proxy con `certbot --nginx`. Rutas: `api.ovd.omarrobles.dev` → engine:8001, `ovd.omarrobles.dev` → dashboard | ⬜ |
+| C01.D | Firewall mínimo | UFW: abrir solo 22 (SSH), 80 (HTTP redirect), 443 (HTTPS). Engine y NATS solo en red interna Docker | ⬜ |
+
+---
+
+### GAP-CLOUD-02 — Ollama en cloud (BLOQUEANTE P0)
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C02.A | Decisión: Ollama hosteado vs. API de embeddings | **Opción A:** Ollama en el mismo VPS (requiere ≥8 GB RAM). **Opción B:** migrar embeddings a `text-embedding-3-small` de OpenAI (~$0.02/1M tokens). Ver análisis en `docs/CLOUD_ALTERNATIVES.md` | ⬜ |
+| C02.B | Configurar `OLLAMA_HOST` o `EMBEDDING_PROVIDER` | Si se elige Opción B, actualizar `rag.py` para usar `langchain-openai` embeddings cuando `OVD_EMBEDDING_PROVIDER=openai` | ⬜ |
+| C02.C | Modelos LLM para agentes en cloud | Los modelos `qwen2.5-coder:7b` y similares requieren ≥8 GB VRAM. En VPS sin GPU, usar solo Claude/OpenAI como LLM de agentes. Ollama queda como opción local dev | ⬜ |
+
+---
+
+### GAP-CLOUD-03 — Node.js en Dockerfile del engine
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C03.A | Agregar Node.js al Dockerfile del engine | MCP context7 requiere `npx` en runtime. Agregar `nodejs npm` al `apt-get install` del Dockerfile. Alternativa: usar imagen `python:3.12-slim` + `node:20-slim` en multi-stage | ⬜ |
+| C03.B | Verificar `npx @upstash/context7-mcp` en container | Test que confirma que context7 inicia correctamente dentro del container | ⬜ |
+
+---
+
+### GAP-CLOUD-04 — Dashboard web: Dockerfile + build pipeline
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C04.A | `Dockerfile` para el dashboard React | Multi-stage: stage 1 `bun build`, stage 2 nginx sirve el build estático. Puerto 80 interno | ⬜ |
+| C04.B | Variable `VITE_API_URL` en build | El dashboard necesita saber la URL del engine en build time (`VITE_API_URL=https://api.ovd.omarrobles.dev`) | ⬜ |
+| C04.C | nginx config para SPA React | `try_files $uri /index.html` para que el routing del cliente funcione. Headers de caché para assets con hash | ⬜ |
+
+---
+
+### GAP-CLOUD-05 — Migraciones automáticas en producción
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C05.A | Runner de migraciones en `docker-entrypoint.sh` | Ejecutar `alembic upgrade head` antes de iniciar uvicorn. Si falla, el container no arranca | ⬜ |
+| C05.B | `alembic.ini` apuntando a `DATABASE_URL` de producción | Configurar via variable de entorno, no hardcodeado | ⬜ |
+| C05.C | Migración inicial de datos dev → prod | Script one-shot para crear usuario admin, org y workspace inicial en la BD de producción | ⬜ |
+
+---
+
+### GAP-CLOUD-06 — TUI: distribución multiplataforma
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C06.A | Cross-compilation para Linux/Windows | GitHub Actions `tui-release.yml` (marcado ✅ en S14.D) — verificar que efectivamente compila targets: `x86_64-unknown-linux-musl`, `x86_64-pc-windows-gnu`, `aarch64-apple-darwin` | ⬜ |
+| C06.B | GitHub Release automático con binarios | Al hacer tag `v*`, el workflow sube los 4 binarios como assets del release | ⬜ |
+| C06.C | `ovd init` — wizard de primera configuración | Crear subcomando CLI que guía al usuario: ingresa URL del engine, org_id, hace login y guarda `~/.ovd/config.toml`. Hoy se hace manualmente | ⬜ |
+| C06.D | Documentación de instalación | Script de instalación: `curl -fsSL https://install.ovd.omarrobles.dev | sh`. Descarga el binario correcto según OS/arch | ⬜ |
+
+---
+
+### GAP-CLOUD-07 — PostgreSQL: persistencia y backup
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C07.A | `restart: always` en postgres dev | El contenedor `postgres_db` en dev no tiene restart policy — se pierde con Docker Desktop restart. Fix: `docker update --restart always postgres_db` | ⬜ |
+| C07.B | Backup diario automatizado en producción | Script cron: `pg_dump ovd_prod \| gzip > backup-$(date +%Y%m%d).sql.gz`. Retention 30 días. Subir a S3/Backblaze B2 | ⬜ |
+| C07.C | Backup de volumen pgvector (embeddings RAG) | Los 1617+ chunks de RAG no se pueden regenerar fácil. Incluir en backup o tener script `knowledge bootstrap` documentado como recovery | ⬜ |
+| C07.D | Test de restore | Procedimiento documentado y probado de restore desde backup. SLA objetivo: < 1 hora de RPO | ⬜ |
+
+---
+
+### GAP-CLOUD-08 — GitHub PAT → GitHub App (P3 largo plazo)
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C08.A | GitHub App creada en cuenta `orobles40` | Permisos: Contents (write), Pull Requests (write), Metadata (read). Generar private key | ⬜ |
+| C08.B | Autenticación JWT de GitHub App en engine | Reemplazar PAT en `graph.py` Sprint 6 por JWT generado con la private key de la App. Librería: `PyGithub` o `githubkit` | ⬜ |
+| C08.C | Instalación de la App por workspace | En el Stack Registry de cada proyecto: campo `github_installation_id` para que el engine use el token correcto por repo | ⬜ |
+
+---
+
+### GAP-CLOUD-09 — Observabilidad operacional
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C09.A | Agregador de logs | Configurar `logging` de uvicorn a stdout + docker logs. Para VPS: `journald` o `loki` con `docker-compose.prod.yml`. Mínimo viable: `docker logs -f ovd-engine` | ⬜ |
+| C09.B | Alertas de ciclo colgado | OTEL + span con timeout: si `cycle_span` dura > 30 min sin evento `done`, emitir alerta. Canal: email o Telegram bot | ⬜ |
+| C09.C | Dashboard de métricas (S17.C ya implementado) | S17.C telemetría en Web App está ✅. Verificar que funciona con datos reales de producción | ⬜ |
+| C09.D | Health checks en todos los servicios | Engine: `/health` ✅. Verificar NATS healthcheck. Agregar healthcheck a dashboard nginx | ⬜ |
+
+---
+
+### Resumen de prioridades cloud
+
+| Prioridad | GAP | Bloqueante para | Esfuerzo estimado |
+|-----------|-----|-----------------|-------------------|
+| **P0** | C01 — VPS + dominio + TLS | Todo lo demás | 1 día |
+| **P0** | C02 — Ollama / embeddings cloud | RAG funcional | 2-3 días |
+| **P1** | C03 — Node.js en Dockerfile | MCP context7 en prod | 2 horas |
+| **P1** | C04 — Dockerfile dashboard | Web App accesible | 1 día |
+| **P1** | C05 — Migraciones automáticas | Deploy sin intervención manual | 2 horas |
+| **P2** | C06 — TUI distribución | Equipo usa el TUI | 2-3 días |
+| **P2** | C07 — Backup PostgreSQL | Continuidad operacional | 1 día |
+| **P3** | C08 — GitHub App | SaaS multi-cliente | 3-5 días |
+| **P3** | C09 — Observabilidad | Diagnóstico en producción | 2 días |
+
+---
+
 ## FASE C — SaaS para Múltiples Organizaciones (Largo Plazo)
 
 **Objetivo:** una segunda empresa puede usar el producto sin modificar código ni intervención técnica de Omar Robles.
