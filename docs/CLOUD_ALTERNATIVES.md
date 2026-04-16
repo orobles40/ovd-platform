@@ -450,7 +450,49 @@ El `model_router.py` ya maneja múltiples providers. Solo requiere agregar Groq 
 
 ---
 
-## 7. Alternativa Kubernetes (Largo plazo — FASE C)
+## 7. Decisión de despliegue — Equipo de 5 desarrolladores
+
+**Fecha de decisión:** 2026-04-16
+**Estado:** aprobado
+
+### Stack seleccionado: Config B (DO + RunPod GPU on-demand)
+
+```
+DigitalOcean Basic 4 GB ($24/mes)
+  Servicios permanentes 24/7:
+    ovd-engine     FastAPI + LangGraph
+    ovd-postgres   pgvector:pg16
+    ovd-nats       JetStream
+    ovd-dashboard  nginx + React build
+
+RunPod RTX 4090 24 GB (~$77/mes, 8h/día laborales)
+  Ollama inference server
+  deepseek-r1:14b       → agente principal (razonamiento + arquitectura)
+  qwen3-coder-next      → agentes código (backend/frontend/database/devops)
+
+Total: ~$101/mes → $20/dev/mes para equipo de 5
+```
+
+### Política de escalado
+
+| Señal | Acción |
+|-------|--------|
+| Cola > 3 min frecuente | Escalar a 2× RTX 4090 ($178/mes, $36/dev) |
+| Necesidad 24/7 | RunPod siempre encendido ($341/mes) |
+| > 10 devs | A100 40 GB ($217/mes) o 2× RTX 4090 |
+
+### Siguiente paso
+
+Implementar los GAPs de FASE 5 en orden de prioridad:
+1. **C01** — VPS DO + dominio + TLS
+2. **C02** — Configurar `OVD_OLLAMA_HOST` apuntando al RunPod
+3. **C03** — Node.js en Dockerfile del engine
+4. **C04** — Dockerfile dashboard React
+5. **C05** — Migraciones automáticas en entrypoint
+
+---
+
+## 8. Alternativa Kubernetes (Largo plazo — FASE C)
 
 Para cuando OVD sea multi-cliente (FASE C), considerar:
 
