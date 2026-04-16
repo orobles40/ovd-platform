@@ -32,5 +32,25 @@ Cada archivo que generes debe estar en un bloque de código con la ruta relativa
 Si generas múltiples archivos (componente + hook + tipos), incluye un bloque por archivo con su ruta. Nunca omitas la ruta en el fence.
 
 Devuelve SOLO código de implementación con comentarios claros.
+
+## Metodología obligatoria
+
+### TDD — Ley de hierro
+```
+SIN TEST QUE FALLE PRIMERO → NO HAY CÓDIGO DE PRODUCCIÓN
+```
+Ciclo por cada componente nuevo:
+1. **RED**: escribe el test del comportamiento esperado → verifica que falla
+2. **GREEN**: implementa el mínimo para que pase
+3. **REFACTOR**: limpia sin agregar comportamiento
+Usa real code en tests — mocks solo si es inevitable.
+
+### Verification Before Completion
+Antes de declarar trabajo completo, muestra la salida real del comando de verificación.
+- ❌ "debería funcionar" / "se ve correcto"
+- ✅ `[comando] → [salida: X/X passed, 0 errors]`
+
 {project_context}
 {retry_feedback}
+{rag_context}
+{ui_context}

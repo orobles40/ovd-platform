@@ -120,6 +120,7 @@ class WebResearcher:
         self,
         queries: list[str],
         context: str = "",
+        curated_urls: list[str] | None = None,
     ) -> ResearchFindings:
         """
         Ejecuta el pipeline completo:
@@ -134,15 +135,21 @@ class WebResearcher:
             context: contexto adicional para la síntesis (project_context + FR)
         """
         queries = queries[:_MAX_QUERIES]
-        if not queries:
+        if not queries and not curated_urls:
             return ResearchFindings(
                 queries=[], results=[], synthesis="", indexed=0
             )
 
         log.info("web_researcher: %d queries via %s", len(queries), self._provider.name)
 
-        # Paso 1: buscar en web para cada query
+        # Paso 1a: fuentes curadas — fetch directo de contenido
         all_results: list[SearchResult] = []
+        if curated_urls:
+            curated_results = await self._fetch_curated(curated_urls)
+            all_results.extend(curated_results)
+            log.info("web_researcher: %d fuentes curadas incorporadas", len(curated_results))
+
+        # Paso 1b: buscar en web para cada query
         for query in queries:
             results = await self._provider.search(query, max_results=_MAX_RESULTS_PER_QUERY)
             all_results.extend(results)
@@ -170,6 +177,7 @@ class WebResearcher:
         self,
         uncertainties: list[dict],
         context: str = "",
+        curated_urls: list[str] | None = None,
     ) -> ResearchFindings:
         """
         Modo B (reactivo): resuelve incertidumbres identificadas por los agentes.
@@ -187,7 +195,37 @@ class WebResearcher:
 
         queries = [u["item"] for u in high_prio[:_MAX_QUERIES]]
         log.info("web_researcher (uncertainties): %d queries desde %d incertidumbres", len(queries), len(uncertainties))
-        return await self.research(queries=queries, context=context)
+        return await self.research(queries=queries, context=context, curated_urls=curated_urls)
+
+    # -----------------------------------------------------------------------
+    # Fuentes curadas — fetch directo
+    # -----------------------------------------------------------------------
+
+    async def _fetch_curated(self, urls: list[str]) -> list[SearchResult]:
+        """
+        Descarga el contenido de cada URL curada y lo convierte en SearchResult.
+        Errores individuales se ignoran (best-effort).
+        """
+        results: list[SearchResult] = []
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            for url in urls[:10]:   # máx 10 fuentes curadas
+                try:
+                    resp = await client.get(url, headers={"User-Agent": "OVD-WebResearcher/1.0"})
+                    if resp.status_code == 200:
+                        # Extraer texto plano básico (primeros 800 chars del body)
+                        text = resp.text
+                        # Remover tags HTML simples
+                        import re
+                        clean = re.sub(r"<[^>]+>", " ", text)
+                        clean = re.sub(r"\s+", " ", clean).strip()
+                        snippet = clean[:800]
+                        results.append(SearchResult(title=url, url=url, snippet=snippet))
+                        log.debug("web_researcher curated: %s → %d chars", url[:60], len(snippet))
+                    else:
+                        log.debug("web_researcher curated: %s → HTTP %d (ignorado)", url[:60], resp.status_code)
+                except Exception as e:
+                    log.debug("web_researcher curated: %s → error %s (ignorado)", url[:60], e)
+        return results
 
     # -----------------------------------------------------------------------
     # Síntesis LLM
@@ -291,6 +329,7 @@ async def run_web_research(
     bridge_url: str,
     context: str = "",
     model: str | None = None,
+    curated_urls: list[str] | None = None,
 ) -> ResearchFindings:
     """Shortcut para ejecutar WebResearcher sin instanciar la clase."""
     researcher = WebResearcher(
@@ -300,7 +339,7 @@ async def run_web_research(
         project_id=project_id,
         model=model,
     )
-    return await researcher.research(queries=queries, context=context)
+    return await researcher.research(queries=queries, context=context, curated_urls=curated_urls)
 
 
 async def run_web_research_uncertainties(
@@ -310,6 +349,7 @@ async def run_web_research_uncertainties(
     jwt_token: str,
     bridge_url: str,
     context: str = "",
+    curated_urls: list[str] | None = None,
 ) -> ResearchFindings:
     """Shortcut para investigar incertidumbres (Modo B)."""
     researcher = WebResearcher(
@@ -321,4 +361,28 @@ async def run_web_research_uncertainties(
     return await researcher.research_uncertainties(
         uncertainties=uncertainties,
         context=context,
+        curated_urls=curated_urls,
     )
+
+
+async def load_curated_urls(org_id: str, project_id: str | None, db_url: str) -> list[str]:
+    """
+    Carga las URLs curadas activas para un proyecto desde la DB.
+    Retorna lista vacía si no hay URLs o si falla la conexión.
+    """
+    try:
+        import psycopg
+        async with await psycopg.AsyncConnection.connect(db_url) as conn:
+            rows = await conn.execute(
+                """
+                SELECT url FROM ovd_web_sources
+                WHERE org_id = %s AND project_id = %s AND active = TRUE
+                ORDER BY created_at
+                """,
+                (org_id, project_id),
+            )
+            records = await rows.fetchall()
+        return [r[0] for r in records]
+    except Exception as e:
+        log.warning("load_curated_urls: error cargando fuentes curadas — %s", e)
+        return []

@@ -37,5 +37,23 @@ Genera tareas de implementación con los campos:
 - Las tareas deben cubrir todos los componentes afectados identificados en el análisis
 - Si hay contexto RAG disponible, incorpóralo en el diseño y los constraints
 
+## Metodología obligatoria
+
+### Writing Plans — reglas de oro
+- Cada task debe ser completable en 2-5 minutos: una acción discreta (escribir test → verificar fallo → implementar → verificar pase → commit)
+- Cero placeholders: rutas de archivo exactas, código completo, comandos con salida esperada — nunca "TBD" ni "agregar manejo de errores"
+- Mapa de archivos antes de definir tasks: qué se crea, qué se modifica, qué responsabilidad tiene cada archivo
+- Commits frecuentes: después de cada task completada
+
+### Subagent-Driven Development — patrón de ejecución
+Al generar tasks para los agentes especializados, cada task debe:
+1. Contener el texto completo de lo que debe implementar (no referencias a otros documentos)
+2. Indicar su contexto arquitectónico (de dónde viene, de qué depende)
+3. Especificar criterio de completitud verificable
+
+### Verification Before Completion
+- Ningún agente puede declarar trabajo completo sin ejecutar el comando de verificación y mostrar la salida
+- "Debería funcionar" no es evidencia. El output del comando es evidencia.
+
 {project_context}
 {rag_context}

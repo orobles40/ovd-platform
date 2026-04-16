@@ -73,6 +73,37 @@ export interface CyclesPage {
   items: CycleSummary[]
 }
 
+export interface TelemetryDay {
+  date: string
+  cycle_count: number
+  avg_qa: number
+  cost_usd: number
+  tokens_in: number
+  tokens_out: number
+}
+
+export interface WebSource {
+  id: string
+  url: string
+  label: string
+  created_at: string | null
+}
+
+export interface AgentTokens {
+  agent: string
+  tokens_in: number
+  tokens_out: number
+  cycle_count: number
+}
+
+export interface OrgTelemetry {
+  period_days: number
+  daily: TelemetryDay[]
+  agent_tokens: AgentTokens[]
+  complexity_dist: Record<string, number>
+  qa_delta: { current: number; previous: number; diff: number }
+}
+
 // ---------------------------------------------------------------------------
 // API calls
 // ---------------------------------------------------------------------------
@@ -104,4 +135,35 @@ export const ovdApi = {
   // Stats
   getStats: (orgId: string, days = 30) =>
     api.get<OrgStats>(`/api/v1/orgs/${orgId}/stats`, { params: { days } }).then((r) => r.data),
+
+  // Telemetry (S17.C)
+  getTelemetry: (orgId: string, days = 30) =>
+    api.get<OrgTelemetry>(`/api/v1/orgs/${orgId}/telemetry`, { params: { days } }).then((r) => r.data),
+
+  // PP-04 — Workspace Portability
+  exportProject: (orgId: string, projectId: string) =>
+    api.get(`/api/v1/orgs/${orgId}/projects/${projectId}/export`, { responseType: 'blob' }).then((r) => r.data as Blob),
+
+  // S11.H — Fuentes curadas
+  listWebSources: (orgId: string, projectId: string) =>
+    api.get<WebSource[]>(`/api/v1/orgs/${orgId}/projects/${projectId}/web-sources`).then((r) => r.data),
+
+  addWebSource: (orgId: string, projectId: string, data: { url: string; label?: string }) =>
+    api.post<{ id: string; url: string; label: string }>(
+      `/api/v1/orgs/${orgId}/projects/${projectId}/web-sources`,
+      data,
+    ).then((r) => r.data),
+
+  deleteWebSource: (orgId: string, projectId: string, sourceId: string) =>
+    api.delete(`/api/v1/orgs/${orgId}/projects/${projectId}/web-sources/${sourceId}`),
+
+  importProject: (orgId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<{ id: string; name: string; cycles_in_zip: number; profile: boolean }>(
+      `/api/v1/orgs/${orgId}/projects/import`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    ).then((r) => r.data)
+  },
 }

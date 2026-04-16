@@ -50,13 +50,27 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    // Parsear --from-file <ruta> antes de entrar al TUI
+    let preloaded_fr: Option<String> = {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(idx) = args.iter().position(|a| a == "--from-file") {
+            args.get(idx + 1).and_then(|path| {
+                std::fs::read_to_string(path)
+                    .map_err(|e| eprintln!("Error leyendo «{}»: {e}", path))
+                    .ok()
+            })
+        } else {
+            None
+        }
+    };
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal).await;
+    let result = run_app(&mut terminal, preloaded_fr).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -69,7 +83,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, preloaded_fr: Option<String>) -> Result<()> {
     let mut state = AppState::init()?;
     let mut onboarding = OnboardingWizard::default();
     let mut login_screen = LoginScreen::default();
@@ -79,6 +93,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut session_stream = SessionStreamScreen::default();
     let mut sdd_review = SddReviewScreen::default();
     let mut delivery_screen = DeliveryScreen::default();
+
+    // Si viene --from-file, precargar el texto en el formulario
+    let mut preloaded_fr = preloaded_fr;
+    if let Some(ref text) = preloaded_fr {
+        session_form.text = text.trim_end().to_string();
+    }
 
     // Si hay tokens válidos, cargar workspaces de inmediato
     if state.screen == Screen::WorkspaceSelect {
@@ -245,6 +265,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         WorkspaceAction::Select(idx) => {
                             if let Some(ws) = state.workspaces.get(idx).cloned() {
                                 state.select_workspace(ws)?;
+                                // --from-file: ir directo al formulario con el texto precargado
+                                if preloaded_fr.take().is_some() {
+                                    state.screen = Screen::SessionForm;
+                                }
                             }
                         }
                         WorkspaceAction::Logout => {
@@ -326,6 +350,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 }
                                 Err(e) => {
                                     state.set_error(format!("{e}"));
+                                }
+                            }
+                        }
+                        SessionFormAction::LoadFile { path } => {
+                            match tokio::fs::read_to_string(&path).await {
+                                Ok(content) => {
+                                    session_form.text = content.trim_end().to_string();
+                                    state.clear_error();
+                                }
+                                Err(e) => {
+                                    state.set_error(format!("No se pudo leer «{}»: {e}", path));
                                 }
                             }
                         }

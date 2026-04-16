@@ -599,6 +599,50 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
 
         fname = report_file.name
 
+        # OB-01/OB-02: parsear YAML frontmatter para metadatos estructurados
+        frontmatter: dict = {}
+        if text.startswith("---\n"):
+            end = text.find("\n---\n", 4)
+            if end != -1:
+                fm_text = text[4:end]
+                try:
+                    import yaml as _yaml  # type: ignore[import]
+                    frontmatter = _yaml.safe_load(fm_text) or {}
+                except Exception:
+                    # Parseo manual de pares clave: valor simples
+                    for line in fm_text.splitlines():
+                        if ": " in line:
+                            k, _, v = line.partition(": ")
+                            frontmatter[k.strip()] = v.strip().strip('"')
+
+        # Metadatos combinados: frontmatter (prioritario) + regex fallback
+        qa_score: int | None = (
+            int(frontmatter["qa_score"]) if "qa_score" in frontmatter and frontmatter["qa_score"] is not None
+            else _extract_number(text, r"QA Score\s*\|\s*(\d+)/100")
+        )
+        sec_score: int | None = (
+            int(frontmatter["security_score"]) if "security_score" in frontmatter and frontmatter["security_score"] is not None
+            else _extract_number(text, r"Security Score\s*\|\s*(\d+)/100")
+        )
+        qa_passed_fm = frontmatter.get("qa_passed")
+        qa_passed = bool(qa_passed_fm) if qa_passed_fm is not None else ("| QA Passed | ✅" in text)
+
+        # created_at desde frontmatter (YYYY-MM-DD) o mtime del archivo
+        created_at: str | None = None
+        if "date" in frontmatter:
+            created_at = str(frontmatter["date"])[:10]
+        else:
+            try:
+                import datetime
+                created_at = datetime.datetime.fromtimestamp(
+                    report_file.stat().st_mtime
+                ).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        session_id: str = str(frontmatter.get("session_id", ""))
+        provider: str = str(frontmatter.get("provider", ""))
+
         # --- Chunk 1: resumen del ciclo ---
         cycle_lines = []
         for key in ("resumen", "ciclo", "summary", "estado"):
@@ -606,23 +650,25 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
                 cycle_lines.append(sections[key])
         # Incluir cabecera del archivo (primera línea = título con FR)
         header = parts[0].strip() if parts else ""
+        # Omitir el bloque frontmatter del header si está presente
+        if header.startswith("---"):
+            end_fm = header.find("\n---", 3)
+            header = header[end_fm + 4:].strip() if end_fm != -1 else ""
         cycle_content = f"{header}\n\n" + "\n\n".join(cycle_lines) if cycle_lines else header
 
-        # Extraer metadatos básicos del texto (formato tabla markdown del informe)
-        qa_score = _extract_number(text, r"QA Score\s*\|\s*(\d+)/100")
-        sec_score = _extract_number(text, r"Security Score\s*\|\s*(\d+)/100")
-        qa_passed = "| QA Passed | ✅" in text
-
         if cycle_content.strip():
+            meta: dict = {"kind": "ciclo", "qa_score": qa_score, "security_score": sec_score}
+            if created_at:
+                meta["created_at"] = created_at
+            if session_id:
+                meta["session_id"] = session_id
+            if provider:
+                meta["provider"] = provider
             yield Chunk(
                 content=cycle_content[:_MAX_CHUNK_CHARS],
                 doc_type="delivery",
                 source_file=fname,
-                metadata={
-                    "kind": "ciclo",
-                    "qa_score": qa_score,
-                    "security_score": sec_score,
-                },
+                metadata=meta,
             )
 
         # --- Chunk 2: archivos de implementación ---

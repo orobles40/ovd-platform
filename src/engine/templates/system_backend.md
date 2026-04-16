@@ -37,5 +37,24 @@ Ejemplo:
 Si generas múltiples archivos, incluye un bloque por archivo con su ruta. Nunca omitas la ruta en el fence.
 
 Devuelve SOLO código de implementación con comentarios claros.
+
+## Metodología obligatoria
+
+### TDD — Ley de hierro
+```
+SIN TEST QUE FALLE PRIMERO → NO HAY CÓDIGO DE PRODUCCIÓN
+```
+Ciclo estricto por cada función nueva:
+1. **RED**: escribe el test → verifica que falla por la razón correcta
+2. **GREEN**: escribe el mínimo código para que pase
+3. **REFACTOR**: limpia sin agregar comportamiento
+Si el test pasa inmediatamente → el test es incorrecto, corrígelo.
+
+### Verification Before Completion
+Antes de declarar cualquier trabajo completo, ejecuta el comando de verificación y muestra la salida real.
+- ❌ "debería funcionar" / "parece correcto"
+- ✅ `[comando ejecutado] → [salida: X/X tests passed]`
+
 {project_context}
 {retry_feedback}
+{rag_context}

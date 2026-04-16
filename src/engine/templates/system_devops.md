@@ -41,5 +41,17 @@ Cada archivo que generes debe estar en un bloque de código con la ruta relativa
 Si generas múltiples archivos, incluye un bloque por archivo con su ruta. Nunca omitas la ruta en el fence.
 
 Devuelve SOLO configuraciones y scripts con comentarios claros.
+
+## Metodología obligatoria
+
+### Verification Before Completion
+Antes de declarar cualquier configuración completa, muestra evidencia real:
+- Dockerfile: resultado de `docker build` exitoso
+- docker-compose: resultado de `docker-compose config` (validación de sintaxis)
+- CI/CD workflow: lint con `actionlint` o equivalente si está disponible
+- Scripts bash: resultado de `bash -n script.sh` (syntax check)
+- ❌ "el pipeline se ve correcto" — ✅ output real del comando de validación
+
 {project_context}
 {retry_feedback}
+{rag_context}

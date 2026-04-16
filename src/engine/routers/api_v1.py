@@ -19,18 +19,22 @@ Endpoints protegidos (Bearer JWT) para el panel de administración:
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import AccessTokenPayload
 from routers.auth_router import inject_current_user
+import pending_store
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -519,4 +523,822 @@ async def get_stats(
             {"date": str(row[0]), "count": row[1]}
             for row in daily
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Aprobaciones pendientes (web dashboard — panel Approval.tsx)
+# ---------------------------------------------------------------------------
+
+@router.get("/orgs/{org_id}/approvals/pending")
+async def list_pending_approvals(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """
+    Retorna las sesiones con aprobación de SDD pendiente para un org.
+    Alimentado por el almacén en memoria pending_store (se pobla cuando
+    el stream SSE detecta un interrupt de request_approval).
+    """
+    _assert_org_access(current_user, org_id)
+
+    items = pending_store.list_by_org(org_id)
+
+    # Enriquecer con project_name si hay project_id
+    project_ids = {i["project_id"] for i in items if i.get("project_id")}
+    project_names: dict[str, str] = {}
+    if project_ids and _DATABASE_URL:
+        try:
+            async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+                placeholders = ",".join(["%s"] * len(project_ids))
+                rows = await conn.execute(
+                    f"SELECT id, name FROM ovd_projects WHERE id IN ({placeholders})",
+                    list(project_ids),
+                )
+                for row in await rows.fetchall():
+                    project_names[row[0]] = row[1]
+        except Exception:
+            pass
+
+    from datetime import datetime, timezone
+    return [
+        {
+            "thread_id":      item["thread_id"],
+            "session_id":     item["session_id"],
+            "project_name":   project_names.get(item.get("project_id", ""), None),
+            "feature_request": item["feature_request"],
+            "sdd_summary":    item["sdd_summary"],
+            "sdd":            item.get("sdd", {}),
+            "created_at":     datetime.fromtimestamp(item["stored_at"], tz=timezone.utc).isoformat(),
+            "revision_count": item.get("revision_count", 0),
+        }
+        for item in items
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Telemetría (S17.C) — métricas históricas para el panel de observabilidad
+# ---------------------------------------------------------------------------
+
+@router.get("/orgs/{org_id}/telemetry")
+async def get_telemetry(
+    org_id: str,
+    days: int = Query(30, le=90),
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """
+    S17.C — Datos de telemetría histórica para el dashboard de observabilidad.
+    Retorna:
+      - daily_qa: QA promedio diario + conteo de ciclos
+      - daily_cost: costo diario acumulado
+      - daily_tokens: tokens input/output diarios
+      - agent_tokens: desglose de tokens por agente (suma de tokens_by_agent_json)
+      - complexity_dist: distribución de ciclos por complejidad
+      - security_dist: distribución por severity (none/low/medium/high)
+    """
+    _assert_org_access(current_user, org_id)
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        # Trend diario: QA, costo, tokens
+        daily_rows = await conn.execute(
+            """
+            SELECT
+                DATE(time_created)              AS day,
+                COUNT(*)                        AS cycle_count,
+                COALESCE(AVG(qa_score), 0)      AS avg_qa,
+                COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd,
+                COALESCE(SUM(tokens_input), 0)  AS tokens_in,
+                COALESCE(SUM(tokens_output), 0) AS tokens_out
+            FROM ovd_cycle_logs
+            WHERE org_id = %s
+              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+            GROUP BY day
+            ORDER BY day
+            """,
+            (org_id, days),
+        )
+        daily = await daily_rows.fetchall()
+
+        # Tokens por agente: expandir tokens_by_agent_json (JSONB)
+        agent_rows = await conn.execute(
+            """
+            SELECT
+                agent_key,
+                SUM((agent_val->>'input')::int)  AS tokens_in,
+                SUM((agent_val->>'output')::int) AS tokens_out,
+                COUNT(*)                         AS cycle_count
+            FROM ovd_cycle_logs,
+                 jsonb_each(tokens_by_agent_json) AS kv(agent_key, agent_val)
+            WHERE org_id = %s
+              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+              AND tokens_by_agent_json IS NOT NULL
+              AND tokens_by_agent_json != 'null'::jsonb
+            GROUP BY agent_key
+            ORDER BY tokens_in + tokens_out DESC
+            """,
+            (org_id, days),
+        )
+        agents = await agent_rows.fetchall()
+
+        # Distribución de complejidad
+        complexity_rows = await conn.execute(
+            """
+            SELECT complexity, COUNT(*) AS cnt
+            FROM ovd_cycle_logs
+            WHERE org_id = %s
+              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+              AND complexity IS NOT NULL
+            GROUP BY complexity
+            """,
+            (org_id, days),
+        )
+        complexity = await complexity_rows.fetchall()
+
+        # QA promedio período actual vs período anterior (para delta)
+        delta_row = await conn.execute(
+            """
+            SELECT
+                COALESCE(AVG(qa_score) FILTER (WHERE time_created >= NOW() - (%s * INTERVAL '1 day')), 0)         AS qa_current,
+                COALESCE(AVG(qa_score) FILTER (WHERE time_created <  NOW() - (%s * INTERVAL '1 day')
+                                                AND time_created >= NOW() - (%s * INTERVAL '1 day')), 0) AS qa_prev
+            FROM ovd_cycle_logs
+            WHERE org_id = %s
+            """,
+            (days, days, days * 2, org_id),
+        )
+        delta = await delta_row.fetchone()
+
+    return {
+        "period_days": days,
+        "daily": [
+            {
+                "date":        str(r[0]),
+                "cycle_count": r[1],
+                "avg_qa":      round(float(r[2]), 1),
+                "cost_usd":    round(float(r[3]), 5),
+                "tokens_in":   int(r[4]),
+                "tokens_out":  int(r[5]),
+            }
+            for r in daily
+        ],
+        "agent_tokens": [
+            {
+                "agent":       r[0],
+                "tokens_in":   int(r[1]) if r[1] else 0,
+                "tokens_out":  int(r[2]) if r[2] else 0,
+                "cycle_count": int(r[3]),
+            }
+            for r in agents
+        ],
+        "complexity_dist": {r[0]: r[1] for r in complexity},
+        "qa_delta": {
+            "current": round(float(delta[0]), 1),
+            "previous": round(float(delta[1]), 1),
+            "diff": round(float(delta[0]) - float(delta[1]), 1),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# PP-04 — Workspace Portability: export / import
+# ---------------------------------------------------------------------------
+
+_EXPORT_FORMAT_VERSION = "1.0"
+_EXPORT_MAX_CYCLES     = 500
+
+
+@router.get("/orgs/{org_id}/projects/{project_id}/export")
+async def export_project(
+    org_id: str,
+    project_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """
+    PP-04 — Exporta un proyecto como ZIP con:
+      manifest.json  — metadatos del export
+      project.json   — configuración del proyecto
+      profile.json   — stack profile (si existe)
+      cycles.jsonl   — hasta 500 ciclos más recientes (solo campos ligeros)
+    """
+    _assert_org_access(current_user, org_id)
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        # Proyecto
+        p_row = await conn.execute(
+            """
+            SELECT id, name, description, directory, active, time_created
+            FROM ovd_projects WHERE id = %s AND org_id = %s
+            """,
+            (project_id, org_id),
+        )
+        p = await p_row.fetchone()
+        if not p:
+            raise HTTPException(404, detail="Proyecto no encontrado")
+
+        project_data = {
+            "id": p[0], "name": p[1], "description": p[2],
+            "directory": p[3], "active": p[4],
+            "created_at": p[5].isoformat() if p[5] else None,
+        }
+
+        # Stack profile
+        prof_row = await conn.execute(
+            """
+            SELECT language, framework, db_engine, runtime, additional_stack,
+                   legacy_stack, external_integrations, qa_tools, ci_cd,
+                   constraints, code_style, project_description, team_size
+            FROM ovd_project_profiles
+            WHERE project_id = %s AND active = true
+            ORDER BY time_created DESC LIMIT 1
+            """,
+            (project_id,),
+        )
+        prof = await prof_row.fetchone()
+        profile_data = None
+        if prof:
+            profile_data = {
+                "language": prof[0], "framework": prof[1], "db_engine": prof[2],
+                "runtime": prof[3], "additional_stack": prof[4] or [],
+                "legacy_stack": prof[5], "external_integrations": prof[6],
+                "qa_tools": prof[7], "ci_cd": prof[8], "constraints": prof[9],
+                "code_style": prof[10], "project_description": prof[11],
+                "team_size": prof[12],
+            }
+
+        # Ciclos (campos ligeros — sin agent_results_json ni sdd_json)
+        cyc_rows = await conn.execute(
+            """
+            SELECT id, session_id, feature_request, qa_score, complexity,
+                   fr_type, tokens_total, estimated_cost_usd, time_created
+            FROM ovd_cycle_logs
+            WHERE project_id = %s AND org_id = %s
+            ORDER BY time_created DESC
+            LIMIT %s
+            """,
+            (project_id, org_id, _EXPORT_MAX_CYCLES),
+        )
+        cycles = await cyc_rows.fetchall()
+
+    # Construir ZIP en memoria
+    buf = io.BytesIO()
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        manifest = {
+            "format_version": _EXPORT_FORMAT_VERSION,
+            "exported_at":    now_str,
+            "org_id":         org_id,
+            "project_id":     project_id,
+            "project_name":   project_data["name"],
+            "cycles_exported": len(cycles),
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        zf.writestr("project.json",  json.dumps(project_data, ensure_ascii=False, indent=2))
+
+        if profile_data:
+            zf.writestr("profile.json", json.dumps(profile_data, ensure_ascii=False, indent=2))
+
+        if cycles:
+            lines = []
+            for c in cycles:
+                lines.append(json.dumps({
+                    "id":              c[0],
+                    "session_id":      c[1],
+                    "feature_request": c[2],
+                    "qa_score":        c[3],
+                    "complexity":      c[4],
+                    "fr_type":         c[5],
+                    "tokens_total":    c[6],
+                    "cost_usd":        float(c[7]) if c[7] else 0.0,
+                    "created_at":      c[8].isoformat() if c[8] else None,
+                }, ensure_ascii=False))
+            zf.writestr("cycles.jsonl", "\n".join(lines))
+
+    buf.seek(0)
+    safe_name = project_data["name"].replace(" ", "_")[:32]
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename = f"ovd-export-{safe_name}-{ts}.zip"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/orgs/{org_id}/projects/import", status_code=status.HTTP_201_CREATED)
+async def import_project(
+    org_id: str,
+    file: UploadFile = File(...),
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """
+    PP-04 — Importa un proyecto desde un ZIP exportado por OVD.
+    Restaura project.json y profile.json. Los ciclos (cycles.jsonl) se incluyen
+    en el export como referencia pero no se reimportan (son registros históricos).
+    Siempre crea un nuevo proyecto (nuevo ID) para evitar conflictos.
+    """
+    _assert_org_access(current_user, org_id)
+
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(400, detail="Solo se aceptan archivos .zip")
+
+    content = await file.read()
+    try:
+        buf = io.BytesIO(content)
+        with zipfile.ZipFile(buf, "r") as zf:
+            names = zf.namelist()
+            if "manifest.json" not in names or "project.json" not in names:
+                raise HTTPException(400, detail="ZIP inválido: faltan manifest.json o project.json")
+
+            manifest = json.loads(zf.read("manifest.json"))
+            if manifest.get("format_version") != _EXPORT_FORMAT_VERSION:
+                raise HTTPException(400, detail=f"Versión de export no soportada: {manifest.get('format_version')}")
+
+            project = json.loads(zf.read("project.json"))
+            profile = json.loads(zf.read("profile.json")) if "profile.json" in names else None
+
+    except zipfile.BadZipFile:
+        raise HTTPException(400, detail="Archivo ZIP corrupto o inválido")
+
+    new_project_id = str(uuid.uuid4()).replace("-", "").upper()[:26]
+    now = datetime.now(timezone.utc)
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        await conn.execute(
+            """
+            INSERT INTO ovd_projects (id, org_id, name, description, directory, active, time_created, time_updated)
+            VALUES (%s, %s, %s, %s, %s, true, %s, %s)
+            """,
+            (
+                new_project_id, org_id,
+                project.get("name", "Proyecto importado"),
+                project.get("description", ""),
+                project.get("directory", ""),
+                now, now,
+            ),
+        )
+
+        if profile:
+            profile_id = str(uuid.uuid4()).replace("-", "").upper()[:26]
+            additional = json.dumps(profile.get("additional_stack") or [])
+            await conn.execute(
+                """
+                INSERT INTO ovd_project_profiles
+                  (id, org_id, project_id, language, framework, db_engine, runtime,
+                   additional_stack, legacy_stack, external_integrations, qa_tools,
+                   ci_cd, constraints, code_style, project_description, team_size,
+                   active, time_created, time_updated)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s)
+                """,
+                (
+                    profile_id, org_id, new_project_id,
+                    profile.get("language"), profile.get("framework"), profile.get("db_engine"),
+                    profile.get("runtime"), additional, profile.get("legacy_stack"),
+                    profile.get("external_integrations"), profile.get("qa_tools"),
+                    profile.get("ci_cd"), profile.get("constraints"), profile.get("code_style"),
+                    profile.get("project_description"), profile.get("team_size"),
+                    now, now,
+                ),
+            )
+
+        await conn.commit()
+
+    return {
+        "id":            new_project_id,
+        "name":          project.get("name"),
+        "cycles_in_zip": manifest.get("cycles_exported", 0),
+        "profile":       profile is not None,
+    }
+
+
+# PP-05 + PP-02 — Sesiones activas y colgadas para el Org Chart / Heartbeat
+@router.get("/orgs/{org_id}/sessions/stale")
+async def list_stale_sessions_endpoint(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """PP-02 — Lista sesiones detectadas como colgadas (elapsed > umbral)."""
+    _assert_org_access(current_user, org_id)
+    import sys, pathlib
+    engine_dir = pathlib.Path(__file__).parent.parent
+    if str(engine_dir) not in sys.path:
+        sys.path.insert(0, str(engine_dir))
+    from task_checkout import list_stale_sessions  # type: ignore
+    return list_stale_sessions(org_id=org_id)
+
+
+@router.get("/orgs/{org_id}/sessions/active")
+async def list_active_sessions(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """PP-05 — Lista sesiones activas (en streaming) para el Org Chart."""
+    _assert_org_access(current_user, org_id)
+    import sys
+    import pathlib
+    engine_dir = pathlib.Path(__file__).parent.parent
+    if str(engine_dir) not in sys.path:
+        sys.path.insert(0, str(engine_dir))
+    from task_checkout import list_active_sessions  # type: ignore
+    return list_active_sessions(org_id=org_id)
+
+
+# S17.A — Admin: gestión de usuarios del org
+# ---------------------------------------------------------------------------
+
+class UserRoleUpdate(BaseModel):
+    role:   str | None = None    # admin | developer | viewer
+    active: bool | None = None
+
+
+@router.get("/orgs/{org_id}/users")
+async def list_org_users(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S17.A — Lista usuarios del org. Solo accesible con role=admin."""
+    _assert_org_access(current_user, org_id)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden ver usuarios")
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        rows = await conn.execute(
+            "SELECT id, email, role, active, created_at FROM ovd_users WHERE org_id = %s ORDER BY created_at",
+            (org_id,),
+        )
+        users = await rows.fetchall()
+
+    return [
+        {
+            "id":         r[0],
+            "email":      r[1],
+            "role":       r[2],
+            "active":     r[3],
+            "created_at": r[4].isoformat() if r[4] else None,
+        }
+        for r in users
+    ]
+
+
+@router.patch("/orgs/{org_id}/users/{user_id}", status_code=status.HTTP_200_OK)
+async def update_org_user(
+    org_id: str,
+    user_id: str,
+    body: UserRoleUpdate,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S17.A — Cambia role o activa/desactiva un usuario. Solo admin."""
+    _assert_org_access(current_user, org_id)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden modificar usuarios")
+    if body.role and body.role not in ("admin", "developer", "viewer"):
+        raise HTTPException(status_code=400, detail="role debe ser admin|developer|viewer")
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        if body.role is not None and body.active is not None:
+            await conn.execute(
+                "UPDATE ovd_users SET role=%s, active=%s WHERE id=%s AND org_id=%s",
+                (body.role, body.active, user_id, org_id),
+            )
+        elif body.role is not None:
+            await conn.execute(
+                "UPDATE ovd_users SET role=%s WHERE id=%s AND org_id=%s",
+                (body.role, user_id, org_id),
+            )
+        elif body.active is not None:
+            await conn.execute(
+                "UPDATE ovd_users SET active=%s WHERE id=%s AND org_id=%s",
+                (body.active, user_id, org_id),
+            )
+        await conn.commit()
+
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# S17.D — Knowledge Bootstrap UI
+# ---------------------------------------------------------------------------
+
+class KnowledgeIndexRequest(BaseModel):
+    project_id: str
+    source_path: str
+    doc_type: str = "doc"   # codebase|doc|schema|contract|ticket|delivery
+
+
+@router.get("/orgs/{org_id}/knowledge/status")
+async def get_knowledge_status(
+    org_id: str,
+    project_id: str | None = Query(None),
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S17.D — Estadísticas de chunks RAG indexados para el org/proyecto."""
+    _assert_org_access(current_user, org_id)
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        if project_id:
+            collection_name = f"ovd_project_{project_id}"
+            row = await conn.execute(
+                """
+                SELECT COUNT(e.id)
+                FROM langchain_pg_collection c
+                JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
+                WHERE c.name = %s
+                """,
+                (collection_name,),
+            )
+        else:
+            row = await conn.execute(
+                """
+                SELECT COUNT(e.id)
+                FROM langchain_pg_collection c
+                JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
+                WHERE c.name LIKE 'ovd_project_%%'
+                """,
+            )
+        total = (await row.fetchone())[0]
+
+        # Desglose por proyecto/colección
+        breakdown_rows = await conn.execute(
+            """
+            SELECT c.name, COUNT(e.id) AS chunks
+            FROM langchain_pg_collection c
+            JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
+            WHERE c.name LIKE 'ovd_project_%%'
+            GROUP BY c.name
+            ORDER BY chunks DESC
+            """,
+        )
+        breakdown = await breakdown_rows.fetchall()
+
+    return {
+        "total_chunks": int(total),
+        "by_project": [
+            {"collection": r[0], "chunks": int(r[1])}
+            for r in breakdown
+        ],
+    }
+
+
+@router.post("/orgs/{org_id}/knowledge/index", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_knowledge_index(
+    org_id: str,
+    body: KnowledgeIndexRequest,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S17.D — Lanza el bootstrap RAG en background para una ruta dada."""
+    _assert_org_access(current_user, org_id)
+
+    import asyncio
+    import sys
+    import pathlib
+
+    knowledge_dir = pathlib.Path(__file__).parent.parent.parent.parent / "knowledge"
+    if str(knowledge_dir) not in sys.path:
+        sys.path.insert(0, str(knowledge_dir))
+
+    try:
+        from knowledge import bootstrap  # type: ignore
+    except ImportError:
+        knowledge_dir2 = pathlib.Path(__file__).parent.parent.parent / "knowledge"
+        if str(knowledge_dir2) not in sys.path:
+            sys.path.insert(0, str(knowledge_dir2))
+        import importlib
+        bootstrap = importlib.import_module("knowledge.bootstrap")
+
+    async def _run():
+        result = await bootstrap.run(
+            org_id=org_id,
+            project_id=body.project_id,
+            source_path=body.source_path,
+            doc_type=body.doc_type,
+        )
+        import logging
+        logging.getLogger("ovd.api").info("knowledge.index done: %s", result.summary())
+
+    asyncio.create_task(_run())
+
+    return {"status": "indexing_started", "project_id": body.project_id, "source_path": body.source_path}
+
+
+# ---------------------------------------------------------------------------
+# S17.B — Model Dashboard: estado del dataset de fine-tuning
+# ---------------------------------------------------------------------------
+
+@router.get("/orgs/{org_id}/model/status")
+async def get_model_status(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S17.B — Estadísticas del dataset para fine-tuning del modelo propio."""
+    _assert_org_access(current_user, org_id)
+
+    M1_GOAL = 500  # ciclos de calidad para hito M1
+
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        totals_row = await conn.execute(
+            """
+            SELECT
+                COUNT(*)                                          AS total_cycles,
+                COUNT(*) FILTER (WHERE qa_score >= 70)           AS training_ready,
+                COUNT(*) FILTER (WHERE qa_score >= 80)           AS high_quality,
+                COALESCE(AVG(qa_score), 0)                       AS avg_qa
+            FROM ovd_cycle_logs
+            WHERE org_id = %s
+            """,
+            (org_id,),
+        )
+        totals = await totals_row.fetchone()
+
+        by_project_rows = await conn.execute(
+            """
+            SELECT
+                p.name,
+                COUNT(c.id)                                       AS total,
+                COUNT(c.id) FILTER (WHERE c.qa_score >= 70)      AS training_ready
+            FROM ovd_cycle_logs c
+            LEFT JOIN ovd_projects p ON p.id = c.project_id
+            WHERE c.org_id = %s
+            GROUP BY p.name
+            ORDER BY training_ready DESC
+            LIMIT 10
+            """,
+            (org_id,),
+        )
+        by_project = await by_project_rows.fetchall()
+
+    training_ready = int(totals[1]) if totals[1] else 0
+    return {
+        "total_cycles":    int(totals[0]) if totals[0] else 0,
+        "training_ready":  training_ready,
+        "high_quality":    int(totals[2]) if totals[2] else 0,
+        "avg_qa_score":    round(float(totals[3]), 1),
+        "m1_goal":         M1_GOAL,
+        "m1_progress_pct": round(min(training_ready / M1_GOAL * 100, 100), 1),
+        "by_project": [
+            {"project": r[0] or "Sin nombre", "total": int(r[1]), "training_ready": int(r[2])}
+            for r in by_project
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# S11.H — Fuentes curadas por workspace
+# ---------------------------------------------------------------------------
+
+class WebSourceCreate(BaseModel):
+    url:   str
+    label: str = ""
+
+
+@router.get("/orgs/{org_id}/projects/{project_id}/web-sources")
+async def list_web_sources(
+    org_id: str,
+    project_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S11.H — Lista URLs curadas activas del proyecto."""
+    _assert_org_access(current_user, org_id)
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        rows = await conn.execute(
+            """
+            SELECT id, url, label, created_at
+            FROM ovd_web_sources
+            WHERE org_id = %s AND project_id = %s AND active = TRUE
+            ORDER BY created_at
+            """,
+            (org_id, project_id),
+        )
+        records = await rows.fetchall()
+    return [
+        {"id": r[0], "url": r[1], "label": r[2], "created_at": r[3].isoformat() if r[3] else None}
+        for r in records
+    ]
+
+
+@router.post("/orgs/{org_id}/projects/{project_id}/web-sources", status_code=status.HTTP_201_CREATED)
+async def add_web_source(
+    org_id: str,
+    project_id: str,
+    body: WebSourceCreate,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S11.H — Agrega una URL curada al proyecto."""
+    _assert_org_access(current_user, org_id)
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="La URL debe comenzar con http:// o https://")
+
+    new_id = str(uuid.uuid4())
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        try:
+            await conn.execute(
+                """
+                INSERT INTO ovd_web_sources (id, org_id, project_id, url, label)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (new_id, org_id, project_id, body.url.strip(), body.label.strip()),
+            )
+            await conn.commit()
+        except Exception as exc:
+            if "idx_ovd_web_sources_uniq" in str(exc):
+                raise HTTPException(status_code=409, detail="Esa URL ya existe en este proyecto")
+            raise
+
+    return {"id": new_id, "url": body.url.strip(), "label": body.label.strip()}
+
+
+@router.delete("/orgs/{org_id}/projects/{project_id}/web-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_web_source(
+    org_id: str,
+    project_id: str,
+    source_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """S11.H — Desactiva una URL curada (soft delete)."""
+    _assert_org_access(current_user, org_id)
+    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+        result = await conn.execute(
+            "UPDATE ovd_web_sources SET active = FALSE WHERE id = %s AND org_id = %s AND project_id = %s",
+            (source_id, org_id, project_id),
+        )
+        await conn.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Fuente no encontrada")
+
+
+# ---------------------------------------------------------------------------
+# Admin: Skills externos (ui-ux-pro-max + superpowers)
+# ---------------------------------------------------------------------------
+
+# Estado del último job de actualización (en memoria; se reinicia con el proceso)
+_skills_job: dict = {"status": "idle", "output": "", "updated_at": None}
+
+_VALID_TARGETS = {"ui-ux", "superpowers", "all"}
+
+
+class SkillsUpdateRequest(BaseModel):
+    target: str = "all"   # ui-ux | superpowers | all
+
+
+@router.post("/orgs/{org_id}/admin/skills/update", status_code=status.HTTP_202_ACCEPTED)
+async def update_skills(
+    org_id: str,
+    body: SkillsUpdateRequest,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """Ejecuta update-skills.sh en background. Solo admin."""
+    _assert_org_access(current_user, org_id)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden actualizar skills")
+    if body.target not in _VALID_TARGETS:
+        raise HTTPException(status_code=400, detail=f"target debe ser: {', '.join(sorted(_VALID_TARGETS))}")
+
+    if _skills_job["status"] == "running":
+        raise HTTPException(status_code=409, detail="Ya hay una actualización en curso")
+
+    import asyncio
+    import pathlib
+
+    script_path = pathlib.Path(__file__).parent.parent.parent.parent / "scripts" / "update-skills.sh"
+    if not script_path.exists():
+        raise HTTPException(status_code=500, detail=f"Script no encontrado: {script_path}")
+
+    _skills_job["status"] = "running"
+    _skills_job["output"] = ""
+    _skills_job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    async def _run():
+        env = {"TARGET": body.target, "PATH": os.environ.get("PATH", "")}
+        proc = await asyncio.create_subprocess_exec(
+            "bash", str(script_path),
+            env={**os.environ, **env},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode("utf-8", errors="replace") if stdout else ""
+        _skills_job["status"] = "done" if proc.returncode == 0 else "error"
+        _skills_job["output"] = output
+        _skills_job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    asyncio.create_task(_run())
+
+    return {"status": "accepted", "target": body.target}
+
+
+@router.get("/orgs/{org_id}/admin/skills/status")
+async def get_skills_status(
+    org_id: str,
+    current_user: AccessTokenPayload = Depends(inject_current_user),
+):
+    """Retorna el estado del último job de actualización de skills. Solo admin."""
+    _assert_org_access(current_user, org_id)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden ver el estado de skills")
+
+    return {
+        "status":     _skills_job["status"],
+        "output":     _skills_job["output"],
+        "updated_at": _skills_job["updated_at"],
     }

@@ -42,12 +42,21 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-08)
+## Estado actual (2026-04-16)
 
-- **Sprints completados:** S3 → S17T + SEC + RAG-directo + Fase A tests + Fase B E2E
-- **Tests:** 471/471 pasando (436 Python + 35 Rust)
-- **Pendiente prioritario:** BUG-04 (security agent 0/100 con Ollama), features S15T.H, S15T.I
-- **Seguridad:** todos los hallazgos MEDIUM y LOW corregidos (ver docs/security/SEC-2026-03-28.md). Solo queda SEC-01 estructural (ownership validation session delivery)
+- **Sprints completados:** S3 → S18 (Skills externos + MCP context7 + TUI --from-file)
+- **Tests:** 471/471 pasando (Python unit, excluye integration/e2e)
+- **Próximo foco:** Despliegue centralizado del Engine (servidor VPS + dominio + TLS) como prerrequisito para FASE 5.F distribución TUI
+- **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
+
+### Novedades S18 (2026-04-16)
+- **Superpowers en agentes:** 7 system prompts actualizados con writing-plans, TDD, verification-before-completion
+- **ui-ux-pro-max:** clonado en `src/knowledge/ui-ux/`, consultado dinámicamente por agente frontend vía BM25 (`{ui_context}`)
+- **Skills Manager web:** `/admin/skills` — actualiza repos externos desde el dashboard (admin only)
+- **MCP Client Pool:** `src/engine/mcp_client.py` — context7 conectado a agentes backend/frontend/database/devops
+- **MCP tools adapter:** `src/engine/tools/mcp_tools.py` — convierte MCP tools a LangChain StructuredTool
+- **TUI --from-file:** carga archivos .md desde CLI o `Ctrl+O` interactivo en el formulario FR
+- **Dependencia nueva:** `mcp>=1.0` (v1.27.0) en `src/engine/pyproject.toml`
 
 ## RAG
 
@@ -57,6 +66,11 @@ cd src/tui && cargo build && cargo run
 - **Bootstrap OVD Platform:** 1617 chunks indexados (docs/ + src/engine/ + CLAUDE.md)
 - **Auto-index post-ciclo:** `_index_delivery_report` en graph.py llama a knowledge.bootstrap
 - **Nota:** PostgreSQL (`postgres_db`) no tiene restart policy — hay que levantarlo manualmente si Docker Desktop se reinicia: `docker start postgres_db`
+
+## Knowledge externa (S18)
+
+- **ui-ux-pro-max:** `src/knowledge/ui-ux/` — guías de diseño UI/UX consultadas en runtime por agente frontend vía BM25 search (`template_loader.query_ui_context()`). Actualizar: `./scripts/update-skills.sh`
+- **superpowers-upstream:** `src/knowledge/superpowers-upstream/` — copia local de obra/superpowers para comparar diffs. Los 6 skills integrados viven en los templates del engine. Actualizar: revisar diff con `scripts/update-skills.sh` y editar templates manualmente.
 
 ## Metodología de desarrollo
 

@@ -58,6 +58,16 @@ import nats_client
 import telemetry  # Sprint 10 — GAP-A6
 import web_researcher  # Sprint 11 — S11.B
 from tools import make_file_tools, read_project_context  # S17T
+import mcp_client  # Fase A — MCP tools (context7)
+
+# ---------------------------------------------------------------------------
+# Configuración operacional
+# ---------------------------------------------------------------------------
+
+# PP-01: presupuesto máximo de tokens por ciclo (entrada + salida acumulados).
+# 0 = sin límite. Configurable via OVD_CYCLE_TOKEN_BUDGET en .env.
+# Ejemplo: OVD_CYCLE_TOKEN_BUDGET=80000 limita ciclos a ~80k tokens totales.
+_CYCLE_BUDGET_TOKENS: int = int(os.getenv("OVD_CYCLE_TOKEN_BUDGET", "0"))
 
 # ---------------------------------------------------------------------------
 # Schemas de structured output
@@ -663,6 +673,13 @@ async def web_research_node(state: OVDState) -> dict:
         org_id     = state.get("org_id", "")
         project_id = state.get("project_id")
 
+        # S11.H — cargar fuentes curadas configuradas para este proyecto
+        curated_urls = await web_researcher.load_curated_urls(
+            org_id=org_id,
+            project_id=project_id,
+            db_url=os.environ.get("DATABASE_URL", ""),
+        )
+
         try:
             findings = await web_researcher.run_web_research(
                 queries=queries,
@@ -671,6 +688,7 @@ async def web_research_node(state: OVDState) -> dict:
                 jwt_token=jwt_token,
                 bridge_url=bridge_url,
                 context=state.get("project_context", ""),
+                curated_urls=curated_urls or None,
             )
             span.set_attribute("ovd.web_research.results_count", len(findings.results))
             span.set_attribute("ovd.web_research.indexed", findings.indexed)
@@ -860,7 +878,7 @@ async def request_approval(state: OVDState) -> dict:
 
 
 async def _run_frontend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es"
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
 ) -> dict:
     """Agente especializado en frontend: segun el stack del proyecto."""
     response = await llm.ainvoke([
@@ -869,6 +887,7 @@ async def _run_frontend_agent(
             language=language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
+            rag_context=rag_context,
         )),
         HumanMessage(content=(
             f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -881,7 +900,7 @@ async def _run_frontend_agent(
 
 
 async def _run_backend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es"
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
 ) -> dict:
     """Agente especializado en backend: segun el stack del proyecto."""
     response = await llm.ainvoke([
@@ -890,6 +909,7 @@ async def _run_backend_agent(
             language=language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
+            rag_context=rag_context,
         )),
         HumanMessage(content=(
             f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -902,7 +922,7 @@ async def _run_backend_agent(
 
 
 async def _run_database_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es"
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
 ) -> dict:
     """Agente especializado en base de datos: segun el motor del proyecto."""
     response = await llm.ainvoke([
@@ -911,6 +931,7 @@ async def _run_database_agent(
             language=language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
+            rag_context=rag_context,
         )),
         HumanMessage(content=(
             f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -923,7 +944,7 @@ async def _run_database_agent(
 
 
 async def _run_devops_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es"
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
 ) -> dict:
     """Agente especializado en DevOps: segun el CI/CD del proyecto."""
     response = await llm.ainvoke([
@@ -932,6 +953,7 @@ async def _run_devops_agent(
             language=language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
+            rag_context=rag_context,
         )),
         HumanMessage(content=(
             f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -1090,6 +1112,35 @@ async def agent_executor(state: OVDState) -> dict:
     jwt_token = state.get("jwt_token", "")
     retry_feedback = state.get("retry_feedback", "")
     language = state.get("language", "es")
+    rag_context = state.get("rag_context", "")  # RAG-03: contexto de entregas previas
+
+    # PP-01: verificar presupuesto de tokens del ciclo antes de invocar el agente
+    if _CYCLE_BUDGET_TOKENS > 0:
+        existing_usage = state.get("token_usage", {})
+        tokens_so_far = sum(
+            v.get("input", 0) + v.get("output", 0)
+            for v in existing_usage.values() if isinstance(v, dict)
+        )
+        if tokens_so_far >= _CYCLE_BUDGET_TOKENS:
+            log.warning(
+                "PP-01: agente '%s' omitido — presupuesto de tokens agotado (%d/%d)",
+                agent_name, tokens_so_far, _CYCLE_BUDGET_TOKENS,
+            )
+            return {
+                "agent_results": [{
+                    "agent": agent_name,
+                    "output": (
+                        f"[Agente omitido: presupuesto de tokens del ciclo agotado "
+                        f"({tokens_so_far:,} / {_CYCLE_BUDGET_TOKENS:,} tokens). "
+                        f"Aumenta OVD_CYCLE_TOKEN_BUDGET para incluir este agente.]"
+                    ),
+                    "artifacts": [],
+                    "uncertainties": [],
+                    "tokens": {"input": 0, "output": 0},
+                    "skipped": True,
+                }],
+                "token_usage": {agent_name: {"input": 0, "output": 0}},
+            }
 
     # Obtener LLM configurado para este agente — S8: con Stack Registry routing
     llm = await model_router.get_llm_with_context(
@@ -1116,15 +1167,16 @@ async def agent_executor(state: OVDState) -> dict:
     # Ejecutar el agente especializado
     runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
 
-    # S17T.A+B: intentar tool calling si hay directorio disponible
+    # S17T.A+B + Fase A: file tools + MCP tools (context7 para agentes implementadores)
     tools = make_file_tools(directory) if directory else []
+    tools += mcp_client.pool.get_langchain_tools(agent_name)
     if tools:
         result = await _run_agent_with_tools(
             agent_name, agent_sdd_content, comment, llm,
-            project_ctx, retry_feedback, language, tools, directory
+            project_ctx, retry_feedback, language, tools, directory, rag_context
         )
     else:
-        result = await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language)
+        result = await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
 
     # GAP-004: incertidumbres del agente — acumuladas via reducer operator.add
     agent_uncertainties = result.get("uncertainties", [])
@@ -1155,6 +1207,7 @@ async def _run_agent_with_tools(
     language: str,
     tools: list,
     directory: str,
+    rag_context: str = "",
 ) -> dict:
     """
     S17T.B — Bucle agentico con tool calling.
@@ -1180,13 +1233,14 @@ async def _run_agent_with_tools(
     except (AttributeError, NotImplementedError, ValueError):
         # Fallback: el modelo no soporta tool calling → runner tradicional
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
-        return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language)
+        return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
 
     system_prompt = template_loader.render(
         f"system_{agent_name}",
         language=language,
         project_context=project_ctx,
         retry_feedback=retry_feedback,
+        rag_context=rag_context,
     )
     human_content = (
         f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -1330,12 +1384,20 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
     if json_match:
         try:
             data = _json2.loads(json_match.group(0))
+            parsed_score = int(data.get("score", 75))
+            parsed_vulns = list(data.get("vulnerabilities", []))
+            parsed_secrets = list(data.get("secrets_found", []))
+            # BUG-04: score=0 sin vulnerabilidades ni secrets = fallo de parsing del modelo.
+            # Un modelo que no siguió el schema suele emitir score=0 como valor por defecto.
+            # Si hay vulnerabilidades concretas, respetamos el score (puede ser 0 legítimo).
+            if parsed_score == 0 and not parsed_vulns and not parsed_secrets:
+                parsed_score = 75
             return SecurityAuditOutput(
                 passed=bool(data.get("passed", True)),
-                score=int(data.get("score", 75)),
+                score=parsed_score,
                 severity=str(data.get("severity", "none")),
-                vulnerabilities=list(data.get("vulnerabilities", [])),
-                secrets_found=list(data.get("secrets_found", [])),
+                vulnerabilities=parsed_vulns,
+                secrets_found=parsed_secrets,
                 insecure_patterns=list(data.get("insecure_patterns", [])),
                 rls_compliant=bool(data.get("rls_compliant", True)),
                 remediation=list(data.get("remediation", [])),
@@ -1348,7 +1410,9 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
     score = 75  # neutro por defecto
     score_match = _re2.search(r'"?score"?\s*[=:]\s*(\d{1,3})', raw, _re2.IGNORECASE)
     if score_match:
-        score = min(100, max(0, int(score_match.group(1))))
+        raw_score = min(100, max(0, int(score_match.group(1))))
+        # BUG-04: score=0 en texto libre = modelo no concluyente (ej: "score: 0/100")
+        score = raw_score if raw_score > 0 else 75
 
     # 3. Detectar severidad por keywords
     severity = "none"
@@ -1701,7 +1765,33 @@ def _generate_delivery_report(
             file_list = "\n".join(f"  - `{f['path']}` ({f.get('size', 0)} bytes)" for f in files) or "  _(sin archivos detectados)_"
             impl_sections.append(f"### Agente: {agent}\n{file_list}")
 
-    report = f"""# Informe de Entrega OVD
+    # OB-02: YAML frontmatter para búsqueda semántica y filtros en RAG/Obsidian
+    agents_used = [d.get("agent", "?") for d in deliverables if d.get("type") == "implementation"]
+    files_count = sum(len(d.get("artifacts", [])) for d in deliverables if d.get("type") == "implementation")
+    import datetime as _dt
+    date_str = _dt.date.today().isoformat()
+    fr_short = fr.replace('"', "'").replace("\n", " ")[:200]
+
+    frontmatter = f"""---
+session_id: "{session_id}"
+date: "{date_str}"
+feature_request: "{fr_short}"
+provider: "{provider}"
+security_score: {security.get('score', 0)}
+security_passed: {str(security.get('passed', False)).lower()}
+security_severity: "{security.get('severity', 'none')}"
+qa_score: {qa.get('score', 0)}
+qa_passed: {str(qa.get('passed', False)).lower()}
+sdd_compliance: {str(qa.get('sdd_compliance', False)).lower()}
+agents: [{", ".join(f'"{a}"' for a in agents_used)}]
+files: {files_count}
+tokens_in: {total_in}
+tokens_out: {total_out}
+cost_usd: {cost_usd:.4f}
+---
+"""
+
+    report = frontmatter + f"""# Informe de Entrega OVD
 **Ciclo:** `{session_id}`
 **Feature Request:** {fr}
 **Duración:** {elapsed_str} | **Costo estimado:** ${cost_usd:.4f} ({provider})

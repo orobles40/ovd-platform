@@ -127,18 +127,56 @@ class TestParseFallbackTipos:
         assert isinstance(result.summary, str)
         assert len(result.summary) > 0
 
-    def test_score_0_sin_vulns_detectado_como_fallo(self):
+    def test_score_0_sin_vulns_se_corrige_a_neutro(self):
         """
-        BUG-04: score=0 + sin vulnerabilidades = señal de fallo de parsing.
-        El fallback NO debe retornar score=0 si no hay vulnerabilidades.
+        BUG-04: score=0 + sin vulnerabilidades ni secrets = fallo de parsing del modelo.
+        _parse_security_fallback corrige el score a 75 (neutro) en lugar de propagar 0.
         """
         raw = '{"score": 0, "passed": false, "severity": "high", "vulnerabilities": [], "summary": "?"}'
         result = _parse_security_fallback(raw)
-        # Si el JSON se parsea correctamente con score=0 y sin vulns,
-        # se retorna tal cual (el caller en security_audit() detecta este caso)
         assert isinstance(result, SecurityAuditOutput)
-        # El score del JSON inválido se respeta — la detección ocurre en security_audit()
+        # score=0 sin vulns ni secrets → corregido a 75 (fallo de parsing del modelo)
+        assert result.score == 75
+
+    def test_score_0_con_vulns_se_respeta(self):
+        """
+        BUG-04: score=0 CON vulnerabilidades específicas = resultado legítimo (código crítico).
+        El fallback NO debe sobreescribir el score en este caso.
+        """
+        raw = json.dumps({
+            "passed": False, "score": 0, "severity": "critical",
+            "vulnerabilities": ["A03-Injection", "A01-Broken Access Control"],
+            "secrets_found": [], "insecure_patterns": ["SQL concatenation sin parametrizar"],
+            "rls_compliant": False, "remediation": ["Usar queries parametrizadas"],
+            "summary": "Código con vulnerabilidades críticas múltiples.",
+        })
+        result = _parse_security_fallback(raw)
+        # Con vulnerabilidades específicas, score=0 es legítimo
         assert result.score == 0
+        assert result.passed is False
+        assert len(result.vulnerabilities) == 2
+
+    def test_score_0_con_secrets_se_respeta(self):
+        """score=0 con secrets_found también se respeta (es un hallazgo real)."""
+        raw = json.dumps({
+            "passed": False, "score": 0, "severity": "critical",
+            "vulnerabilities": [], "secrets_found": ["AWS_SECRET_KEY hardcoded"],
+            "insecure_patterns": [], "rls_compliant": True, "remediation": [],
+            "summary": "Secret hardcodeado detectado.",
+        })
+        result = _parse_security_fallback(raw)
+        assert result.score == 0
+        assert result.secrets_found == ["AWS_SECRET_KEY hardcoded"]
+
+    def test_regex_score_cero_se_corrige_a_neutro(self):
+        """
+        BUG-04: cuando el modelo escribe 'score: 0' en texto libre,
+        el regex capturaba 0, ahora se corrige a 75.
+        """
+        raw = 'El código tiene un score: 0/100 de seguridad.'
+        result = _parse_security_fallback(raw)
+        # score=0 en texto libre = modelo no concluyente → corregido a 75
+        assert result.score == 75
 
 
 class TestRegressionBUG04:

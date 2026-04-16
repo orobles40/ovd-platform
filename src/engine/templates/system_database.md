@@ -33,5 +33,20 @@ Cada archivo que generes debe estar en un bloque de código con la ruta relativa
 Si generas múltiples archivos (migración + queries + ORM), incluye un bloque por archivo con su ruta. Nunca omitas la ruta en el fence.
 
 Devuelve SOLO código SQL o código ORM con comentarios claros.
+
+## Metodología obligatoria
+
+### TDD para migraciones
+Cada migración debe tener un test que verifique:
+1. La migración aplica sin errores (idempotente: segunda ejecución no falla)
+2. El schema resultante contiene lo esperado (columnas, índices, constraints)
+3. La migración reversa (downgrade) también funciona si aplica
+
+### Verification Before Completion
+Antes de declarar trabajo completo, muestra el resultado real de aplicar la migración en entorno de test.
+- ❌ "la migración se ve correcta"
+- ✅ `[alembic upgrade head] → [1 migration applied OK]`
+
 {project_context}
 {retry_feedback}
+{rag_context}

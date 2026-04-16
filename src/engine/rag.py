@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass, field
 from typing import Any
 
 log = logging.getLogger("ovd.rag")
@@ -36,6 +37,52 @@ _MIN_SCORE      = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
 
 # Prefijo de colección por proyecto — aislamiento multi-proyecto
 _COLLECTION_PREFIX = "ovd_project_"
+
+
+# ---------------------------------------------------------------------------
+# OB-01 — Filtros estructurados de metadatos
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RagFilters:
+    """
+    Filtros combinables para búsqueda semántica con metadatos.
+
+    doc_types:    lista de tipos permitidos — ["delivery", "doc", "codebase", ...]
+    min_qa_score: incluir solo chunks con qa_score >= N (0-100)
+    after_date:   incluir solo chunks con created_at >= "YYYY-MM-DD"
+    before_date:  incluir solo chunks con created_at <= "YYYY-MM-DD"
+    """
+    doc_types:     list[str] = field(default_factory=list)
+    min_qa_score:  int | None = None
+    after_date:    str | None = None   # "YYYY-MM-DD"
+    before_date:   str | None = None   # "YYYY-MM-DD"
+
+    def to_pgvector_filter(self) -> dict | None:
+        """
+        Convierte doc_types a filtro PGVector ($in operator).
+        Los filtros numéricos y de fecha se aplican en Python post-búsqueda.
+        """
+        if not self.doc_types:
+            return None
+        if len(self.doc_types) == 1:
+            return {"doc_type": self.doc_types[0]}
+        return {"doc_type": {"$in": self.doc_types}}
+
+    def passes(self, metadata: dict) -> bool:
+        """Evalúa si un chunk con estos metadatos pasa los filtros de rango."""
+        if self.min_qa_score is not None:
+            score = metadata.get("qa_score")
+            if score is not None and isinstance(score, (int, float)):
+                if score < self.min_qa_score:
+                    return False
+        if self.after_date and "created_at" in metadata:
+            if str(metadata["created_at"]) < self.after_date:
+                return False
+        if self.before_date and "created_at" in metadata:
+            if str(metadata["created_at"]) > self.before_date:
+                return False
+        return True
 
 
 def _get_connection_string() -> str:
@@ -129,11 +176,16 @@ def search(
     top_k: int = _TOP_K,
     min_score: float = _MIN_SCORE,
     filters: dict | None = None,
+    rag_filters: "RagFilters | None" = None,
 ) -> str:
     """
     Busca chunks relevantes para la query en el proyecto dado.
     Retorna un bloque de texto formateado para inyectar en prompts.
     Retorna string vacío si no hay resultados o RAG no está disponible.
+
+    OB-01: rag_filters permite filtrar por doc_type, qa_score mínimo y fechas.
+    Cuando se especifica rag_filters, se recupera un buffer (top_k * 4) y se
+    post-filtra en Python para aplicar filtros de rango que JSONB no soporta.
     """
     if not _DATABASE_URL:
         return ""
@@ -141,17 +193,38 @@ def search(
     try:
         store = _get_store(project_id)
 
+        # Construir filtro PGVector: combinación de dict legacy + RagFilters
         filter_dict: dict[str, Any] = {}
         if filters:
             filter_dict.update(filters)
+        if rag_filters:
+            pf = rag_filters.to_pgvector_filter()
+            if pf:
+                filter_dict.update(pf)
+
+        # Si hay filtros de rango (qa_score, fechas), ampliar el fetch para compensar
+        fetch_k = top_k * 4 if rag_filters and (
+            rag_filters.min_qa_score is not None
+            or rag_filters.after_date
+            or rag_filters.before_date
+        ) else top_k
 
         results = store.similarity_search_with_relevance_scores(
             query,
-            k=top_k,
+            k=fetch_k,
             filter=filter_dict if filter_dict else None,
         )
 
+        # Filtrar por score mínimo de similitud
         relevant = [(doc, score) for doc, score in results if score >= min_score]
+
+        # OB-01: post-filtro de metadatos (qa_score, created_at)
+        if rag_filters:
+            relevant = [(doc, score) for doc, score in relevant if rag_filters.passes(doc.metadata)]
+
+        # Tomar los top_k finales
+        relevant = relevant[:top_k]
+
         if not relevant:
             return ""
 
@@ -160,8 +233,10 @@ def search(
             meta     = doc.metadata
             doc_type = meta.get("doc_type", "doc")
             source   = meta.get("source_file", "")
-            title    = f"{source}" if source else f"doc-{i}"
-            lines.append(f"\n### [{i}] {title} (tipo: {doc_type}, similitud: {score:.2f})")
+            qa       = meta.get("qa_score")
+            title    = source if source else f"doc-{i}"
+            qa_label = f", QA={qa}" if qa is not None else ""
+            lines.append(f"\n### [{i}] {title} (tipo: {doc_type}{qa_label}, similitud: {score:.2f})")
             lines.append(doc.page_content[:800])
 
         return "\n".join(lines)
@@ -187,7 +262,8 @@ async def search_async(
     top_k: int = _TOP_K,
     min_score: float = _MIN_SCORE,
     filters: dict | None = None,
+    rag_filters: "RagFilters | None" = None,
 ) -> str:
     """Versión async de search para uso en nodos LangGraph."""
     import asyncio
-    return await asyncio.to_thread(search, query, project_id, top_k, min_score, filters)
+    return await asyncio.to_thread(search, query, project_id, top_k, min_score, filters, rag_filters)

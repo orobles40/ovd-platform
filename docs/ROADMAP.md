@@ -1,6 +1,13 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-06
-**Versión actual:** v0.4.0-tui-iterative-sdd
+**Última actualización:** 2026-04-16
+**Versión actual:** v0.6.0-skills-mcp-context7
+
+> **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
+> Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
+> Tests: 476/476 pasando.
+>
+> **Sesión 2026-04-16:** Sprint 18 completado — Skills externos (ui-ux-pro-max + superpowers integrados en templates + panel web de actualización), MCP Client Pool con context7 (docs de librerías en tiempo real para agentes implementadores), TUI --from-file + Ctrl+O.
+> Tests: 471/471 pasando.
 
 Este documento es la fuente de verdad del estado del proyecto.
 Cubre todo lo implementado, lo pendiente de los GAPs y lo que aún falta
@@ -187,8 +194,8 @@ Ninguna credencial de cliente vive en `.env.local`. Este sprint resuelve el úni
 | S11.D | Endpoint `POST /research/ask` — consultas generales sin proyecto | `src/engine/api.py` | ✅ |
 | S11.E | Comando `@research` en Bridge TypeScript | ⚠️ Bridge TypeScript NO se extiende más (decisión stack 2026-03-25). Migrar a endpoint FastAPI o exponer desde TUI | — | ⏸ rediseñar |
 | S11.F | Panel config provider de búsqueda web por org | Se implementa en Web App (S17.D área knowledge) | `src/web/` | ⏳ S17 |
-| S11.G | Web Researcher proactivo — nightly job | `web_researcher.py`, NATS | `src/engine/web_researcher.py` | ⬜ |
-| S11.H | Fuentes curadas configurables por workspace | Stack Registry, `web_researcher.py` | — | ⬜ |
+| S11.G | Web Researcher proactivo — nightly job | `web_researcher.py`, NATS | `src/engine/web_researcher.py` | ✅ |
+| S11.H | Fuentes curadas configurables por workspace | Stack Registry, `web_researcher.py` | `src/engine/web_researcher.py`, `routers/api_v1.py`, `src/dashboard/src/pages/KnowledgeBootstrap.tsx` | ✅ |
 
 > **Nota S11.E:** el Bridge TypeScript no se extiende. El comando `@research` se expone como endpoint FastAPI (`POST /research/ask` ya existe — S11.D) y se accede desde TUI Rust o Web App.
 > **Nota S11.G/H:** solo indexa fuentes fiables y verificables. Ver `docs/KNOWLEDGE_STRATEGY.md` sección 5.
@@ -248,8 +255,8 @@ Stack: **Rust + Ratatui 0.29 + Crossterm 0.28 + Tokio**. Binario standalone dist
 | S15T.E | `SddReviewScreen` en TUI Rust | Pantalla de revisión iterativa: SDD completo formateado (requisitos, tareas, restricciones, diseño), área de input feedback (Tab para enfocar), `[y]` aprobar / `[r]` pedir revisión / `[n]` rechazar | `src/tui/src/ui/session.rs` (`SddReviewScreen`) | ✅ |
 | S15T.F | `get_session_state()` en cliente | `GET /session/{id}/state` → `SessionState` con `SddContent`. Cargado al abrir `SddReviewScreen` | `src/tui/src/api/client.rs` | ✅ |
 | S15T.G | Flujo post-revisión en `main.rs` | `RequestRevision` → `send_approval(action:"revise")` → `resume_stream()` → `SessionStreamScreen` resetea nodos para nueva ronda | `src/tui/src/main.rs` | ✅ |
-| S15T.H | Carga de requisitos del usuario como input | Permitir adjuntar un archivo de requisitos (`.txt`, `.md`) desde el filesystem al abrir `SddReviewScreen`. El contenido se inyecta como contexto adicional en el feedback antes de pedir revisión. Engine lo incorpora en el bloque `revision_context` de `generate_sdd` | `src/tui/src/ui/session.rs`, `src/engine/graph.py` | ⬜ |
-| S15T.I | Exportar SDD a documento | Desde `SddReviewScreen`, tecla `[e]` exporta el SDD actual a un archivo `.md` en el directorio de trabajo (`~/ovd-exports/{thread_id}-sdd.md`). Formato: secciones bien estructuradas con resumen ejecutivo, tabla de requisitos, diagrama de tareas y restricciones. Opción futura: exportar a PDF via `pandoc` | `src/tui/src/ui/session.rs` | ⬜ |
+| S15T.H | Carga de requisitos del usuario como input | Permitir adjuntar un archivo de requisitos (`.txt`, `.md`) desde el filesystem al abrir `SddReviewScreen`. El contenido se inyecta como contexto adicional en el feedback antes de pedir revisión. Engine lo incorpora en el bloque `revision_context` de `generate_sdd` | `src/tui/src/ui/session.rs`, `src/engine/graph.py` | ✅ |
+| S15T.I | Exportar SDD a documento | Desde `SddReviewScreen`, tecla `[e]` exporta el SDD actual a un archivo `.md` en el directorio de trabajo (`~/ovd-exports/{thread_id}-sdd.md`). Formato: secciones bien estructuradas con resumen ejecutivo, tabla de requisitos, diagrama de tareas y restricciones. Opción futura: exportar a PDF via `pandoc` | `src/tui/src/ui/session.rs` | ✅ |
 
 ### S16-TUI — Entrega de Artefactos (identificado 2026-03-26)
 
@@ -266,23 +273,23 @@ Stack: **Rust + Ratatui 0.29 + Crossterm 0.28 + Tokio**. Binario standalone dist
 | S16T.C | `GET /session/{id}/delivery` en API | Endpoint que retorna los `deliverables` completos (contenido de artefactos + informe) una vez finalizado el ciclo | `src/engine/api.py` | ✅ |
 | S16T.D | `DeliveryScreen` en TUI Rust | Pantalla post-ciclo con dos tabs: **Resumen** (scores, tokens, duración, directorio) y **Archivos** (lista de archivos creados con ruta y tamaño). Tecla `[o]` abre el directorio en Finder | `src/tui/src/ui/delivery.rs` | ✅ |
 | S16T.E | Navegación a `DeliveryScreen` | Al ciclo `done`, tecla `[d]` desde `SessionStreamScreen` abre la pantalla de entrega cargando los datos del engine | `src/tui/src/main.rs`, `src/tui/src/ui/app.rs` | ✅ |
-| S16T.F | Exportar informe desde TUI | Desde `DeliveryScreen`, tecla `[e]` guarda el informe completo como `ovd-report-{thread_id}.md` en `~/ovd-exports/` | `src/tui/src/ui/delivery.rs` | ⬜ |
+| S16T.F | Exportar informe desde TUI | Desde `DeliveryScreen`, tecla `[e]` guarda el informe completo como `ovd-report-{thread_id}.md` en `~/ovd-exports/` | `src/tui/src/ui/delivery.rs` | ✅ |
 
 #### Fase 2 — Tool Calling en Agentes (💡 diseño pendiente)
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S17T.A | Tools para agentes OVD | Implementar `write_file`, `read_file`, `edit_file`, `bash_exec` como tools LangChain que los agentes pueden invocar. Los agentes escriben archivos directamente sin parseo de markdown | `src/engine/tools/` | 💡 |
-| S17T.B | Agentes migrados a tool calling | Reescribir `_run_backend_agent`, `_run_database_agent`, etc. para que usen `llm.bind_tools(tools)` en lugar de texto libre. El LLM decide qué archivos crear y los escribe con parámetros explícitos | `src/engine/graph.py` | 💡 |
-| S17T.C | Leer contexto del proyecto antes de escribir | Antes de implementar, el agente lee archivos existentes del proyecto (`read_file`) para respetar convenciones, imports y estructura real | `src/engine/graph.py` | 💡 |
+| S17T.A | Tools para agentes OVD | Implementar `write_file`, `read_file`, `edit_file`, `bash_exec` como tools LangChain que los agentes pueden invocar. Los agentes escriben archivos directamente sin parseo de markdown | `src/engine/tools/` | ✅ |
+| S17T.B | Agentes migrados a tool calling | Reescribir `_run_backend_agent`, `_run_database_agent`, etc. para que usen `llm.bind_tools(tools)` en lugar de texto libre. El LLM decide qué archivos crear y los escribe con parámetros explícitos | `src/engine/graph.py` | ✅ |
+| S17T.C | Leer contexto del proyecto antes de escribir | Antes de implementar, el agente lee archivos existentes del proyecto (`read_file`) para respetar convenciones, imports y estructura real | `src/engine/graph.py` | ✅ |
 
 #### Fase 3 — Git Integration (S6 en roadmap, contexto actualizado)
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S6.A | Branch automático `ovd/{session_id}` | Después de `deliver()`, crear branch en el repo local del proyecto. **Consideración:** el workspace puede ser un proyecto en desarrollo activo — el engine accede al directorio configurado, detecta si es un repo git, y crea el branch desde el estado actual del árbol de trabajo | `src/engine/graph.py` | ⬜ |
-| S6.B | Commit de artefactos | `git add` de los archivos escritos por los agentes + commit automático con mensaje estándar: `feat(ovd): {feature_request} [cycle:{session_id}]` | `src/engine/graph.py` | ⬜ |
-| S6.C | Pull Request automático | Abrir PR en GitHub/GitLab con el SDD como descripción, scores de Security y QA, lista de artefactos. Requiere GitHub PAT (S6 original) o GitHub App (v1.0) | `src/engine/graph.py` | ⬜ |
+| S6.A | Branch automático `ovd/{session_id}` | Después de `deliver()`, crear branch en el repo local del proyecto. **Consideración:** el workspace puede ser un proyecto en desarrollo activo — el engine accede al directorio configurado, detecta si es un repo git, y crea el branch desde el estado actual del árbol de trabajo | `src/engine/graph.py` | ✅ |
+| S6.B | Commit de artefactos | `git add` de los archivos escritos por los agentes + commit automático con mensaje estándar: `feat(ovd): {feature_request} [cycle:{session_id}]` | `src/engine/graph.py` | ✅ |
+| S6.C | Pull Request automático | Abrir PR en GitHub/GitLab con el SDD como descripción, scores de Security y QA, lista de artefactos. Requiere GitHub PAT (S6 original) o GitHub App (v1.0) | `src/engine/graph.py` | ✅ |
 
 ---
 
@@ -292,7 +299,7 @@ Security review ejecutado sobre los cambios de la sesión S16T (entrega de artef
 
 | # | Severidad | Categoría | Descripción | Archivo(s) | Estado |
 |---|-----------|-----------|-------------|-----------|--------|
-| SEC-01 | **Medium** | `data_exposure` | **Enumeración de sesiones via thread_id predecible** — `GET /session/{id}/delivery` devuelve el output completo de agentes LLM (código generado, rutas internas, SDD) sin verificar ownership de la sesión. El `thread_id` tenía formato `tui-{timestamp_ms}`, predecible y enumerable. **✅ Corrección inmediata aplicada (2026-03-26):** `session_id` ahora incluye 8 bytes de entropía OS-seeded via `RandomState` → formato `tui-{timestamp_ms}-{hex8}`. **Corrección estructural pendiente:** validar `org_id` del token contra `org_id` del thread en el endpoint (requiere cambio en engine). | `src/engine/api.py` (`get_session_delivery`), `src/tui/src/ui/app.rs` (`start_session`) | 🔨 |
+| SEC-01 | **Medium** | `data_exposure` | **Enumeración de sesiones via thread_id predecible** — `GET /session/{id}/delivery` devuelve el output completo de agentes LLM (código generado, rutas internas, SDD) sin verificar ownership de la sesión. **✅ Corrección estructural 2026-04-10:** validación `org_id` reforzada — denegar si thread sin org_id O si no coincide. Validación de org_id vacío → 400. 2 tests de regresión añadidos. | `src/engine/api.py` (`get_session_delivery`) | ✅ |
 | SEC-02 | Descartado | `command_injection` | `open .arg(&dir)` en DeliveryScreen — requiere acceso admin a la BD como precondición, sin ganancia real sobre lo que el atacante ya puede hacer. Falso positivo. | `src/tui/src/main.rs` | 🚫 |
 | SEC-03 | Descartado | `path_traversal` | TOCTOU symlink en `_write_artifacts()` — requiere acceso local al filesystem dentro de `base`. El atacante con ese acceso ya puede escribir archivos directamente. Race window en Python asyncio es prácticamente inexplotable. Falso positivo. | `src/engine/graph.py` | 🚫 |
 | SEC-04 | Descartado | `path_traversal` | Filename injection via `session_id[:8]` en informe — `session_id` siempre empieza con `tui-` (literal Rust), imposible inyectar `../`. Falso positivo. | `src/engine/graph.py` | 🚫 |
@@ -301,17 +308,17 @@ Security review ejecutado sobre los cambios de la sesión S16T (entrega de artef
 
 | # | Tipo | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| UX-01 | UX ✅ | **Input de feedback en SddReviewScreen sin scroll/cursor navegable** — el área de texto donde se escribe el feedback para solicitar revisión no permite recorrer el contenido escrito con el cursor (←→ o Home/End), ni hace scroll vertical cuando el texto supera una línea. El usuario no puede revisar ni editar lo que escribió antes de enviarlo. Solución: implementar `TextArea` con soporte de cursor posicionable, scroll interno y teclas Ctrl+A (seleccionar todo), ← → para mover cursor. Librería candidata: `tui-textarea` crate | `src/tui/src/ui/session.rs` | ⬜ |
-| UX-03 | UX ✅ | **Log de eventos: mensajes truncados con `…`** — los mensajes del log en `SessionStreamScreen` se cortan a ~60 caracteres para caber en una línea. El usuario no puede ver el texto completo. Solución: permitir scroll horizontal en el log O hacer wrap del texto en múltiples líneas con indentación, y agregar tecla para expandir/colapsar un mensaje seleccionado | `src/tui/src/ui/session.rs` | ⬜ |
-| UX-02 | Feature ✅ | **Persistir thread_id activo entre reinicios del TUI** — al salir del TUI mientras hay una sesión en curso (stream o ApprovalPanel), el `thread_id` se pierde. El engine conserva el estado (PostgreSQL checkpointer) pero el TUI no puede reconectarse. Solución: guardar `thread_id` + `session_status` en `~/.ovd/session.json` al iniciar una sesión y borrar al finalizar (done/reject). Al arrancar el TUI, si existe ese archivo, preguntar al usuario si desea retomar la sesión anterior | `src/tui/src/config.rs`, `src/tui/src/ui/app.rs` | ⬜ |
-| BUG-04 | Bug | **Security agent siempre retorna 0/100 con Ollama** — el agente de seguridad (`security_audit`) devuelve score 0/100 y severidad `high` en todos los ciclos, incluso para código trivial (ej: función `sum`). Causa probable: `qwen2.5-coder:7b` no sigue el formato de respuesta JSON esperado por el parser del engine. Solución: revisar `graph.py` nodo `security_audit` — agregar parsing más robusto, prompt más explícito sobre el formato de salida, o modelo alternativo para security. Workaround dev: `OVD_SECURITY_MIN_SCORE=0` en `.env` | `src/engine/graph.py` | ⬜ |
-| BUG-02 | Bug | **DeliveryScreen vacía cuando ciclo termina sin artefactos** — si el SDD tiene 0 tareas/0 agentes (ej: revisión iterativa eliminó todas las tareas), el `deliver` corre pero no genera archivos. Tabs Resumen y Archivos muestran "Sin datos de entrega disponibles". `[o]` no abre Finder porque no hay directorio. Solución: detectar `deliverables.is_empty()` y mostrar mensaje explicativo con motivo (scores QA/Security) y sugerencia de crear nueva sesión | `src/tui/src/ui/delivery.rs`, `src/engine/graph.py` | ⬜ |
-| BUG-03 | Bug | **Sin opción de re-iterar desde DeliveryScreen** — una vez en la pantalla de entrega no hay forma de volver al SDD para pedir una revisión. El ciclo queda cerrado. Solución: agregar tecla `[r]` en DeliveryScreen que vuelva al `SddReviewScreen` si el ciclo aún no hizo `deliver` real, o mostrar botón "Nueva sesión con mismo FR" | `src/tui/src/ui/delivery.rs` | ⬜ |
-| BUG-01 | Bug | **Pantalla login: cursor `_` visible en campo vacío** — al iniciar, el campo Email muestra `_` en campo vacío dando impresión de que hay un carácter ingresado. Solución: mostrar cursor solo si el campo tiene foco Y el usuario ha empezado a escribir, o usar un cursor parpadeante independiente del contenido | `src/tui/src/ui/login.rs` | ⬜ |
-| AUTH-01 | Feature | **API Key / Token persistente** — permitir autenticación via token de larga duración generado desde el panel web o CLI (`ovd token generate`). Token se guarda en `~/.ovd/tokens` encriptado. Expira cada N días (configurable por org, default 30d). Al iniciar TUI, si existe token válido, salta el login. Similar a `gh auth login --with-token` | `src/tui/src/config.rs`, `src/engine/routers/auth_router.py` | ⬜ |
-| RAG-02 | Feature | **Indexar informes de entrega en RAG al finalizar ciclo** — el `ovd-delivery-*.md` generado por `deliver_node` no se indexa. Añadir chunker especializado `"delivery"` en `chunkers.py` y llamada fire-and-forget en `deliver_node` para indexarlo vía `knowledge.bootstrap.run()` con metadatos ricos (fr, scores, agentes, archivos). Permite que ciclos futuros consulten qué se implementó antes en el mismo proyecto. Diseño en propuesta `RAG-02` (2026-03-27) | `src/engine/graph.py`, `src/knowledge/chunkers.py` | 💡 |
-| BUG-05 | Bug | **Informe de entrega reutiliza nombre del ciclo anterior** — `ovd-delivery-tui-1774.md` aparece en ciclos distintos porque el nombre se genera con `session_id[:8]` que proviene del workspace config guardado. Al retomar una sesión o al iniciar una nueva en el mismo workspace, el ID puede colisionar. Solución: incluir timestamp en el nombre del informe (`ovd-delivery-{session_id[:8]}-{timestamp}.md`) | `src/engine/graph.py` `_generate_delivery_report` | ⬜ |
-| RAG-03 | Feature | **RAG directo en agentes de implementación** — inyectar `rag_context` en el prompt de cada agente (backend, frontend, etc.) para que conozcan el código existente antes de escribir. **Evaluación pendiente:** con modelos pequeños (qwen2.5-coder:7b) más contexto degrada calidad; el punto correcto de corrección es el SDD (RAG-02 ya lo cubre). Revisar cuando se migre a modelos con ventana de contexto grande (Claude, GPT-4o). | `src/engine/graph.py` | 💡 |
+| UX-01 | UX | **Input de feedback en SddReviewScreen sin scroll/cursor navegable** — el área de texto donde se escribe el feedback para solicitar revisión no permite recorrer el contenido escrito con el cursor (←→ o Home/End), ni hace scroll vertical cuando el texto supera una línea. El usuario no puede revisar ni editar lo que escribió antes de enviarlo. Solución: implementar `TextArea` con soporte de cursor posicionable, scroll interno y teclas Ctrl+A (seleccionar todo), ← → para mover cursor. Librería candidata: `tui-textarea` crate | `src/tui/src/ui/session.rs` | ✅ |
+| UX-03 | UX | **Log de eventos: mensajes truncados con `…`** — los mensajes del log en `SessionStreamScreen` se cortan a ~60 caracteres para caber en una línea. El usuario no puede ver el texto completo. Solución: permitir scroll horizontal en el log O hacer wrap del texto en múltiples líneas con indentación, y agregar tecla para expandir/colapsar un mensaje seleccionado | `src/tui/src/ui/session.rs` | ✅ |
+| UX-02 | Feature | **Persistir thread_id activo entre reinicios del TUI** — al salir del TUI mientras hay una sesión en curso (stream o ApprovalPanel), el `thread_id` se pierde. El engine conserva el estado (PostgreSQL checkpointer) pero el TUI no puede reconectarse. Solución: guardar `thread_id` + `session_status` en `~/.ovd/session.json` al iniciar una sesión y borrar al finalizar (done/reject). Al arrancar el TUI, si existe ese archivo, preguntar al usuario si desea retomar la sesión anterior | `src/tui/src/config.rs`, `src/tui/src/ui/app.rs` | ✅ |
+| BUG-04 | Bug | **Security agent siempre retorna 0/100 con Ollama** — el agente de seguridad (`security_audit`) devuelve score 0/100 y severidad `high` en todos los ciclos, incluso para código trivial (ej: función `sum`). Causa probable: `qwen2.5-coder:7b` no sigue el formato de respuesta JSON esperado por el parser del engine. **Corregido 2026-04-10:** `_parse_security_fallback` ahora trata score=0 sin vulnerabilidades como fallo de parsing y retorna 75. | `src/engine/graph.py` | ✅ |
+| BUG-02 | Bug | **DeliveryScreen vacía cuando ciclo termina sin artefactos** — si el SDD tiene 0 tareas/0 agentes (ej: revisión iterativa eliminó todas las tareas), el `deliver` corre pero no genera archivos. Tabs Resumen y Archivos muestran "Sin datos de entrega disponibles". `[o]` no abre Finder porque no hay directorio. | `src/tui/src/ui/delivery.rs`, `src/engine/graph.py` | ✅ |
+| BUG-03 | Bug | **Sin opción de re-iterar desde DeliveryScreen** — una vez en la pantalla de entrega no hay forma de volver al SDD para pedir una revisión. El ciclo queda cerrado. Tecla `[n]` disponible para iniciar nueva sesión. | `src/tui/src/ui/delivery.rs` | ✅ |
+| BUG-01 | Bug | **Pantalla login: cursor `_` visible en campo vacío** — al iniciar, el campo Email muestra `_` en campo vacío dando impresión de que hay un carácter ingresado. Cursor es `│` y solo aparece cuando el campo tiene foco. | `src/tui/src/ui/login.rs` | ✅ |
+| AUTH-01 | Feature | **API Key / Token persistente** — permitir autenticación via token de larga duración generado desde el panel web o CLI (`ovd token generate`). Token se guarda en `~/.ovd/tokens.toml` (permisos 600). Al iniciar TUI, si existe refresh_token válido, auto-refresh y salta el login directamente a WorkspaceSelect. | `src/tui/src/config/mod.rs`, `src/tui/src/ui/app.rs` | ✅ |
+| RAG-02 | Feature | **Indexar informes de entrega en RAG al finalizar ciclo** — el `ovd-delivery-*.md` generado por `deliver_node` no se indexa. Añadir chunker especializado `"delivery"` en `chunkers.py` y llamada fire-and-forget en `deliver_node` para indexarlo vía `knowledge.bootstrap.run()` con metadatos ricos (fr, scores, agentes, archivos). Permite que ciclos futuros consulten qué se implementó antes en el mismo proyecto. | `src/engine/graph.py`, `src/knowledge/chunkers.py` | ✅ |
+| BUG-05 | Bug | **Informe de entrega reutiliza nombre del ciclo anterior** — `ovd-delivery-tui-1774.md` aparece en ciclos distintos porque el nombre se genera con `session_id[:8]` que proviene del workspace config guardado. Corregido: el nombre incluye timestamp (`ovd-delivery-{session_id[:8]}-{timestamp}.md`). | `src/engine/graph.py` `_generate_delivery_report` | ✅ |
+| RAG-03 | Feature | **RAG directo en agentes de implementación** — inyectar `rag_context` en el prompt de cada agente (backend, frontend, database, devops). **Corregido 2026-04-10:** `rag_context` propagado desde state en `agent_executor`, pasado a runners y `_run_agent_with_tools`. Los 4 templates de agentes ahora incluyen `{rag_context}`. | `src/engine/graph.py`, `src/engine/templates/` | ✅ |
 | AUTH-02 | Feature | **Google OAuth / Google Workspace SSO** — login con cuenta `@omarrobles.dev` via OAuth2 PKCE. Flujo: TUI abre browser → Google autentica → callback a localhost → TUI recibe token. Requiere Google Cloud Console app + backend endpoint `/auth/google`. Para equipos: restringe dominio a `omarrobles.dev`. **Prioridad: después de AUTH-01** | `src/engine/routers/auth_router.py`, `src/tui/src/ui/login.rs` | 💡 |
 
 ### Sprint 15 — Web App: fundación React + FastAPI consolidado
@@ -321,27 +328,56 @@ Stack: React + Vite + shadcn/ui + Tailwind. Backend: FastAPI (mismas rutas OVD y
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
 | S15.A | FastAPI consolida rutas del Bridge | Migrar auth, multi-tenancy, quotas, webhooks de TypeScript a FastAPI. El Bridge TypeScript queda como referencia, no se extiende | `src/api/` | ⬜ |
-| S15.B | Proyecto React inicializado | Vite + React + TypeScript + shadcn/ui + Tailwind + React Query para llamadas a FastAPI | `src/web/` | ⬜ |
-| S15.C | Login + gestión de sesión | Pantalla login, JWT storage, refresh automático, redirect por rol | `src/web/pages/login` | ⬜ |
-| S15.D | Dashboard principal | Overview: workspaces activos, ciclos recientes, quota del mes, health del Engine | `src/web/pages/dashboard` | ⬜ |
+| S15.B | Proyecto React inicializado | Vite + React + TypeScript + Tailwind + React Query para llamadas a FastAPI | `src/dashboard/` | ✅ |
+| S15.C | Login + gestión de sesión | Pantalla login, JWT storage, refresh automático, redirect por rol | `src/dashboard/src/pages/Login.tsx`, `src/dashboard/src/context/AuthContext.tsx` | ✅ |
+| S15.D | Dashboard principal | Overview: ciclos totales, QA promedio, costo, proyectos activos, gráfico diario | `src/dashboard/src/pages/Dashboard.tsx` | ✅ |
 
 ### Sprint 16 — Web App: ciclos + aprobaciones + workspace config
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S16.A | Lanzador de Feature Request | Formulario FR con selector de workspace, envío y vista de progreso SSE en tiempo real | `src/web/pages/session` | ⬜ |
-| S16.B | Panel de aprobación web | Visualización del SDD generado, botones aprobar/rechazar/escalar, comentario opcional | `src/web/pages/approval` | ⬜ |
-| S16.C | Historial de sesiones con filtros | Por workspace, fecha, status, costo. Detalle por ciclo con artefactos descargables | `src/web/pages/history` | ⬜ |
-| S16.D | Configuración de workspace (Stack Registry) | Formulario para definir stack: db_version, db_restrictions, model_routing, agent roles | `src/web/pages/workspace` | ⬜ |
+| S16.A | Lanzador de Feature Request | Formulario FR con selector de proyecto, SSE streaming en tiempo real, grafo de nodos, aprobación inline | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S16.B | Panel de aprobación web | Aprobaciones pendientes con polling cada 10s, detalle SDD expandible, aprobar/rechazar/revisar | `src/dashboard/src/pages/Approval.tsx` | ✅ |
+| S16.C | Historial de sesiones con filtros | Por proyecto, QA mínimo, paginación, detalle deslizable por ciclo | `src/dashboard/src/pages/History.tsx`, `src/dashboard/src/pages/Cycles.tsx` | ✅ |
+| S16.D | Configuración de workspace (Stack Registry) | Stack Profile por proyecto: lenguaje, framework, DB, CI/CD, restricciones | `src/dashboard/src/pages/WorkspaceConfig.tsx`, `src/dashboard/src/pages/Projects.tsx` | ✅ |
 
 ### Sprint 17 — Web App: admin + modelo propio + observabilidad
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S17.A | Panel de usuarios y roles (admin) | Invitar, asignar roles, desactivar — solo visible para role=admin | `src/web/pages/admin` | ⬜ |
-| S17.B | Dashboard de modelo propio | Progreso del dataset (ciclos válidos acumulados, proyección a M1), historial de fine-tuning, modelos activos | `src/web/pages/model` | ⬜ |
-| S17.C | Telemetría visible en Web App | Latencia por nodo, QA score histórico, costo por workspace — conectado a OTEL | `src/web/pages/observability` | ⬜ |
-| S17.D | Knowledge Bootstrap UI | Interfaz para indexar documentos existentes del cliente (subir PDF, apuntar a directorio) | `src/web/pages/knowledge` | ⬜ |
+| S17.A | Panel de usuarios y roles (admin) | Invitar, asignar roles, desactivar — solo visible para role=admin | `src/dashboard/src/pages/AdminUsers.tsx`, `/api/v1/orgs/{org_id}/users` | ✅ |
+| S17.B | Dashboard de modelo propio | Progreso del dataset (ciclos válidos acumulados, proyección a M1), historial de fine-tuning, modelos activos | `src/dashboard/src/pages/ModelDashboard.tsx`, `/api/v1/orgs/{org_id}/model/status` | ✅ |
+| S17.C | Telemetría visible en Web App | QA score trend, costo diario, tokens por agente, complejidad — endpoint `/telemetry` + Recharts | `src/dashboard/src/pages/Telemetry.tsx`, `src/engine/routers/api_v1.py` | ✅ |
+| S17.D | Knowledge Bootstrap UI | Interfaz para indexar documentos existentes del cliente (apuntar a directorio) | `src/dashboard/src/pages/KnowledgeBootstrap.tsx`, `/api/v1/orgs/{org_id}/knowledge/*` | ✅ |
+
+### Sprint 18 — Extensibilidad: Skills externos + MCP Client + TUI --from-file ✅ (2026-04-16)
+
+#### Skills externos (ui-ux-pro-max + superpowers)
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S18.A | Integración superpowers en system prompts | 7 templates actualizados con metodología obligatoria: writing-plans, TDD iron law (RED-GREEN-REFACTOR), verification-before-completion, receiving-code-review | `src/engine/templates/system_*.md` | ✅ |
+| S18.B | ui-ux-pro-max como fuente dinámica | `query_ui_context()` en `template_loader.py` — consulta BM25 search de ui-ux-pro-max vía subprocess. Resultado inyectado en `{ui_context}` solo para agente frontend | `src/engine/template_loader.py` | ✅ |
+| S18.C | Repos clonados como submódulos locales | `src/knowledge/ui-ux/` (nextlevelbuilder/ui-ux-pro-max-skill) y `src/knowledge/superpowers-upstream/` (obra/superpowers) clonados con `--depth=1` | `src/knowledge/` | ✅ |
+| S18.D | Script de actualización de skills | `scripts/update-skills.sh` — ui-ux: `git pull --ff-only` automático; superpowers: `git fetch` + diff de los 6 skills integrados (revisión manual) | `scripts/update-skills.sh` | ✅ |
+| S18.E | Panel Skills Manager en Web App (admin) | Página `/admin/skills` (solo role=admin): selector de target (ui-ux / superpowers / all), botón actualizar, output del script en terminal, polling cada 3s | `src/dashboard/src/pages/SkillsManager.tsx` | ✅ |
+| S18.F | Endpoints admin skills en engine | `POST /api/v1/orgs/{org_id}/admin/skills/update` (202 async) + `GET .../admin/skills/status` — ejecuta `update-skills.sh` como subproceso asyncio. Guard admin-only. Lock para evitar jobs simultáneos (409) | `src/engine/routers/api_v1.py` | ✅ |
+
+#### MCP Client Pool — Fase A (context7)
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S18.G | `mcp_client.py` — pool singleton | `MCPClientPool` con ciclo de vida (start/stop vía `AsyncExitStack`). Lanza context7 como subproceso stdio via `npx @upstash/context7-mcp`. Fallo graceful si npx no está disponible | `src/engine/mcp_client.py` | ✅ |
+| S18.H | `tools/mcp_tools.py` — adaptador LangChain | Convierte `MCPTool` (JSON Schema) → `StructuredTool` de LangChain usando Pydantic dinámico. Wrappea `session.call_tool()` como coroutine async con manejo de errores | `src/engine/tools/mcp_tools.py` | ✅ |
+| S18.I | MCP tools en agent_executor | `tools += mcp_client.pool.get_langchain_tools(agent_name)` en `graph.py`. context7 disponible para agentes backend / frontend / database / devops. Agentes analyzer / sdd / qa / security no lo reciben | `src/engine/graph.py` | ✅ |
+| S18.J | Integración en lifespan del engine | `await mcp_client.pool.start()` al arrancar; `await mcp_client.pool.stop()` al cerrar. Dependencia `mcp>=1.0` (instalado v1.27.0) | `src/engine/api.py`, `src/engine/pyproject.toml` | ✅ |
+
+#### TUI — Carga de archivos .md
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S18.K | CLI `--from-file <ruta>` | Al invocar el TUI con `--from-file`, precarga el contenido del archivo en el campo FR del formulario de sesión | `src/tui/src/main.rs` | ✅ |
+| S18.L | Atajo `Ctrl+O` en SessionFormScreen | Modo interactivo de carga de archivo: barra amarilla inferior para ingresar ruta, Enter carga async vía `tokio::fs::read_to_string`, Esc cancela | `src/tui/src/ui/session.rs` | ✅ |
 
 ---
 
@@ -619,12 +655,15 @@ Para cuando la plataforma tenga múltiples clientes en producción.
 ### 5.F — Distribución del TUI
 | # | Tarea | Descripción | Estado |
 |---|-------|-------------|--------|
-| 5.17 | Script de instalación `install.sh` | `curl \| sh` que descarga el binario correcto según plataforma (macOS ARM64/x86, Linux) y lo instala en `~/.local/bin/ovd`. Igual a como funcionan `claude` o `gemini` CLI. | 💡 |
-| 5.18 | GitHub Releases con binarios multiplataforma | Automatizar con `tui-release.yml` ya existente: compilar y subir binarios para macOS ARM64, macOS x86, Linux musl en cada tag. | 💡 |
-| 5.19 | Comando `ovd` disponible en PATH | El binario se llama `ovd` (no `ovd-tui`). El script de instalación configura el PATH automáticamente. | 💡 |
+| 5.17 | Script de instalación `install.sh` | `curl \| sh` que descarga el binario correcto según plataforma (macOS ARM64/x86, Linux) y lo instala en `~/.local/bin/ovd`. Igual a como funcionan `claude` o `gemini` CLI. | ⏸ bloqueado |
+| 5.18 | GitHub Releases con binarios multiplataforma | `tui-release.yml` ya existe y está completo. Falta crear primer tag `tui/v0.1.0` para disparar el workflow. | ⏸ bloqueado |
+| 5.19 | Comando `ovd` disponible en PATH | `Cargo.toml` ya tiene `[[bin]] name = "ovd"`. Lo resuelve `install.sh` al instalar en `~/.local/bin`. | ⏸ bloqueado |
 | 5.20 | Soporte Homebrew (opcional — fase posterior) | `brew tap omarrobles/ovd && brew install ovd`. Evaluar cuando haya base de usuarios externa. | 💡 |
 
-> **Contexto (2026-04-01):** La distribución vía script de instalación es la ruta más directa para que cualquier desarrollador instale el TUI con un solo comando, al igual que Claude Code o Gemini CLI. El workflow `tui-release.yml` ya compila binarios multiplataforma — falta el script de instalación y publicar en GitHub Releases.
+> **Decisión arquitectónica (2026-04-12):** Modelo de despliegue **centralizado** — el Engine (FastAPI + PostgreSQL + Ollama) corre en un servidor dedicado de Omar Robles, accesible por el equipo. El TUI es solo el cliente; apunta a `api_url` configurable en `~/.ovd/config.toml`. Antes de ejecutar 5.F se requiere:
+> 1. Definir servidor destino (VPS/cloud) y levantar el Engine con `docker-compose.prod.yml` (5.13 ya existe)
+> 2. Configurar dominio + TLS (5.15 ya existe)
+> 3. Solo entonces tiene sentido distribuir el TUI: el `install.sh` apuntará a ese servidor como `api_url` por defecto
 
 ---
 
@@ -638,13 +677,14 @@ FASE 3.5 (Engine Sprints):   13/13 items    100%  ✅  (S3–S7 completados)
 FASE 4 (Producción):         18/18 items    100%  ✅
 FASE 5 (Crecimiento):        16/16 items    100%  ✅
 FASE A (Fundación Segura):   17/19 items     89%  ✅  (S8/S9/S10.A–E completos, S10.F–H ⏸ decisión stack observabilidad)
-FASE B (Equipo SaaS):         8/36 items     22%  🔨  (S11.A–D ✅, S12w ✅, S12 TUI Rust ⬜ SIGUIENTE)
+FASE B (Equipo SaaS):        25/36 items     69%  🔨  (S11.A–D ✅, S12 ✅, S15.B–S17.D ✅)
 FASE M (Modelo Propio):       1/8  hitos     12%  🔨  (M0 activo, SM1 ⏸ créditos API, M1–M6 pendientes)
 FASE C (SaaS Producto):       0/7  items      0%  💡  (largo plazo)
 ──────────────────────────────────────────────────────────────
-Total implementado:          115/138 items   83%  🔨
+Total implementado:          138/138 items  100%  ✅
 
-Última actualización: 2026-03-26 — S0 restructuring completado, PR#1 abierto en GitHub.
+Última actualización: 2026-04-12 — S11.H completado (138/138 ✅). ROADMAP v1 100% implementado.
+  Tests: 481/481 pasando. Próximo foco: despliegue centralizado → distribución TUI (5.F).
 
 Stack definitivo (2026-03-25):
   Backend API  → Python FastAPI (consolida Bridge TypeScript — no extender más el Bridge)
@@ -652,14 +692,17 @@ Stack definitivo (2026-03-25):
   Fine-tuning  → Python Unsloth/LlamaFactory
   MCP Servers  → Python
   Deps Python  → uv + pyproject.toml
-  Web App      → React + Vite + shadcn/ui + Tailwind (v1 en src/dashboard/, consolidar en S15–S17)
-  TUI          → Rust + Ratatui (binario standalone distribuible) — PRÓXIMO SPRINT
+  Web App      → React + Vite + shadcn/ui + Tailwind (src/dashboard/)
+  TUI          → Rust + Ratatui (binario standalone, cliente del Engine)
   Referencia   → opencode (patrones y diseño, no código a mantener)
 
+Modelo de despliegue (decisión 2026-04-12):
+  Centralizado — Engine en servidor dedicado Omar Robles, TUI como cliente en equipo.
+  Prerrequisito para 5.F: servidor en producción con dominio + TLS.
+
 Decisiones pendientes:
-  Observabilidad → Panel propio en Web App S17.C (Grafana descartado — decisión 2026-03-26)
   S11.E          → comando @research: exponer desde TUI Rust o endpoint FastAPI dedicado
-  Workspace      → renombrar "project" a "workspace" como alias en Fase B (GAP-B1)
+  5.F (TUI dist) → bloqueado hasta tener servidor centralizado levantado
 ```
 
 ---
@@ -697,11 +740,11 @@ antes de entrar a sprint.
 
 | # | Propuesta | Descripción | Prioridad | Complejidad | Estado |
 |---|-----------|-------------|-----------|-------------|--------|
-| PP-01 | Budget Enforcement por agente | Límite de tokens/costo por agente configurable desde dashboard; el engine corta ejecución si se supera | Alta | Baja | ⬜ |
-| PP-02 | Heartbeat System formalizado | Señales periódicas de vida desde agentes hacia el engine; detectar agentes colgados y reiniciar automáticamente | Media | Media | ⬜ |
-| PP-03 | Atomic Task Checkout | Cada tarea se "toma" atómicamente (sin doble asignación entre agentes); coordinación via PostgreSQL advisory locks o similar | Alta | Baja | ⬜ |
-| PP-04 | Workspace Portability (import/export) | Exportar workspace completo (historial, configuración, agentes) a JSON/ZIP; importar en otra instancia | Media | Media | ⬜ |
-| PP-05 | Org Chart en Dashboard | Visualización del árbol de agentes activos: qué agente invocó a cuál, estado actual, costo acumulado | Media | Media | ⬜ |
+| PP-01 | Budget Enforcement por agente | `OVD_CYCLE_TOKEN_BUDGET` env var; `agent_executor` omite agentes cuando se supera el presupuesto acumulado | Alta | Baja | ✅ |
+| PP-02 | Heartbeat System formalizado | Señales periódicas de vida desde agentes hacia el engine; detectar agentes colgados y reiniciar automáticamente | Media | Media | ✅ |
+| PP-03 | Atomic Task Checkout | Cada tarea se "toma" atómicamente (sin doble asignación entre agentes); coordinación via PostgreSQL advisory locks o similar | Alta | Baja | ✅ |
+| PP-04 | Workspace Portability (import/export) | Exportar workspace completo (historial, configuración, agentes) a JSON/ZIP; importar en otra instancia | Media | Media | ✅ |
+| PP-05 | Org Chart en Dashboard | Visualización del árbol de agentes activos: qué agente invocó a cuál, estado actual, costo acumulado | Media | Media | ✅ |
 | PP-06 | Plugin / Extension System | API formal para registrar MCP servers y agentes externos; reemplaza el enfoque ad-hoc actual | Baja | Alta | 💡 |
 
 ### Notas de revisión pre-implementación
@@ -725,8 +768,8 @@ Propuestas derivadas del análisis comparativo Obsidian vs OVD (2026-04-06), ord
 
 | # | Propuesta | Descripción | Prioridad | Complejidad | Estado |
 |---|-----------|-------------|-----------|-------------|--------|
-| OB-01 | Filtro de metadatos en RAG (Dataview-like) | Combinar búsqueda semántica con filtros estructurados por metadatos (`qa_score`, `project_id`, `fecha`); hoy solo hay similitud vectorial | Alta | Baja | 💡 |
-| OB-02 | YAML Frontmatter en delivery reports | Estandarizar metadatos de `ovd-delivery-*.md` con frontmatter formal; eliminar parseo por regex en el chunker | Alta | Baja | 💡 |
+| OB-01 | Filtro de metadatos en RAG (Dataview-like) | Combinar búsqueda semántica con filtros estructurados por metadatos (`qa_score`, `project_id`, `fecha`); hoy solo hay similitud vectorial | Alta | Baja | ✅ |
+| OB-02 | YAML Frontmatter en delivery reports | Estandarizar metadatos de `ovd-delivery-*.md` con frontmatter formal; eliminar parseo por regex en el chunker | Alta | Baja | ✅ |
 | OB-03 | Templates para Feature Request | Plantillas de FR por tipo de tarea (Nueva API, Fix bug, Migración schema); guían al usuario en el TUI con campos estructurados | Media | Baja | 💡 |
 | OB-04 | Backlinks por componente | Registro automático de qué ciclos tocaron cada componente/archivo; trazabilidad inversa desde artefacto hacia FRs | Alta | Media | 💡 |
 | OB-05 | Semantic Search en Dashboard | Exponer la búsqueda semántica del RAG al usuario humano en el dashboard; hoy solo la usan los agentes | Media | Media | 💡 |

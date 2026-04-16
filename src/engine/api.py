@@ -38,6 +38,7 @@ from checkpointer import checkpointer_context
 from context_resolver import ContextResolver  # Sprint 8 — GAP-A3
 from graph import build_graph, OVDState
 import nats_client
+import pending_store
 import rag_seed
 import research
 import web_researcher  # Sprint 11 — S11.B
@@ -53,6 +54,10 @@ import nightly_researcher
 from rate_limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+# PP-03 + PP-02 — Atomic Task Checkout + Heartbeat Watcher
+from task_checkout import SessionLock, AlreadyRunningError, detect_stale_sessions
+# Fase A — MCP Client Pool (context7 + futuros servidores)
+import mcp_client
 
 # ---------------------------------------------------------------------------
 # Estado global del engine
@@ -73,9 +78,16 @@ async def lifespan(app: FastAPI):
         _checkpointer = cp
         _graph = build_graph(_checkpointer)
         nightly_researcher.start_scheduler()   # S11.G: arranca job nightly en background
+        # PP-02 — Heartbeat watcher: detecta sesiones colgadas cada 60s
+        watcher_task = asyncio.create_task(_stale_session_watcher())
+        # Fase A — iniciar MCP pool (context7); fallo es no-fatal
+        await mcp_client.pool.start()
         yield
     # S11.G — detener scheduler antes de cerrar
     nightly_researcher.stop_scheduler()
+    watcher_task.cancel()
+    # Fase A — cerrar sesiones MCP
+    await mcp_client.pool.stop()
     # N1.A — cerrar conexión NATS al apagar el engine
     await nats_client.close()
 
@@ -218,6 +230,44 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                     "github_pr":       last_done_event.get("github_pr", {}),
                 },
             })
+
+        # Tras el stream: detectar interrupt de aprobación pendiente (request_approval)
+        if graph and not last_done_event:
+            try:
+                snap = await graph.aget_state(config)
+                if snap and snap.tasks:
+                    for task in snap.tasks:
+                        for interrupt in (task.interrupts or []):
+                            iv = interrupt.value if hasattr(interrupt, "value") else interrupt
+                            if isinstance(iv, dict) and iv.get("type") == "pending_approval":
+                                ctx = iv.get("context", {})
+                                sv = snap.values or {}
+                                pending_store.add(config["configurable"]["thread_id"], {
+                                    "thread_id":     config["configurable"]["thread_id"],
+                                    "session_id":    sv.get("session_id", ""),
+                                    "org_id":        sv.get("org_id", ""),
+                                    "project_id":    sv.get("project_id", ""),
+                                    "feature_request": sv.get("feature_request", ""),
+                                    "sdd_summary":   ctx.get("sdd_summary", ""),
+                                    "sdd": {
+                                        "summary":      ctx.get("sdd_summary", ""),
+                                        "requirements": ctx.get("requirements", []),
+                                        "tasks":        ctx.get("tasks", []),
+                                        "constraints":  ctx.get("constraints", []),
+                                    },
+                                    "revision_count": sv.get("revision_count", 0),
+                                })
+                                yield _make_sse_event("pending_approval", {
+                                    "sdd_summary":    ctx.get("sdd_summary", ""),
+                                    "requirements":   ctx.get("requirements", []),
+                                    "tasks":          ctx.get("tasks", []),
+                                    "constraints":    ctx.get("constraints", []),
+                                    "fr_type":        ctx.get("fr_type", ""),
+                                    "complexity":     ctx.get("complexity", ""),
+                                    "revision_count": sv.get("revision_count", 0),
+                                })
+            except Exception:
+                pass  # no propagar errores de detección de interrupt
 
     except Exception as e:
         yield _make_sse_event("error", {"message": str(e), "recoverable": False})
@@ -378,18 +428,61 @@ async def stream_session(
     config = {"configurable": {"thread_id": thread_id}}
 
     async def event_generator():
-        # Heartbeat cada 15s para mantener conexion
-        heartbeat_task = asyncio.create_task(_heartbeat(request))
+        # PP-03 — adquirir lock exclusivo para el thread antes de ejecutar el grafo
         try:
-            async for event in _stream_graph_events(thread_id, config):
-                if await request.is_disconnected():
-                    break
-                yield event
-                await asyncio.sleep(0)
-        finally:
-            heartbeat_task.cancel()
+            async with SessionLock(thread_id):
+                # PP-05 — registrar sesión activa para el Org Chart
+                session_meta: dict = {"org_id": "", "project_id": "", "feature_request": ""}
+                if _graph:
+                    snap = await _graph.aget_state(config)
+                    if snap and snap.values:
+                        v = snap.values
+                        session_meta = {
+                            "org_id":          v.get("org_id", ""),
+                            "project_id":      v.get("project_id", ""),
+                            "feature_request": v.get("feature_request", ""),
+                            "session_id":      v.get("session_id", ""),
+                        }
+                from task_checkout import register_session, unregister_session
+                register_session(thread_id, session_meta)
+
+                # Heartbeat cada 15s para mantener conexion
+                heartbeat_task = asyncio.create_task(_heartbeat(request))
+                try:
+                    async for event in _stream_graph_events(thread_id, config):
+                        if await request.is_disconnected():
+                            break
+                        yield event
+                        await asyncio.sleep(0)
+                finally:
+                    heartbeat_task.cancel()
+                    unregister_session(thread_id)
+        except AlreadyRunningError:
+            yield {"data": '{"type":"error","message":"Ciclo ya en ejecución — espera a que termine o usa /session/{thread_id}/state para ver el estado actual"}'}
 
     return EventSourceResponse(event_generator())
+
+
+async def _stale_session_watcher():
+    """
+    PP-02 — Heartbeat watcher: detecta sesiones colgadas cada 60s.
+    Corre como tarea background durante el lifespan del engine.
+    """
+    _WATCHER_INTERVAL = int(os.environ.get("OVD_WATCHER_INTERVAL_SECS", "60"))
+    import logging
+    log = logging.getLogger("ovd.heartbeat")
+    log.info("heartbeat: watcher iniciado (intervalo=%ds)", _WATCHER_INTERVAL)
+    while True:
+        try:
+            await asyncio.sleep(_WATCHER_INTERVAL)
+            stale = detect_stale_sessions()
+            if stale:
+                log.warning("heartbeat: %d sesión(es) colgada(s) detectada(s)", len(stale))
+        except asyncio.CancelledError:
+            log.info("heartbeat: watcher detenido")
+            break
+        except Exception as e:
+            log.error("heartbeat: error en watcher — %s", e)
 
 
 async def _heartbeat(request: Request):
@@ -450,9 +543,13 @@ async def get_session_delivery(
 
     v = state.values
 
-    # SEC-01: verificar que el thread pertenece al org_id del caller
+    # SEC-01: ownership validation — denegar si thread sin org_id o si no coincide.
+    # La condición original "if thread_org and ..." permitía acceso cuando el thread
+    # no tenía org_id almacenado (brecha estructural).
+    if not org_id:
+        raise HTTPException(400, detail="org_id es obligatorio")
     thread_org = v.get("org_id", "")
-    if thread_org and thread_org != org_id:
+    if not thread_org or thread_org != org_id:
         raise HTTPException(403, detail="No autorizado: thread pertenece a otra organización")
     security = v.get("security_result", {})
     qa       = v.get("qa_result", {})
@@ -519,6 +616,9 @@ async def approve_session(
         },
         as_node="request_approval",
     )
+
+    # Limpiar del almacén de aprobaciones pendientes (si venía del dashboard)
+    pending_store.remove(thread_id)
 
     return {"ok": True, "status": decision, "thread_id": thread_id}
 

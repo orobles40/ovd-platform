@@ -26,14 +26,22 @@ Si el archivo de template no existe, se usa el prompt fallback hardcodeado.
 """
 from __future__ import annotations
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional
 
 # ---------------------------------------------------------------------------
-# Directorio de templates
+# Directorio de templates y skills externos
 # ---------------------------------------------------------------------------
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+# Ruta al script BM25 de ui-ux-pro-max
+_UI_UX_SEARCH = (
+    Path(__file__).parent.parent
+    / "knowledge" / "ui-ux"
+    / "src" / "ui-ux-pro-max" / "scripts" / "search.py"
+)
 
 # Cache en memoria: "{language}:{name}" -> contenido del template
 _cache: dict[str, str] = {}
@@ -326,6 +334,33 @@ _FALLBACK_BY_LANG: dict[str, dict[str, str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Contexto UI/UX (ui-ux-pro-max BM25)
+# ---------------------------------------------------------------------------
+
+def query_ui_context(fr_text: str, max_results: int = 3) -> str:
+    """
+    Consulta el motor BM25 de ui-ux-pro-max con el texto del FR.
+    Devuelve contexto de diseño relevante para el agente frontend.
+    Retorna string vacío si el script no existe o falla (no bloquea el ciclo).
+    """
+    if not _UI_UX_SEARCH.exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["python3", str(_UI_UX_SEARCH), fr_text, "-n", str(max_results)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout.strip()
+        if result.returncode == 0 and output:
+            return output
+    except Exception:
+        pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # API publica
 # ---------------------------------------------------------------------------
 
@@ -387,13 +422,14 @@ def render(name: str, language: str = "es", **variables: str) -> str:
     template = load(name, language=language)
 
     # Preparar valores — los vacios generan string vacio
-    defaults = {"project_context": "", "rag_context": "", "retry_feedback": ""}
+    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": ""}
     defaults.update(variables)
 
     # Transformar variables de bloque: si el valor no es vacio, agregar prefijo de seccion
     ctx = defaults.get("project_context", "")
     rag = defaults.get("rag_context", "")
     fb  = defaults.get("retry_feedback", "")
+    ui  = defaults.get("ui_context", "")
 
     rendered = template.replace(
         "{project_context}",
@@ -404,6 +440,9 @@ def render(name: str, language: str = "es", **variables: str) -> str:
     ).replace(
         "{retry_feedback}",
         f"\n\nFEEDBACK DE REVISION ANTERIOR (corregir estos issues obligatoriamente):\n{fb}" if fb else "",
+    ).replace(
+        "{ui_context}",
+        f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
     )
 
     return rendered.strip()

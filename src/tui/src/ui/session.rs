@@ -33,6 +33,10 @@ fn split_at_char_boundary(s: &str, max_chars: usize) -> (&str, &str) {
 pub struct SessionFormScreen {
     pub text: String,
     pub auto_approve: bool,
+    /// true cuando el usuario presionó Ctrl+O para ingresar una ruta de archivo
+    pub file_mode: bool,
+    /// ruta que el usuario está escribiendo en file_mode
+    pub file_input: String,
 }
 
 impl Default for SessionFormScreen {
@@ -40,6 +44,8 @@ impl Default for SessionFormScreen {
         Self {
             text: String::new(),
             auto_approve: false,
+            file_mode: false,
+            file_input: String::new(),
         }
     }
 }
@@ -48,11 +54,43 @@ impl Default for SessionFormScreen {
 pub enum SessionFormAction {
     None,
     Submit { text: String, auto_approve: bool },
+    /// El usuario confirmó una ruta de archivo en file_mode
+    LoadFile { path: String },
     Back,
 }
 
 impl SessionFormScreen {
     pub fn handle_key(&mut self, key: KeyEvent) -> SessionFormAction {
+        // Modo ingreso de ruta de archivo (Ctrl+O)
+        if self.file_mode {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.file_mode = false;
+                    self.file_input.clear();
+                    SessionFormAction::None
+                }
+                KeyCode::Enter => {
+                    let path = self.file_input.trim().to_string();
+                    self.file_mode = false;
+                    self.file_input.clear();
+                    if path.is_empty() {
+                        SessionFormAction::None
+                    } else {
+                        SessionFormAction::LoadFile { path }
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.file_input.pop();
+                    SessionFormAction::None
+                }
+                KeyCode::Char(c) => {
+                    self.file_input.push(c);
+                    SessionFormAction::None
+                }
+                _ => SessionFormAction::None,
+            };
+        }
+
         match key.code {
             KeyCode::Esc => SessionFormAction::Back,
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -68,6 +106,11 @@ impl SessionFormScreen {
             }
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.auto_approve = !self.auto_approve;
+                SessionFormAction::None
+            }
+            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.file_mode = true;
+                self.file_input.clear();
                 SessionFormAction::None
             }
             KeyCode::Enter => {
@@ -147,28 +190,45 @@ impl SessionFormScreen {
             );
         frame.render_widget(textarea, chunks[1]);
 
-        // Footer
-        let auto_span = if self.auto_approve {
-            Span::styled(
-                "[Ctrl+A] auto-aprobar: SÍ  ",
-                Style::default().fg(Color::Green),
-            )
+        // Footer — modo normal o modo ingreso de archivo
+        if self.file_mode {
+            let file_footer = Paragraph::new(Line::from(vec![
+                Span::styled("  Cargar archivo: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(self.file_input.as_str(), Style::default().fg(Color::White)),
+                Span::styled("_", Style::default().fg(Color::Yellow)),
+                Span::styled("   [Enter] cargar  [Esc] cancelar", Style::default().fg(Color::DarkGray)),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            );
+            frame.render_widget(file_footer, chunks[2]);
         } else {
-            Span::styled(
-                "[Ctrl+A] auto-aprobar: no  ",
-                Style::default().fg(Color::DarkGray),
-            )
-        };
-        let footer = Paragraph::new(Line::from(vec![
-            Span::styled("  [Enter]", Style::default().fg(Color::Cyan)),
-            Span::styled(" nueva línea  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("[Ctrl+S]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(" enviar  ", Style::default().fg(Color::DarkGray)),
-            auto_span,
-            Span::styled("[Esc]", Style::default().fg(Color::Cyan)),
-            Span::styled(" volver", Style::default().fg(Color::DarkGray)),
-        ]));
-        frame.render_widget(footer, chunks[2]);
+            let auto_span = if self.auto_approve {
+                Span::styled(
+                    "[Ctrl+A] auto-aprobar: SÍ  ",
+                    Style::default().fg(Color::Green),
+                )
+            } else {
+                Span::styled(
+                    "[Ctrl+A] auto-aprobar: no  ",
+                    Style::default().fg(Color::DarkGray),
+                )
+            };
+            let footer = Paragraph::new(Line::from(vec![
+                Span::styled("  [Enter]", Style::default().fg(Color::Cyan)),
+                Span::styled(" nueva línea  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("[Ctrl+S]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(" enviar  ", Style::default().fg(Color::DarkGray)),
+                auto_span,
+                Span::styled("[Ctrl+O]", Style::default().fg(Color::Cyan)),
+                Span::styled(" cargar .md  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("[Esc]", Style::default().fg(Color::Cyan)),
+                Span::styled(" volver", Style::default().fg(Color::DarkGray)),
+            ]));
+            frame.render_widget(footer, chunks[2]);
+        }
     }
 }
 

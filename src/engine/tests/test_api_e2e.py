@@ -420,3 +420,39 @@ class TestE04GetDelivery:
             headers=_headers(),
         )
         assert resp.status_code == 503
+
+    def test_delivery_retorna_403_si_thread_sin_org_id(self, monkeypatch):
+        """
+        SEC-01 (estructural): thread sin org_id almacenado → 403.
+        La condición anterior 'if thread_org and ...' permitía acceso en este caso.
+        """
+        monkeypatch.setenv("OVD_SECRET", _OVD_SECRET)
+        # Estado del thread sin org_id (ej: thread antiguo o mal inicializado)
+        state_sin_org = {k: v for k, v in self._make_full_state().items() if k != "org_id"}
+        graph = _make_graph_mock(state_sin_org)
+        monkeypatch.setattr(_api_module, "_graph", graph)
+
+        client = TestClient(app)
+        resp = client.get(
+            f"/session/{_THREAD_ID}/delivery",
+            params={"org_id": _ORG_ID},
+            headers=_headers(),
+        )
+        assert resp.status_code == 403
+
+    def test_delivery_retorna_400_si_org_id_vacio(self, monkeypatch):
+        """
+        SEC-01 (estructural): org_id vacío en query param → 400.
+        Evita que un caller sin org_id acceda a threads sin org_id.
+        """
+        monkeypatch.setenv("OVD_SECRET", _OVD_SECRET)
+        graph = _make_graph_mock(self._make_full_state())
+        monkeypatch.setattr(_api_module, "_graph", graph)
+
+        client = TestClient(app)
+        resp = client.get(
+            f"/session/{_THREAD_ID}/delivery",
+            params={"org_id": ""},
+            headers=_headers(),
+        )
+        assert resp.status_code == 400
