@@ -42,12 +42,23 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-16)
+## Estado actual (2026-04-17)
 
-- **Sprints completados:** S3 → S18 (Skills externos + MCP context7 + TUI --from-file)
-- **Tests:** 471/471 pasando (Python unit, excluye integration/e2e)
-- **Próximo foco:** Despliegue centralizado del Engine (servidor VPS + dominio + TLS) como prerrequisito para FASE 5.F distribución TUI
+- **Sprints completados:** S3 → S19 (Production readiness — CORS, RAG multi-provider, tests suite completo, README onboarding)
+- **Tests:** Python unit ~471 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~550
+- **Próximo foco:** Contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C) — todo el código P1 está listo
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
+
+### Novedades S19 (2026-04-17)
+- **Tests Block C (frontend):** Vitest — `Approval.test.tsx` y `Telemetry.test.tsx` corregidos (34 tests pasando)
+- **Tests Block D (Docker smoke):** `src/engine/tests/test_docker_smoke.py` — 5 tests `@pytest.mark.docker` con lifecycle completo
+- **Tests Block E (Rust inline):** `#[cfg(test)]` en `workspace.rs`, `auth.rs`, `config/mod.rs` — 26 tests
+- **CORS:** `CORSMiddleware` en `src/engine/api.py` — configurable vía `OVD_CORS_ORIGINS`
+- **RAG multi-provider:** `src/engine/rag.py` — switch `OVD_RAG_EMBEDDING_PROVIDER=openai|ollama`
+- **Docker backup:** `ovd-backup` en `docker-compose.prod.yml` — pg_dump diario, retención 30 archivos
+- **Docker Secrets:** `openai_api_key` agregado a entrypoint y compose
+- **README reescrito:** guía de onboarding completa para nuevo integrante del equipo
+- **`docs/ROADMAP.md`:** actualizado a v0.7.0-production-ready
 
 ### Novedades S18 (2026-04-16)
 - **Superpowers en agentes:** 7 system prompts actualizados con writing-plans, TDD, verification-before-completion
@@ -61,7 +72,8 @@ cd src/tui && cargo build && cargo run
 ## RAG
 
 - **Estado:** activo (`OVD_RAG_ENABLED=true`)
-- **Modelo embeddings:** `nomic-embed-text` vía Ollama local
+- **Modelo embeddings dev:** `nomic-embed-text` vía Ollama local (`OVD_RAG_EMBEDDING_PROVIDER=ollama`)
+- **Modelo embeddings prod:** `text-embedding-3-small` vía OpenAI (`OVD_RAG_EMBEDDING_PROVIDER=openai`)
 - **Implementación:** directo en pgvector sin Bridge (`src/engine/rag.py`)
 - **Bootstrap OVD Platform:** 1617 chunks indexados (docs/ + src/engine/ + CLAUDE.md)
 - **Auto-index post-ciclo:** `_index_delivery_report` en graph.py llama a knowledge.bootstrap
@@ -89,7 +101,7 @@ Al retomar desarrollo, incluir este contexto en el primer mensaje:
 ```
 Context: I'm continuing development of OVD (Oficina Virtual de Desarrollo).
 - Stack: LangGraph + FastAPI + pgvector + Ollama (embeddings) + Multi-LLM router (Claude/OpenAI/Ollama) + Oracle 19c (vía MCP server)
-- Status: S3→S17T completados, WF4 en desarrollo
+- Status: S3→S19 completados, próximo: despliegue VPS (C01)
 - Existing code: do not redesign or refactor already completed phases
 - Next task: [DESCRIBIR TAREA CONCRETA]
 
