@@ -3,7 +3,7 @@ OVD Platform — RAG directo sobre pgvector (sin Bridge)
 Copyright 2026 Omar Robles
 
 Implementa indexación y búsqueda semántica usando:
-  - OllamaEmbeddings (nomic-embed-text) para generar vectores
+  - OllamaEmbeddings (nomic-embed-text) o OpenAIEmbeddings (text-embedding-3-small)
   - PGVector (langchain-postgres) para almacenar y buscar en PostgreSQL
 
 Reemplaza la dependencia del Bridge TypeScript para operaciones RAG.
@@ -14,11 +14,15 @@ Tablas creadas automáticamente en el primer uso:
   langchain_pg_embedding   — vectores + metadata + contenido
 
 Variables de entorno:
-  DATABASE_URL       — conexión PostgreSQL (requerida)
-  OLLAMA_BASE_URL    — URL Ollama (default: http://localhost:11434)
-  OVD_EMBED_MODEL    — modelo de embeddings (default: nomic-embed-text)
-  OVD_RAG_TOP_K      — top-K resultados en búsqueda (default: 5)
-  OVD_RAG_MIN_SCORE  — score mínimo de similitud 0.0-1.0 (default: 0.65)
+  DATABASE_URL                  — conexión PostgreSQL (requerida)
+  OVD_RAG_EMBEDDING_PROVIDER    — "ollama" (default) o "openai"
+  OLLAMA_BASE_URL               — URL Ollama (default: http://localhost:11434)
+  OVD_EMBED_MODEL               — modelo de embeddings
+                                  ollama: nomic-embed-text (default)
+                                  openai: text-embedding-3-small (default)
+  OPENAI_API_KEY                — requerida cuando provider=openai
+  OVD_RAG_TOP_K                 — top-K resultados en búsqueda (default: 5)
+  OVD_RAG_MIN_SCORE             — score mínimo de similitud 0.0-1.0 (default: 0.65)
 """
 from __future__ import annotations
 
@@ -29,11 +33,18 @@ from typing import Any
 
 log = logging.getLogger("ovd.rag")
 
-_DATABASE_URL   = os.environ.get("DATABASE_URL", "")
-_OLLAMA_URL     = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-_EMBED_MODEL    = os.environ.get("OVD_EMBED_MODEL", "nomic-embed-text")
-_TOP_K          = int(os.environ.get("OVD_RAG_TOP_K", "5"))
-_MIN_SCORE      = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
+_DATABASE_URL      = os.environ.get("DATABASE_URL", "")
+_EMBED_PROVIDER    = os.environ.get("OVD_RAG_EMBEDDING_PROVIDER", "ollama").lower()
+_OLLAMA_URL        = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+_EMBED_MODEL       = os.environ.get("OVD_EMBED_MODEL", "")
+_TOP_K             = int(os.environ.get("OVD_RAG_TOP_K", "5"))
+_MIN_SCORE         = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
+
+# Modelos default por provider
+_DEFAULT_MODEL = {
+    "ollama": "nomic-embed-text",
+    "openai": "text-embedding-3-small",
+}
 
 # Prefijo de colección por proyecto — aislamiento multi-proyecto
 _COLLECTION_PREFIX = "ovd_project_"
@@ -96,19 +107,34 @@ def _get_connection_string() -> str:
     return url
 
 
+def _get_embeddings():
+    """
+    Instancia el modelo de embeddings según OVD_RAG_EMBEDDING_PROVIDER.
+
+    Soporta:
+      "ollama"  — OllamaEmbeddings (nomic-embed-text). Requiere Ollama corriendo.
+      "openai"  — OpenAIEmbeddings (text-embedding-3-small). Requiere OPENAI_API_KEY.
+    """
+    model = _EMBED_MODEL or _DEFAULT_MODEL.get(_EMBED_PROVIDER, "nomic-embed-text")
+
+    if _EMBED_PROVIDER == "openai":
+        from langchain_openai import OpenAIEmbeddings
+        log.debug("rag: usando OpenAIEmbeddings (model=%s)", model)
+        return OpenAIEmbeddings(model=model)
+
+    # Default: Ollama
+    from langchain_ollama import OllamaEmbeddings
+    log.debug("rag: usando OllamaEmbeddings (model=%s, url=%s)", model, _OLLAMA_URL)
+    return OllamaEmbeddings(model=model, base_url=_OLLAMA_URL)
+
+
 def _get_store(project_id: str):
     """Retorna un PGVector store para el proyecto dado. Crea la colección si no existe."""
     from langchain_postgres.vectorstores import PGVector
-    from langchain_ollama import OllamaEmbeddings
 
-    embeddings = OllamaEmbeddings(
-        model=_EMBED_MODEL,
-        base_url=_OLLAMA_URL,
-    )
     collection = f"{_COLLECTION_PREFIX}{project_id}"
-
     store = PGVector(
-        embeddings=embeddings,
+        embeddings=_get_embeddings(),
         collection_name=collection,
         connection=_get_connection_string(),
         use_jsonb=True,

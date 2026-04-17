@@ -45,6 +45,7 @@ markers = [
     "integration: requiere PostgreSQL y NATS reales",
     "e2e: smoke test contra engine completo",
     "regression: verifica contratos de sprints anteriores",
+    "docker: requiere Docker daemon corriendo (Block D)",
 ]
 
 [tool.uv]

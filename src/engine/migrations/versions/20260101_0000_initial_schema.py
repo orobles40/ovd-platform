@@ -192,12 +192,28 @@ def upgrade() -> None:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
 
     op.execute("""
-        CREATE POLICY IF NOT EXISTS ovd_projects_org_isolation
-        ON ovd_projects USING (org_id = current_setting('app.current_org_id', TRUE))
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public' AND tablename='ovd_projects'
+              AND policyname='ovd_projects_org_isolation'
+          ) THEN
+            CREATE POLICY ovd_projects_org_isolation
+            ON ovd_projects USING (org_id = current_setting('app.current_org_id', TRUE));
+          END IF;
+        END $$
     """)
     op.execute("""
-        CREATE POLICY IF NOT EXISTS ovd_cycles_org_isolation
-        ON ovd_cycles USING (org_id = current_setting('app.current_org_id', TRUE))
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public' AND tablename='ovd_cycles'
+              AND policyname='ovd_cycles_org_isolation'
+          ) THEN
+            CREATE POLICY ovd_cycles_org_isolation
+            ON ovd_cycles USING (org_id = current_setting('app.current_org_id', TRUE));
+          END IF;
+        END $$
     """)
 
 

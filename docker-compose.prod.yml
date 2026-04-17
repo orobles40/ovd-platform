@@ -81,6 +81,9 @@ services:
       # Ollama (RunPod RTX 4090 on-demand — Config B)
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       OVD_RAG_EMBEDDING_PROVIDER: ${OVD_RAG_EMBEDDING_PROVIDER:-openai}
+      OVD_EMBED_MODEL: ${OVD_EMBED_MODEL:-text-embedding-3-small}
+      # CORS — orígenes permitidos para el dashboard web
+      OVD_CORS_ORIGINS: ${OVD_CORS_ORIGINS:-https://ovd.omarrobles.dev,http://localhost:5173}
       # Observabilidad
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
@@ -91,6 +94,7 @@ services:
       - anthropic_api_key
       - db_password
       - ovd_engine_secret
+      - openai_api_key
     networks:
       - ovd-internal
     depends_on:
@@ -182,12 +186,52 @@ services:
           memory: 128m
           cpus: "0.25"
 
+  # ---------------------------------------------------------------------------
+  # Backup diario PostgreSQL (C07.B)
+  # Ejecuta pg_dump a las 02:00 UTC, guarda en volumen backup_data,
+  # retiene los últimos 30 archivos (≈1 mes).
+  # ---------------------------------------------------------------------------
+  ovd-backup:
+    image: postgres:16-alpine
+    container_name: ovd-backup
+    restart: always
+    environment:
+      PGPASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - backup_data:/backups
+    networks:
+      - ovd-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: >
+      sh -c '
+        while true; do
+          sleep $$(( $(date -u +%s) % 86400 ))
+          PGPASSWORD="$$(cat /run/secrets/db_password)"
+          FILE="/backups/ovd-$$(date +%Y%m%d-%H%M).sql.gz"
+          pg_dump -h postgres -U ovd_prod ovd_prod | gzip > "$$FILE"
+          echo "[backup] $$FILE generado ($$(du -sh $$FILE | cut -f1))"
+          ls -t /backups/ovd-*.sql.gz | tail -n +31 | xargs -r rm --
+          sleep 86400
+        done
+      '
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+
 secrets:
   anthropic_api_key:
     external: true
   db_password:
     external: true
   ovd_engine_secret:
+    external: true
+  openai_api_key:
     external: true
 
 volumes:
@@ -196,6 +240,8 @@ volumes:
   caddy_data:
     driver: local
   caddy_config:
+    driver: local
+  backup_data:
     driver: local
 
 networks:

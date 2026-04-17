@@ -30,6 +30,7 @@ from typing import AsyncIterator
 
 import hmac
 from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -96,6 +97,23 @@ app = FastAPI(
     title="OVD Engine",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# CORS — orígenes permitidos configurables por variable de entorno.
+# En dev: http://localhost:5173 (Vite). En prod: dominio del dashboard.
+# OVD_CORS_ORIGINS puede ser una lista separada por comas.
+_cors_raw = os.environ.get(
+    "OVD_CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:3000,http://localhost:80",
+)
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-OVD-Secret"],
 )
 
 # LOW-03: registrar rate limiter y handler de límite excedido

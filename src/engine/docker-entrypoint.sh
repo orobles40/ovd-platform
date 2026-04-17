@@ -17,6 +17,7 @@ load_secret() {
 
 load_secret anthropic_api_key ANTHROPIC_API_KEY
 load_secret ovd_engine_secret  OVD_ENGINE_SECRET
+load_secret openai_api_key     OPENAI_API_KEY
 
 # Reconstruir DATABASE_URL con la password del secret
 if [ -f /run/secrets/db_password ]; then

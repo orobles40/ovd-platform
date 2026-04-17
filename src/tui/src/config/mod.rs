@@ -208,3 +208,145 @@ pub fn clear_session() -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests — Block E
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // ── AppConfig — serialización TOML ────────────────────────────────────────
+
+    #[test]
+    fn app_config_default_vacio() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.active_profile, "");
+        assert!(cfg.profiles.is_empty());
+    }
+
+    #[test]
+    fn app_config_toml_roundtrip() {
+        let mut cfg = AppConfig {
+            active_profile: "default".into(),
+            profiles: HashMap::new(),
+        };
+        cfg.profiles.insert(
+            "default".into(),
+            Profile {
+                api_url: "http://engine:8001".into(),
+                org_id: "ORG_01".into(),
+                workspace_id: Some("WS_01".into()),
+                workspace_name: Some("HHMM".into()),
+            },
+        );
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        let recovered: AppConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(recovered.active_profile, "default");
+        let p = &recovered.profiles["default"];
+        assert_eq!(p.api_url, "http://engine:8001");
+        assert_eq!(p.org_id, "ORG_01");
+        assert_eq!(p.workspace_id.as_deref(), Some("WS_01"));
+    }
+
+    #[test]
+    fn app_config_toml_sin_workspace_optional() {
+        let toml_str = r#"
+active_profile = "prod"
+
+[profiles.prod]
+api_url = "https://ovd.example.com"
+org_id = "ORG_PROD"
+"#;
+        let cfg: AppConfig = toml::from_str(toml_str).unwrap();
+        let p = &cfg.profiles["prod"];
+        assert!(p.workspace_id.is_none());
+        assert!(p.workspace_name.is_none());
+    }
+
+    // ── AppConfig::active() ───────────────────────────────────────────────────
+
+    #[test]
+    fn active_retorna_perfil_configurado() {
+        let mut cfg = AppConfig {
+            active_profile: "dev".into(),
+            profiles: HashMap::new(),
+        };
+        cfg.profiles.insert("dev".into(), Profile {
+            api_url: "http://localhost:8001".into(),
+            org_id: "ORG_DEV".into(),
+            workspace_id: None,
+            workspace_name: None,
+        });
+        let profile = cfg.active();
+        assert_eq!(profile.org_id, "ORG_DEV");
+    }
+
+    #[test]
+    fn active_retorna_default_si_no_hay_perfil() {
+        let cfg = AppConfig::default();
+        let profile = cfg.active();
+        // Profile::default() tiene api_url = "http://localhost:8000"
+        assert_eq!(profile.api_url, "http://localhost:8000");
+        assert_eq!(profile.org_id, "");
+    }
+
+    // ── AppConfig::set_workspace() ────────────────────────────────────────────
+
+    #[test]
+    fn set_workspace_crea_perfil_si_no_existe() {
+        let mut cfg = AppConfig {
+            active_profile: "default".into(),
+            profiles: HashMap::new(),
+        };
+        cfg.set_workspace("WS_99", "Nuevo Proyecto");
+        let p = cfg.profiles.get("default").unwrap();
+        assert_eq!(p.workspace_id.as_deref(), Some("WS_99"));
+        assert_eq!(p.workspace_name.as_deref(), Some("Nuevo Proyecto"));
+    }
+
+    #[test]
+    fn set_workspace_actualiza_perfil_existente() {
+        let mut cfg = AppConfig {
+            active_profile: "default".into(),
+            profiles: HashMap::new(),
+        };
+        cfg.profiles.insert("default".into(), Profile {
+            api_url: "http://localhost:8001".into(),
+            org_id: "ORG_01".into(),
+            workspace_id: Some("OLD_WS".into()),
+            workspace_name: Some("Old Name".into()),
+        });
+        cfg.set_workspace("NEW_WS", "New Name");
+        let p = cfg.profiles.get("default").unwrap();
+        assert_eq!(p.workspace_id.as_deref(), Some("NEW_WS"));
+        assert_eq!(p.workspace_name.as_deref(), Some("New Name"));
+    }
+
+    // ── ActiveSession — serialización ─────────────────────────────────────────
+
+    #[test]
+    fn active_session_toml_roundtrip() {
+        let s = ActiveSession {
+            thread_id: "TH_ABC".into(),
+            feature_request: "Migrar a pgvector".into(),
+            status: "pending_approval".into(),
+            started_at: 1_700_000_000,
+        };
+        let toml_str = toml::to_string_pretty(&s).unwrap();
+        let r: ActiveSession = toml::from_str(&toml_str).unwrap();
+        assert_eq!(r.thread_id, "TH_ABC");
+        assert_eq!(r.status, "pending_approval");
+        assert_eq!(r.started_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn active_session_default_vacio() {
+        let s = ActiveSession::default();
+        assert_eq!(s.thread_id, "");
+        assert_eq!(s.status, "");
+        assert_eq!(s.started_at, 0);
+    }
+}
