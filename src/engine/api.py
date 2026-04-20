@@ -55,8 +55,11 @@ import nightly_researcher
 from rate_limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-# PP-03 + PP-02 — Atomic Task Checkout + Heartbeat Watcher
-from task_checkout import SessionLock, AlreadyRunningError, detect_stale_sessions
+# PP-03 + PP-02 + S20-GAP-R3 — Atomic Task Checkout + Heartbeat Watcher + Stale Cancel
+from task_checkout import (
+    SessionLock, AlreadyRunningError, detect_stale_sessions,
+    register_task, cancel_stale_sessions,
+)
 # Fase A — MCP Client Pool (context7 + futuros servidores)
 import mcp_client
 
@@ -66,6 +69,10 @@ import mcp_client
 
 _graph = None
 _checkpointer = None
+
+# S20 — GAP-R1: timeout global del stream SSE. Si el grafo no termina en este tiempo,
+# el stream se cierra con un evento de error. Configurable via OVD_SSE_STREAM_TIMEOUT_SECS.
+_SSE_STREAM_TIMEOUT: float = float(os.environ.get("OVD_SSE_STREAM_TIMEOUT_SECS", "900"))
 
 
 @asynccontextmanager
@@ -463,15 +470,32 @@ async def stream_session(
                         }
                 from task_checkout import register_session, unregister_session
                 register_session(thread_id, session_meta)
+                # S20 — GAP-R3: registrar la task actual para poder cancelarla si queda stale
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    register_task(thread_id, current_task)
 
                 # Heartbeat cada 15s para mantener conexion
                 heartbeat_task = asyncio.create_task(_heartbeat(request))
                 try:
-                    async for event in _stream_graph_events(thread_id, config):
-                        if await request.is_disconnected():
-                            break
-                        yield event
-                        await asyncio.sleep(0)
+                    # S20 — GAP-R1: timeout global del stream — evita streams infinitos
+                    async with asyncio.timeout(_SSE_STREAM_TIMEOUT):
+                        async for event in _stream_graph_events(thread_id, config):
+                            if await request.is_disconnected():
+                                break
+                            yield event
+                            await asyncio.sleep(0)
+                except asyncio.TimeoutError:
+                    import logging as _log
+                    _log.getLogger("ovd.api").error(
+                        "SSE stream timeout para thread_id=%s tras %.0fs",
+                        thread_id, _SSE_STREAM_TIMEOUT,
+                    )
+                    yield {"data": json.dumps({
+                        "type": "error",
+                        "message": f"Timeout global del stream ({_SSE_STREAM_TIMEOUT:.0f}s). El ciclo puede seguir activo — consulta /session/{thread_id}/state",
+                        "recoverable": False,
+                    })}
                 finally:
                     heartbeat_task.cancel()
                     unregister_session(thread_id)
@@ -493,9 +517,10 @@ async def _stale_session_watcher():
     while True:
         try:
             await asyncio.sleep(_WATCHER_INTERVAL)
-            stale = detect_stale_sessions()
-            if stale:
-                log.warning("heartbeat: %d sesión(es) colgada(s) detectada(s)", len(stale))
+            # S20 — GAP-R3: cancelar sesiones colgadas (no solo detectar)
+            cancelled = await cancel_stale_sessions(nats_publish_fn=nats_client.publish)
+            if cancelled:
+                log.warning("heartbeat: %d sesión(es) colgada(s) cancelada(s): %s", len(cancelled), cancelled)
         except asyncio.CancelledError:
             log.info("heartbeat: watcher detenido")
             break

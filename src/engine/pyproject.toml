@@ -36,6 +36,8 @@ dependencies = [
     "mcp>=1.0",
     # Migraciones de esquema (runtime — necesario en entrypoint Docker)
     "alembic>=1.18.4",
+    # S20 — Resiliencia: retries con backoff exponencial y circuit breaker
+    "tenacity>=8.2.0",
 ]
 
 [tool.pytest.ini_options]

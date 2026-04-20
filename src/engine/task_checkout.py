@@ -24,10 +24,12 @@ Uso:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import psycopg
 
@@ -46,6 +48,9 @@ _STALE_THRESHOLD_MINUTES = int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30")
 _active_sessions: dict[str, dict] = {}
 _stale_sessions:  dict[str, dict] = {}   # thread_id → metadata + detected_at
 
+# S20 — GAP-R3: registro de asyncio.Task por thread_id para poder cancelarlas
+_running_tasks: dict[str, "asyncio.Task[None]"] = {}
+
 
 def register_session(thread_id: str, metadata: dict) -> None:
     """Registra una sesión como activa. Llamar al inicio del stream."""
@@ -57,10 +62,16 @@ def register_session(thread_id: str, metadata: dict) -> None:
     _stale_sessions.pop(thread_id, None)
 
 
+def register_task(thread_id: str, task: "asyncio.Task") -> None:
+    """S20 — GAP-R3: Registra la asyncio.Task del stream para poder cancelarla si queda stale."""
+    _running_tasks[thread_id] = task
+
+
 def unregister_session(thread_id: str) -> None:
     """Elimina una sesión del registro activo y stale. Llamar al finalizar el stream."""
     _active_sessions.pop(thread_id, None)
     _stale_sessions.pop(thread_id, None)
+    _running_tasks.pop(thread_id, None)
 
 
 def list_active_sessions(org_id: str | None = None) -> list[dict]:
@@ -110,6 +121,57 @@ def detect_stale_sessions(threshold_minutes: int = _STALE_THRESHOLD_MINUTES) -> 
             detected.append({"thread_id": tid, **stale_entry})
 
     return detected
+
+
+async def cancel_stale_sessions(
+    threshold_minutes: int = _STALE_THRESHOLD_MINUTES,
+    nats_publish_fn=None,
+) -> list[str]:
+    """
+    S20 — GAP-R3: Detecta sesiones colgadas y cancela su asyncio.Task activa.
+
+    Para cada sesión stale:
+    1. Cancela la Task asyncio registrada (si existe y no ha terminado)
+    2. Desregistra la sesión de _active_sessions
+    3. Publica evento NATS session.timeout (si nats_publish_fn está disponible)
+
+    Retorna la lista de thread_ids cancelados.
+    """
+    stale = detect_stale_sessions(threshold_minutes)
+    cancelled = []
+
+    for entry in stale:
+        tid = entry["thread_id"]
+        task = _running_tasks.get(tid)
+
+        if task and not task.done():
+            log.warning(
+                "heartbeat: cancelando tarea colgada — thread=%s elapsed=%dmin",
+                tid, entry.get("elapsed_minutes", "?"),
+            )
+            task.cancel()
+            cancelled.append(tid)
+        else:
+            log.info("heartbeat: sesión stale sin tarea activa — thread=%s", tid)
+
+        unregister_session(tid)
+
+        # Publicar evento NATS (fire-and-forget, no bloquear si falla)
+        if nats_publish_fn is not None:
+            org_id = entry.get("org_id", "unknown")
+            try:
+                await nats_publish_fn(
+                    f"ovd.{org_id}.session.timeout",
+                    {
+                        "thread_id": tid,
+                        "elapsed_minutes": entry.get("elapsed_minutes"),
+                        "reason": "stale_session_cancelled",
+                    },
+                )
+            except Exception as e:
+                log.warning("heartbeat: error publicando session.timeout en NATS — %s", e)
+
+    return cancelled
 
 
 def list_stale_sessions(org_id: str | None = None) -> list[dict]:

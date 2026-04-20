@@ -24,6 +24,8 @@ import logging
 import os
 from typing import Any
 
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 log = logging.getLogger("ovd-nats")
 
 NATS_URL   = os.environ.get("NATS_URL", "")
@@ -60,10 +62,44 @@ async def _get_connection() -> Any:
             return None
 
 
+_NATS_MAX_RETRIES = 2
+_NATS_BACKOFF_SECS = 1.0
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+@retry(stop=stop_after_attempt(_NATS_MAX_RETRIES + 1), wait=wait_fixed(_NATS_BACKOFF_SECS), reraise=True)
+async def _publish_with_retry(nc: Any, subject: str, data: bytes) -> None:
+    """Publica en NATS con reintentos. Levanta excepción si agota intentos."""
+    await nc.publish(subject, data)
+
+
+async def _send_to_dlq(subject: str, payload: dict[str, Any], error: str) -> None:
+    """
+    S20 — GAP-R7: Persiste mensaje fallido en tabla ovd_nats_dlq (dead letter queue).
+    Fire-and-forget: si el INSERT falla, solo loguea — nunca bloquea el ciclo.
+    """
+    if not _DATABASE_URL:
+        log.warning("nats_client: DLQ omitida — DATABASE_URL no configurada")
+        return
+    try:
+        import psycopg
+        async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+            await conn.execute(
+                "INSERT INTO ovd_nats_dlq (subject, payload, error) VALUES (%s, %s, %s)",
+                (subject, json.dumps(payload, default=str), error),
+            )
+            log.info("nats_client: mensaje encolado en DLQ — subject=%s", subject)
+    except Exception as dlq_exc:
+        log.error("nats_client: DLQ insert falló — %s", dlq_exc)
+
+
 async def publish(subject: str, payload: dict[str, Any]) -> None:
     """
     Publica un mensaje en NATS. Fire-and-forget: los errores se loggean
     pero no propagan — el ciclo continúa sin interrupciones.
+
+    S20 — GAP-R7: reintenta hasta _NATS_MAX_RETRIES veces con backoff de 1s.
+    Si agota todos los reintentos, persiste el mensaje en ovd_nats_dlq.
     """
     if not _is_enabled():
         return
@@ -73,10 +109,17 @@ async def publish(subject: str, payload: dict[str, Any]) -> None:
         if nc is None:
             return
         data = json.dumps(payload, default=str).encode()
-        await nc.publish(subject, data)
+        await _publish_with_retry(nc, subject, data)
         log.debug("nats_client: publicado en %s (%d bytes)", subject, len(data))
     except Exception as e:
-        log.warning("nats_client: error publicando en %s — %s", subject, e)
+        log.warning(
+            "nats_client: error publicando en %s tras %d intentos — enviando a DLQ — %s",
+            subject, _NATS_MAX_RETRIES + 1, e,
+        )
+        try:
+            await _send_to_dlq(subject, payload, str(e))
+        except Exception as dlq_exc:
+            log.error("nats_client: DLQ también falló para %s — %s", subject, dlq_exc)
 
 
 async def close() -> None:

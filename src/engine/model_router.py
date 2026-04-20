@@ -24,12 +24,14 @@ from __future__ import annotations
 import os
 import re
 import logging
+import time
 from typing import Any
 from dataclasses import dataclass
 
 import httpx
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger("ovd-model-router")
 
@@ -59,6 +61,73 @@ _ANALYSIS_ROLE_DEFAULTS: dict[str, str] = {
 
 # P2.C — Roles que usan structured output — requieren temperature baja para estabilidad
 _STRUCTURED_ROLES = {"analyzer", "sdd", "qa", "security", "router"}
+
+# ---------------------------------------------------------------------------
+# S20 — GAP-R4: Circuit breaker por provider (lightweight, en memoria)
+# ---------------------------------------------------------------------------
+
+_CB_FAIL_THRESHOLD = int(os.environ.get("OVD_CB_FAIL_THRESHOLD", "5"))
+_CB_RECOVERY_SECS  = float(os.environ.get("OVD_CB_RECOVERY_SECS", "30"))
+
+
+class CircuitOpenError(Exception):
+    """Lanzada cuando el circuit breaker está abierto para un provider."""
+
+
+class _CircuitBreaker:
+    """
+    Circuit breaker simple en memoria por provider.
+    Estados: closed → open → half-open → closed/open
+
+    closed:    permite llamadas normales
+    open:      rechaza inmediatamente tras N fallos consecutivos
+    half-open: permite una llamada de prueba tras recovery_secs
+    """
+
+    def __init__(self, threshold: int, recovery_secs: float) -> None:
+        self._threshold = threshold
+        self._recovery  = recovery_secs
+        self._failures:   dict[str, int]   = {}
+        self._open_since: dict[str, float] = {}
+
+    def is_open(self, provider: str) -> bool:
+        if provider not in self._open_since:
+            return False
+        elapsed = time.monotonic() - self._open_since[provider]
+        if elapsed >= self._recovery:
+            # half-open: dejar pasar una prueba (el caller decide si registrar éxito/fallo)
+            return False
+        return True
+
+    def record_failure(self, provider: str) -> None:
+        count = self._failures.get(provider, 0) + 1
+        self._failures[provider] = count
+        if count >= self._threshold:
+            if provider not in self._open_since:
+                log.warning(
+                    "circuit_breaker: circuito ABIERTO para provider='%s' tras %d fallos",
+                    provider, count,
+                )
+            self._open_since[provider] = time.monotonic()
+
+    def record_success(self, provider: str) -> None:
+        if provider in self._open_since:
+            log.info("circuit_breaker: circuito CERRADO para provider='%s'", provider)
+        self._failures.pop(provider, None)
+        self._open_since.pop(provider, None)
+
+    def reset(self, provider: str | None = None) -> None:
+        """Usado en tests para limpiar estado."""
+        if provider:
+            self._failures.pop(provider, None)
+            self._open_since.pop(provider, None)
+        else:
+            self._failures.clear()
+            self._open_since.clear()
+
+
+# Singleton global
+_cb = _CircuitBreaker(_CB_FAIL_THRESHOLD, _CB_RECOVERY_SECS)
 
 # P3.C — Patrón para detectar modelos con menos de 7B parámetros
 _SMALL_MODEL_RE = re.compile(r"\b([1-6])b\b|tiny|mini|phi[0-9]?[-:]mini", re.IGNORECASE)
@@ -135,13 +204,20 @@ async def _fetch_resolved(
     """
     Llama a GET /ovd/config/project/:projectId/resolved en el Bridge
     y extrae la config del agente solicitado.
+
+    S20 — GAP-R8: reintenta hasta 3 veces con backoff (0.5s-2s) antes de caer a defaults.
     """
     url = f"{_BRIDGE_URL}/ovd/config/project/{project_id}/resolved"
     headers = {"Authorization": f"Bearer {jwt_token}"}
     if _BRIDGE_SECRET:
         headers["X-OVD-Secret"] = _BRIDGE_SECRET
 
-    try:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+        reraise=True,
+    )
+    async def _do_fetch() -> ResolvedConfig | None:
         async with httpx.AsyncClient(timeout=5.0) as client:
             res = await client.get(url, headers=headers)
             if not res.is_success:
@@ -165,8 +241,11 @@ async def _fetch_resolved(
                 code_style=agent_cfg.get("codeStyle"),
                 resolved_from=agent_cfg.get("resolvedFrom", "default"),
             )
+
+    try:
+        return await _do_fetch()
     except Exception as exc:
-        log.warning("model_router: failed to fetch config from bridge: %s", exc)
+        log.warning("model_router: failed to fetch config from bridge tras reintentos: %s", exc)
         return None
 
 
@@ -225,12 +304,21 @@ def build_llm(config: ResolvedConfig) -> Any:
     """
     Construye el ChatModel de LangChain segun el provider resuelto.
 
+    S20 — GAP-R4: lanza CircuitOpenError si el circuit breaker está abierto para el provider.
+    El caller debe capturar esta excepción y usar un fallback inmediato.
+
     Providers:
       ollama  → ChatOllama via ChatOpenAI compatible (base_url local)
       claude  → ChatAnthropic
       openai  → ChatOpenAI (GPT-4o, o1, etc.)
       custom  → ChatOpenAI con base_url custom (Kimi, Moonshot, Groq, Together, etc.)
     """
+    # S20 — GAP-R4: verificar circuit breaker antes de intentar la llamada
+    if _cb.is_open(config.provider):
+        raise CircuitOpenError(
+            f"Circuit breaker ABIERTO para provider='{config.provider}' — "
+            f"esperando {_CB_RECOVERY_SECS:.0f}s de recovery. Usa un provider alternativo."
+        )
     # Resolver API key si se especifica una variable de entorno
     api_key: str | None = None
     if config.api_key_env:
