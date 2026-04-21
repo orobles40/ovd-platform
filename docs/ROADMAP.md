@@ -1,6 +1,6 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-17
-**Versión actual:** v0.7.0-production-ready
+**Última actualización:** 2026-04-21
+**Versión actual:** v0.8.0-resilience
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
 > Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
@@ -388,6 +388,118 @@ Stack: React + Vite + shadcn/ui + Tailwind. Backend: FastAPI (mismas rutas OVD y
 |---|------|-------------|-----------|--------|
 | S18.K | CLI `--from-file <ruta>` | Al invocar el TUI con `--from-file`, precarga el contenido del archivo en el campo FR del formulario de sesión | `src/tui/src/main.rs` | ✅ |
 | S18.L | Atajo `Ctrl+O` en SessionFormScreen | Modo interactivo de carga de archivo: barra amarilla inferior para ingresar ruta, Enter carga async vía `tokio::fs::read_to_string`, Esc cancela | `src/tui/src/ui/session.rs` | ✅ |
+
+### Sprint 19 — Production Readiness ✅ (2026-04-17)
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S19.A | Tests Block C — Frontend Vitest | `Approval.test.tsx` y `Telemetry.test.tsx` corregidos — 34/34 pasando | `src/dashboard/src/` | ✅ |
+| S19.B | Tests Block D — Docker smoke | `test_docker_smoke.py` — 5 tests `@pytest.mark.docker` con lifecycle completo | `src/engine/tests/test_docker_smoke.py` | ✅ |
+| S19.C | Tests Block E — Rust inline | `#[cfg(test)]` en `workspace.rs`, `auth.rs`, `config/mod.rs` — 26 tests, 63/63 total Rust | `src/tui/src/` | ✅ |
+| S19.D | CORS configurable | `CORSMiddleware` en engine vía `OVD_CORS_ORIGINS` — separa dev (localhost:5173) de prod (dominio real) | `src/engine/api.py` | ✅ |
+| S19.E | RAG multi-provider | Switch `OVD_RAG_EMBEDDING_PROVIDER=ollama\|openai`. OpenAI `text-embedding-3-small` como default en prod | `src/engine/rag.py` | ✅ |
+| S19.F | Docker backup | Servicio `ovd-backup` en `docker-compose.prod.yml` — pg_dump diario, gzip, retención 30 días | `docker-compose.prod.yml` | ✅ |
+| S19.G | Docker Secrets | `openai_api_key` secret en `docker-compose.prod.yml` + carga en entrypoint | `docker-entrypoint.sh` | ✅ |
+| S19.H | README reescrito | Guía de onboarding completa para nuevo integrante: arquitectura, setup, vars, primer ciclo, troubleshooting | `README.md` | ✅ |
+
+---
+
+### Sprint 20 — Resiliencia del Engine ✅ (2026-04-21)
+
+Cierre de 8 gaps de resiliencia detectados en auditoría. El código funcional estaba completo (S19) pero sin protección ante nodos colgados, reintentos sin backoff, sesiones stale ni circuit breaker.
+
+| # | Item | GAP | Descripción | Archivo(s) | Estado |
+|---|------|-----|-------------|-----------|--------|
+| S20.A | Dependencia `tenacity` + vars de entorno | — | `tenacity>=8.2.0` en `pyproject.toml`. Vars: `OVD_NODE_TIMEOUT_SECS`, `OVD_MAX_RETRIES`, `OVD_CB_FAIL_THRESHOLD`, `OVD_CB_RECOVERY_SECS`, `OVD_SSE_STREAM_TIMEOUT_SECS` | `pyproject.toml`, `.env` | ✅ |
+| S20.B | Retries configurables con backoff exponencial | GAP-R6 + R2 | `MAX_RETRIES` configurable vía env. `invoke_structured` usa `@retry` de tenacity con `wait_exponential(1s→10s)` en lugar del loop manual | `src/engine/graph.py` | ✅ |
+| S20.C | Timeout por nodo + timeout SSE global | GAP-R1 | `asyncio.wait_for()` en `agent_executor` con `OVD_NODE_TIMEOUT_SECS`. Timeout global en generador SSE con `asyncio.timeout()` | `src/engine/graph.py`, `src/engine/api.py` | ✅ |
+| S20.D | Circuit breaker para providers LLM | GAP-R4 + R8 | `_CircuitBreaker` en `model_router.py` (closed→open→half-open). Retry con tenacity en `_fetch_resolved`. `CircuitOpenError` para fallback inmediato | `src/engine/model_router.py` | ✅ |
+| S20.E | Fallback para `qa_review` | GAP-R5 | Patrón doble fallback: `invoke_structured` → `_parse_qa_fallback` (regex) → resultado neutro (score=70, passed=True) | `src/engine/graph.py` | ✅ |
+| S20.F | Cancelación de sesiones stale | GAP-R3 | `cancel_stale_sessions()` en `task_checkout.py`: cancela `asyncio.Task`, desregistra sesión, publica NATS `session.timeout` | `src/engine/task_checkout.py`, `src/engine/api.py` | ✅ |
+| S20.G | NATS retry + dead letter queue | GAP-R7 | `_publish_with_retry` con tenacity (max 2, backoff 1s). `_send_to_dlq` persiste mensajes fallidos en tabla `ovd_nats_dlq` | `src/engine/nats_client.py` | ✅ |
+| S20.H | Migración Alembic DLQ | — | `CREATE TABLE ovd_nats_dlq` — id, subject, payload JSONB, error, created_at, processed_at. Índice en mensajes sin procesar | `src/engine/migrations/versions/20260420_0002_nats_dlq.py` | ✅ |
+| S20.I | Tests resiliencia (27 nuevos) | — | `test_resilience_retry.py` (4), `test_resilience_timeout.py` (3), `test_resilience_circuit_breaker.py` (6), `test_resilience_qa_fallback.py` (6), `test_resilience_stale_cancel.py` (4), `test_resilience_nats_dlq.py` (4) | `src/engine/tests/` | ✅ |
+
+---
+
+### Sprint 21 — Visión: input de imágenes/wireframes ⬜ (pendiente)
+
+Integrar `qwen2-vl:7b` como pre-procesador de imágenes antes del nodo `analyze_fr`. El modelo de visión actúa como traductor imagen→texto; los agentes downstream no saben que hubo una imagen.
+
+> Ver propuesta completa en `docs/VISION_INTEGRATION.md`
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S21.A | Campos `image_base64` + `image_description` en `StartSessionRequest` | Dos campos opcionales: base64 crudo (engine procesa) o descripción ya procesada (cliente procesa externamente) | `src/engine/api.py` | ⬜ |
+| S21.B | Campos nuevos en `OVDState` | `image_base64: str` + `image_description: str` — strings simples, sin impacto en checkpointer | `src/engine/graph.py` | ⬜ |
+| S21.C | Nodo `describe_image` | Pre-procesador: si hay `image_base64`, llama `qwen2-vl:7b` vía Ollama → genera descripción textual del layout. No-op si no hay imagen o ya hay descripción | `src/engine/graph.py` | ⬜ |
+| S21.D | Inyección en `analyze_fr` | 3 líneas: si hay `image_description`, appenda a `human_content` antes de invocar el analizador | `src/engine/graph.py` | ⬜ |
+| S21.E | Posición en el grafo | `START → describe_image → analyze_fr` (reemplaza edge directo `START → analyze_fr`) | `src/engine/graph.py` | ⬜ |
+| S21.F | Variables de entorno | `OVD_VISION_MODEL=qwen2-vl:7b`, `OVD_VISION_OLLAMA_URL`, `OVD_VISION_ENABLED=true` | `.env`, `.env.prod.example` | ⬜ |
+| S21.G | Dashboard: drop zone + preview | FileReader → base64. Drop zone + miniatura 200×200px + botón remover en `FrLauncher.tsx` | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
+| S21.H | Tests `test_vision.py` | No-op sin imagen, no reprocesa si ya hay descripción, inyección correcta en analyze_fr | `src/engine/tests/test_vision.py` | ⬜ |
+
+**Prerequisito:** `ollama pull qwen2-vl:7b` (~5 GB). Verificar que acepta imagen base64 vía API OpenAI-compatible de Ollama antes de codificar.
+
+---
+
+## FASE F — Migración Flutter (cliente unificado web + desktop)
+
+**Objetivo:** reemplazar el TUI Rust y el Dashboard React por una sola aplicación Flutter que compila a web, macOS, Linux y Windows desde el mismo codebase Dart. El engine Python no cambia.
+
+> Ver propuesta completa en `docs/FLUTTER_MIGRATION.md`
+
+**Prerequisito:** despliegue VPS (FASE 5 — C01) operativo antes de iniciar.
+
+### Sprint F1 — Core sin UI ⬜
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| F1.A | Proyecto Flutter inicializado | `src/flutter_app/` — estructura `core/`, `features/`, `shared/`. Targets: web, macOS, Linux, Windows | ⬜ |
+| F1.B | API Client (Dio + interceptors) | `AuthInterceptor`: adjunta Bearer + refresh automático en 401. Base URL configurable por env | ⬜ |
+| F1.C | SSE Client (dart:http streams) | `SseClient` sobre `dart:http` raw streams — parser de bloques `event:/data:` con buffer | ⬜ |
+| F1.D | Modelos Freezed | `SessionModel`, `SDDModel`, `ProjectModel`, `TokenUsageModel`, `AgentResultModel` | ⬜ |
+| F1.E | AuthNotifier + TokenStorage | `flutter_secure_storage`: Keychain (macOS), libsecret (Linux), Credential Manager (Windows), IndexedDB cifrado (web) | ⬜ |
+| F1.F | Tests unitarios del core | API client, SSE parser, token refresh flow | ⬜ |
+
+### Sprint F2 — Flujo principal ⬜
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| F2.A | Login + OnboardingScreen | Equivalente TUI Login + Onboarding wizard | ⬜ |
+| F2.B | FrLauncherScreen | Formulario FR + adjuntar imagen (file_picker) + preview visual + envío | ⬜ |
+| F2.C | SessionStreamScreen | SSE en tiempo real — nodos con estado, streaming de contenido, indicadores de progreso | ⬜ |
+| F2.D | ApprovalScreen | SDD completo + feedback textual + aprobar/revisar/rechazar | ⬜ |
+| F2.E | DeliveryScreen | Artefactos generados — listado, copy, download | ⬜ |
+| F2.F | DashboardScreen (KPIs básicos) | Ciclos totales, QA promedio, costo, proyectos activos | ⬜ |
+
+### Sprint F3 — Flujo secundario + admin ⬜
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| F3.A | HistoryScreen + CycleDetail modal | Lista sesiones con filtros, modal de detalle expandible | ⬜ |
+| F3.B | CyclesScreen + ProjectsScreen | CRUD proyectos, historial de ciclos por proyecto | ⬜ |
+| F3.C | WorkspaceConfigScreen + KnowledgeScreen | Stack Registry config, bootstrap RAG | ⬜ |
+| F3.D | AdminUsersScreen + AdminSkillsScreen | CRUD usuarios, gestión repos externos (admin only) | ⬜ |
+
+### Sprint F4 — Funcionalidad avanzada ⬜
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| F4.A | TelemetryScreen | Gráficos fl_chart: QA trend, costo diario, tokens por agente | ⬜ |
+| F4.B | ModelDashboardScreen | Estado circuit breaker, progreso dataset fine-tuning, modelos activos | ⬜ |
+| F4.C | OrgChartScreen | Pipeline viewer de agentes (árbol visual del ciclo activo) | ⬜ |
+
+### Sprint F5 — Plataforma + depreciación ⬜
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| F5.A | AppShell responsivo | Sidebar fijo ≥1024px, NavigationDrawer <1024px. Atajos de teclado nativos | ⬜ |
+| F5.B | Build web | `flutter build web --release`. Integrar en `docker-compose.prod.yml` (Nginx sirve estáticos Flutter) | ⬜ |
+| F5.C | Build desktop | `flutter build macos/linux/windows`. Reemplaza binario TUI Rust en distribución | ⬜ |
+| F5.D | Caddy config actualizada | `/` → Flutter web estáticos. `/api/*` → engine FastAPI (sin cambios) | ⬜ |
+| F5.E | Deprecar `src/tui/` y `src/dashboard/` | Eliminar Rust TUI y React Dashboard tras validación en producción | ⬜ |
+| F5.F | CI/CD Flutter | GitHub Actions: `flutter build web` + `flutter build macos` en cada push a main | ⬜ |
 
 ---
 
@@ -816,14 +928,15 @@ Total implementado:          138/138 items  100%  ✅
 Última actualización: 2026-04-12 — S11.H completado (138/138 ✅). ROADMAP v1 100% implementado.
   Tests: 481/481 pasando. Próximo foco: despliegue centralizado → distribución TUI (5.F).
 
-Stack definitivo (2026-03-25):
+Stack definitivo (2026-03-25, revisión 2026-04-21):
   Backend API  → Python FastAPI (consolida Bridge TypeScript — no extender más el Bridge)
   Agentes      → Python LangGraph
   Fine-tuning  → Python Unsloth/LlamaFactory
   MCP Servers  → Python
   Deps Python  → uv + pyproject.toml
-  Web App      → React + Vite + shadcn/ui + Tailwind (src/dashboard/)
-  TUI          → Rust + Ratatui (binario standalone, cliente del Engine)
+  Web App      → React + Vite + shadcn/ui + Tailwind (src/dashboard/) — pendiente migración Flutter
+  TUI          → Rust + Ratatui (binario standalone, cliente del Engine) — pendiente migración Flutter
+  Cliente fut. → Flutter (web + macOS + Linux + Windows desde un solo codebase Dart) — ver FASE F
   Referencia   → opencode (patrones y diseño, no código a mantener)
 
 Modelo de despliegue (decisión 2026-04-12):
@@ -833,6 +946,8 @@ Modelo de despliegue (decisión 2026-04-12):
 Decisiones pendientes:
   S11.E          → comando @research: exponer desde TUI Rust o endpoint FastAPI dedicado
   5.F (TUI dist) → bloqueado hasta tener servidor centralizado levantado
+  S21            → verificar que qwen2-vl:7b acepta base64 vía API OpenAI-compatible de Ollama antes de implementar
+  FASE F         → iniciar después de que VPS (C01) esté operativo
 ```
 
 ---
