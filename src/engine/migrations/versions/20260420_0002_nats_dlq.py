@@ -15,6 +15,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # asyncpg no soporta múltiples comandos en un solo execute — se separan
     op.execute("""
         CREATE TABLE IF NOT EXISTS ovd_nats_dlq (
             id           BIGSERIAL PRIMARY KEY,
@@ -23,11 +24,12 @@ def upgrade() -> None:
             error        TEXT,
             created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
             processed_at TIMESTAMPTZ
-        );
-
+        )
+    """)
+    op.execute("""
         CREATE INDEX IF NOT EXISTS idx_nats_dlq_unprocessed
             ON ovd_nats_dlq (created_at)
-            WHERE processed_at IS NULL;
+            WHERE processed_at IS NULL
     """)
 
 

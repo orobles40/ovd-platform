@@ -12,8 +12,32 @@ import { Zap, CheckCircle, XCircle, Clock, ChevronRight, AlertTriangle } from 'l
 // ---------------------------------------------------------------------------
 
 interface SseEvent {
-  event_type: string
+  type: string
   data: Record<string, unknown>
+}
+
+interface SddRequirement {
+  id: string
+  type: string
+  description: string
+  priority: string
+  acceptance_criteria: string[]
+}
+
+interface SddTask {
+  id: string
+  agent: string
+  title: string
+  description: string
+  estimated_complexity: string
+}
+
+interface SddData {
+  sdd_summary: string
+  requirements: SddRequirement[]
+  tasks: SddTask[]
+  fr_type: string
+  complexity: string
 }
 
 // ---------------------------------------------------------------------------
@@ -27,6 +51,22 @@ interface GraphNode {
   label: string
   status: NodeStatus
   detail?: string
+}
+
+// Mapeo de nombres internos del grafo → nombres en GRAPH_NODES
+const NODE_ALIAS: Record<string, string> = {
+  clone_repo:       'analyze_fr',   // precursor — se agrupa visualmente con analyze_fr
+  describe_image:   'analyze_fr',   // S21 — precursor de analyze_fr
+  analyze_fr:       'analyze_fr',
+  generate_sdd:     'generate_sdd',
+  route_agents:     'route_agents',
+  agent_executor:   'agents',
+  agents:           'agents',
+  security_audit:   'security_audit',
+  qa_review:        'qa_review',
+  request_approval: 'request_approval',
+  deliver:          'deliver',
+  create_pr:        'deliver',
 }
 
 const GRAPH_NODES: GraphNode[] = [
@@ -62,6 +102,8 @@ export default function FrLauncher() {
   const [phase, setPhase] = useState<'form' | 'streaming' | 'done' | 'error'>('form')
   const [pendingApproval, setPendingApproval] = useState(false)
   const [sddSummary, setSddSummary] = useState('')
+  const [sddData, setSddData] = useState<SddData | null>(null)
+  const [sddExpanded, setSddExpanded] = useState(false)
   const [finalStatus, setFinalStatus] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -84,6 +126,24 @@ export default function FrLauncher() {
     return () => { esRef.current?.close() }
   }, [])
 
+  // S21 — Pegar imagen desde portapapeles (Cmd+V / Ctrl+V)
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      if (phase !== 'form') return
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) processImageFile(file)
+          break
+        }
+      }
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [phase, imageBase64])
+
   function pushLog(line: string) {
     setLog(prev => [...prev, line])
   }
@@ -95,18 +155,25 @@ export default function FrLauncher() {
   }
 
   function processEvent(ev: SseEvent) {
-    switch (ev.event_type) {
+    switch (ev.type) {
       case 'node_start': {
-        const node = ev.data.node as string
+        const node = NODE_ALIAS[ev.data.node as string] ?? ev.data.node as string
         setNodeStatus(node, 'running')
-        pushLog(`▶ ${node}`)
         break
       }
       case 'node_end': {
-        const node = ev.data.node as string
+        const raw = ev.data.node as string
+        const node = NODE_ALIAS[raw] ?? raw
         const summary = ev.data.summary as string | undefined
-        setNodeStatus(node, 'done', summary)
-        pushLog(summary ? `✓ ${node} — ${summary}` : `✓ ${node}`)
+        // Marcar nodo actual como done y el siguiente como running
+        setNodes(prev => {
+          const idx = prev.findIndex(n => n.name === node)
+          return prev.map((n, i) => {
+            if (n.name === node) return { ...n, status: 'done' as NodeStatus, detail: summary }
+            if (idx >= 0 && i === idx + 1 && n.status === 'waiting') return { ...n, status: 'running' as NodeStatus }
+            return n
+          })
+        })
         break
       }
       case 'agent_start': {
@@ -125,8 +192,16 @@ export default function FrLauncher() {
         const summary = ev.data.sdd_summary as string
         setPendingApproval(true)
         setSddSummary(summary || '')
+        setSddData({
+          sdd_summary: summary || '',
+          requirements: (ev.data.requirements as SddRequirement[]) || [],
+          tasks: (ev.data.tasks as SddTask[]) || [],
+          fr_type: (ev.data.fr_type as string) || '',
+          complexity: (ev.data.complexity as string) || '',
+        })
+        setSddExpanded(true)
         setNodeStatus('request_approval', 'running')
-        pushLog('⏸ Aprobación pendiente')
+        pushLog('⏸ Aprobación pendiente — revisa el SDD antes de continuar')
         break
       }
       case 'done': {
@@ -212,6 +287,8 @@ export default function FrLauncher() {
       setNodes(GRAPH_NODES.map(n => ({ ...n })))
       setLog([])
       setPendingApproval(false)
+      setSddData(null)
+      setSddExpanded(false)
       setPhase('streaming')
 
       // Abrir SSE stream
@@ -221,8 +298,9 @@ export default function FrLauncher() {
 
       es.onmessage = (e) => {
         try {
-          const payload: SseEvent = JSON.parse(e.data)
-          processEvent(payload)
+          const raw = JSON.parse(e.data)
+          // El engine envía {type, data} — lo mapeamos al tipo SseEvent
+          if (raw.type) processEvent({ type: raw.type, data: raw.data ?? {} })
         } catch { /* ignorar líneas de keep-alive */ }
       }
 
@@ -262,7 +340,10 @@ export default function FrLauncher() {
         const es = new EventSource(`/session/${sessionId}/stream?token=${encodeURIComponent(token)}`)
         esRef.current = es
         es.onmessage = (e) => {
-          try { processEvent(JSON.parse(e.data)) } catch { /* ignore */ }
+          try {
+            const raw = JSON.parse(e.data)
+            if (raw.type) processEvent({ type: raw.type, data: raw.data ?? {} })
+          } catch { /* ignore */ }
         }
         es.onerror = () => es.close()
       } else {
@@ -343,7 +424,7 @@ export default function FrLauncher() {
                 }`}
                 onClick={() => document.getElementById('image-upload-input')?.click()}
               >
-                <p className="text-sm text-gray-500">Arrastra una imagen aquí o <span className="text-violet-400">selecciona un archivo</span></p>
+                <p className="text-sm text-gray-500">Arrastra, pega (<kbd className="text-xs bg-gray-800 px-1 rounded">⌘V</kbd>) o <span className="text-violet-400">selecciona un archivo</span></p>
                 <input
                   id="image-upload-input"
                   type="file"
@@ -428,15 +509,90 @@ export default function FrLauncher() {
             {/* Panel de aprobación pendiente */}
             {pendingApproval && (
               <div className="mt-4 border-t border-gray-700 pt-4">
-                <div className="flex items-start gap-2 mb-3">
-                  <AlertTriangle size={14} className="text-yellow-400 mt-0.5 shrink-0" />
-                  <div>
+                {/* Header con botones */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={14} className="text-yellow-400 shrink-0" />
                     <p className="text-sm font-medium text-yellow-300">Aprobación requerida</p>
-                    {sddSummary && (
-                      <p className="text-xs text-gray-400 mt-1 max-w-lg">{sddSummary}</p>
+                    {sddData && (
+                      <span className="text-xs text-gray-500">
+                        · {sddData.fr_type} · complejidad: {sddData.complexity}
+                        · {sddData.requirements.length} req · {sddData.tasks.length} tareas
+                      </span>
                     )}
                   </div>
+                  <button
+                    onClick={() => setSddExpanded(v => !v)}
+                    className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 transition-colors"
+                  >
+                    <ChevronRight size={12} className={`transition-transform ${sddExpanded ? 'rotate-90' : ''}`} />
+                    {sddExpanded ? 'Ocultar SDD' : 'Ver SDD'}
+                  </button>
                 </div>
+
+                {/* Resumen */}
+                {sddSummary && (
+                  <p className="text-xs text-gray-400 mb-3 leading-relaxed">{sddSummary}</p>
+                )}
+
+                {/* SDD expandible */}
+                {sddExpanded && sddData && (
+                  <div className="mb-4 space-y-3 max-h-96 overflow-y-auto pr-1">
+                    {/* Requisitos */}
+                    {sddData.requirements.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                          Requisitos ({sddData.requirements.length})
+                        </p>
+                        <div className="space-y-2">
+                          {sddData.requirements.map(req => (
+                            <div key={req.id} className="bg-gray-800 rounded p-2.5 text-xs">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-mono text-blue-400">{req.id}</span>
+                                <span className="text-gray-500">{req.type}</span>
+                                <span className={`ml-auto text-xs px-1.5 py-0.5 rounded ${req.priority === 'must' ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-400'}`}>
+                                  {req.priority}
+                                </span>
+                              </div>
+                              <p className="text-gray-300">{req.description}</p>
+                              {req.acceptance_criteria?.length > 0 && (
+                                <ul className="mt-1.5 space-y-0.5">
+                                  {req.acceptance_criteria.map((ac, i) => (
+                                    <li key={i} className="text-gray-500 flex gap-1">
+                                      <span className="text-green-600 shrink-0">✓</span>{ac}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tareas */}
+                    {sddData.tasks.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                          Tareas ({sddData.tasks.length})
+                        </p>
+                        <div className="space-y-1.5">
+                          {sddData.tasks.map(task => (
+                            <div key={task.id} className="bg-gray-800 rounded p-2.5 text-xs flex items-start gap-2">
+                              <span className="font-mono text-purple-400 shrink-0">{task.id}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-gray-300 font-medium">{task.title}</p>
+                                <p className="text-gray-500 mt-0.5">agente: {task.agent} · {task.estimated_complexity}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Botones de acción */}
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleApprove(true)}

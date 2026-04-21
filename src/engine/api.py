@@ -149,10 +149,10 @@ def verify_secret(x_ovd_secret: str | None = Header(default=None)) -> None:
 # ---------------------------------------------------------------------------
 
 class StartSessionRequest(BaseModel):
-    session_id: str
+    session_id: str = ""    # si no viene, el server usa thread_id
     org_id: str
-    project_id: str
-    directory: str
+    project_id: str = ""
+    directory: str = ""     # opcional — dashboard no tiene ruta local
     feature_request: str = ""
     parent_thread_id: str | None = None
     # Sprint 8 — project_context acepta JSON estructurado del Stack Registry
@@ -195,7 +195,9 @@ class EscalateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _make_sse_event(event_type: str, data: dict) -> dict:
-    return {"event": event_type, "data": json.dumps({"type": event_type, "data": data})}
+    # Sin "event:" field — todos los eventos disparan onmessage en el cliente.
+    # El tipo se discrimina con el campo "type" dentro del JSON.
+    return {"data": json.dumps({"type": event_type, "data": data})}
 
 
 async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[dict]:
@@ -212,7 +214,15 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
         last_done_event: dict | None = None
         last_message_content: str = ""
 
-        async for event in graph.astream(None, config, stream_mode="values"):
+        async for mode, event in graph.astream(None, config, stream_mode=["values", "updates"]):
+            if mode == "updates":
+                # Emitir node_end por cada nodo que acaba de completarse
+                for node_name in event:
+                    if node_name != "__interrupt__":
+                        yield _make_sse_event("node_end", {"node": node_name})
+                continue
+
+            # mode == "values": estado completo tras cada nodo
             # Emitir mensajes nuevos del estado (solo si el contenido cambió)
             messages = event.get("messages", [])
             if messages:
@@ -318,6 +328,7 @@ async def start_session(
 ):
     verify_secret(x_ovd_secret)
     thread_id = body.parent_thread_id or str(uuid.uuid4())
+    session_id = body.session_id or thread_id  # dashboard no genera session_id propio
 
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -327,7 +338,7 @@ async def start_session(
         if existing:
             return JSONResponse({
                 "thread_id": thread_id,
-                "session_id": body.session_id,
+                "session_id": session_id,
                 "status": "resumed",
             })
 
@@ -353,7 +364,7 @@ async def start_session(
 
     # Nueva sesion: inicializar el estado del grafo
     initial_state: OVDState = {
-        "session_id": body.session_id,
+        "session_id": session_id,
         "org_id": body.org_id,
         "project_id": body.project_id,
         "directory": body.directory,
@@ -428,7 +439,7 @@ async def start_session(
     await AuditLogger.session_created(
         org_id=body.org_id,
         project_id=body.project_id,
-        session_id=body.session_id,
+        session_id=session_id,
         thread_id=thread_id,
         feature_request=body.feature_request,
     )
@@ -444,7 +455,7 @@ async def start_session(
 
     return JSONResponse({
         "thread_id": thread_id,
-        "session_id": body.session_id,
+        "session_id": session_id,
         "status": "created",
     }, status_code=201)
 
