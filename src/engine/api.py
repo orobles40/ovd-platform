@@ -168,6 +168,9 @@ class StartSessionRequest(BaseModel):
     github_branch: str = "main"  # branch base
     # S11 — Web Researcher: activación explícita (también se activa via [research] en el FR)
     research_enabled: bool = False
+    # S21 — Visión: imagen adjunta al Feature Request (qwen2.5vl pre-procesador)
+    image_base64: str = ""       # imagen codificada en base64 (PNG/JPG/WEBP) — engine la procesa
+    image_description: str = ""  # descripción ya procesada externamente — omite el nodo describe_image
 
 
 class ApproveRequest(BaseModel):
@@ -401,6 +404,9 @@ async def start_session(
         # S11 — Web Researcher
         "research_enabled":    body.research_enabled,
         "web_research_results": [],
+        # S21 — Visión
+        "image_base64":      body.image_base64,
+        "image_description": body.image_description,
     }
 
     # Sprint 10: span raíz del ciclo — el trace_id se inyecta en el estado

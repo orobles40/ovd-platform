@@ -51,6 +51,11 @@ export default function FrLauncher() {
   const [frText, setFrText] = useState('')
   const [autoApprove, setAutoApprove] = useState(false)
   const [selectedProject, setSelectedProject] = useState('')
+  // S21 — Visión
+  const [imageBase64, setImageBase64] = useState<string>('')
+  const [imagePreview, setImagePreview] = useState<string>('')
+  const [imageName, setImageName] = useState<string>('')
+  const [imageDragOver, setImageDragOver] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>(GRAPH_NODES.map(n => ({ ...n })))
   const [log, setLog] = useState<string[]>([])
@@ -147,6 +152,38 @@ export default function FrLauncher() {
     }
   }
 
+  // S21 — Handlers de imagen adjunta
+  function processImageFile(file: File) {
+    const allowed = ['image/png', 'image/jpeg', 'image/webp']
+    if (!allowed.includes(file.type)) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      setImagePreview(result)
+      setImageBase64(result.split(',')[1])
+      setImageName(file.name)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) processImageFile(file)
+  }
+
+  function handleImageDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setImageDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) processImageFile(file)
+  }
+
+  function handleRemoveImage() {
+    setImageBase64('')
+    setImagePreview('')
+    setImageName('')
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!frText.trim()) return
@@ -164,6 +201,7 @@ export default function FrLauncher() {
           auto_approve: autoApprove,
           project_id: selectedProject || undefined,
           org_id: orgId,
+          image_base64: imageBase64 || undefined,  // S21: imagen adjunta (opcional)
         }),
       })
       if (!res.ok) throw new Error(`Error ${res.status}`)
@@ -273,6 +311,48 @@ export default function FrLauncher() {
               onChange={e => setFrText(e.target.value)}
               required
             />
+          </div>
+
+          {/* S21 — Imagen adjunta (wireframe / screenshot / diseño) */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              Adjuntar diseño / wireframe / screenshot <span className="text-gray-600">(opcional · PNG, JPG, WEBP)</span>
+            </label>
+            {imagePreview ? (
+              <div className="flex items-center gap-3 p-2 bg-gray-900 border border-gray-700 rounded-lg">
+                <img src={imagePreview} alt="preview" className="w-16 h-16 object-cover rounded border border-gray-700 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-300 truncate">{imageName}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">El modelo de visión describirá este diseño antes del análisis</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveImage}
+                  className="text-gray-500 hover:text-red-400 text-xs px-2 py-1 rounded transition-colors flex-shrink-0"
+                >
+                  Quitar
+                </button>
+              </div>
+            ) : (
+              <div
+                onDragOver={e => { e.preventDefault(); setImageDragOver(true) }}
+                onDragLeave={() => setImageDragOver(false)}
+                onDrop={handleImageDrop}
+                className={`border-2 border-dashed rounded-lg px-4 py-5 text-center cursor-pointer transition-colors ${
+                  imageDragOver ? 'border-violet-500 bg-violet-900/10' : 'border-gray-700 hover:border-gray-600'
+                }`}
+                onClick={() => document.getElementById('image-upload-input')?.click()}
+              >
+                <p className="text-sm text-gray-500">Arrastra una imagen aquí o <span className="text-violet-400">selecciona un archivo</span></p>
+                <input
+                  id="image-upload-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleImageUpload}
+                />
+              </div>
+            )}
           </div>
 
           {/* Auto-approve */}

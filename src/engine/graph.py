@@ -49,6 +49,7 @@ from typing_extensions import Annotated, TypedDict
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI   # S21: usado en describe_image (visión)
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -332,6 +333,12 @@ class OVDState(TypedDict):
     research_enabled: bool
     web_research_results: list[dict]
 
+    # S21 — Visión: imagen adjunta al Feature Request
+    # image_base64: imagen cruda (se consume en describe_image y no fluye más)
+    # image_description: descripción textual generada por qwen2.5vl (fluye a analyze_fr)
+    image_base64: str
+    image_description: str
+
     # GAP-004: version de constraints del proyecto (hash MD5 del project_context)
     # Permite detectar si los constraints cambiaron entre ciclos
     constraints_version: str
@@ -537,6 +544,76 @@ async def clone_repo(state: OVDState) -> dict:
         }
 
 
+# ---------------------------------------------------------------------------
+# S21 — Visión: pre-procesador de imágenes adjuntas al Feature Request
+# ---------------------------------------------------------------------------
+
+_VISION_MODEL   = os.environ.get("OVD_VISION_MODEL", "qwen2.5vl:7b")
+_VISION_URL     = os.environ.get("OVD_VISION_OLLAMA_URL", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+_VISION_ENABLED = os.environ.get("OVD_VISION_ENABLED", "true").lower() == "true"
+
+_VISION_PROMPT = (
+    "Eres un asistente técnico especializado en UI/UX. "
+    "Describe este diseño, wireframe o screenshot con el nivel de detalle necesario "
+    "para que un desarrollador frontend pueda implementarlo sin ver la imagen. "
+    "Incluye: estructura general, componentes visibles, jerarquía visual, "
+    "colores dominantes, tipografía, espaciado aparente y flujo de interacción."
+)
+
+
+async def describe_image(state: OVDState) -> dict:
+    """
+    S21 — Pre-procesa imagen adjunta con qwen2.5vl antes de analyze_fr.
+    - Si no hay imagen → no-op transparente (retorna {}).
+    - Si ya hay image_description → no-op (evita reprocesar).
+    - Si OVD_VISION_ENABLED=false → no-op.
+    En todos los no-op, image_base64 se limpia del estado para no arrastrar datos grandes.
+    """
+    if not _VISION_ENABLED or not state.get("image_base64") or state.get("image_description"):
+        return {"image_base64": ""}  # limpiar aunque sea no-op
+
+    log.info("describe_image: procesando imagen con %s", _VISION_MODEL)
+
+    base_url = _VISION_URL.rstrip("/") + "/v1"
+    llm_vision = ChatOpenAI(
+        model=_VISION_MODEL,
+        base_url=base_url,
+        api_key="ollama",
+        max_tokens=1024,
+        temperature=0.0,
+        request_timeout=float(os.environ.get("OVD_NODE_TIMEOUT_SECS", "120")),
+    )
+
+    try:
+        response = await llm_vision.ainvoke([
+            HumanMessage(content=[
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{state['image_base64']}"},
+                },
+                {"type": "text", "text": _VISION_PROMPT},
+            ])
+        ])
+        description = response.content
+        log.info("describe_image: descripción generada (%d chars)", len(description))
+        return {
+            "image_base64": "",           # limpiar bytes crudos — ya no se necesitan
+            "image_description": description,
+        }
+    except Exception as e:
+        log.warning("describe_image: error procesando imagen — %s. Continuando sin descripción visual.", e)
+        return {"image_base64": ""}
+
+
+def _build_fr_content(state: OVDState) -> str:
+    """S21: construye el contenido del HumanMessage para analyze_fr, inyectando la descripción visual si existe."""
+    content = f"Feature Request:\n{state['feature_request']}"
+    image_desc = state.get("image_description", "")
+    if image_desc:
+        content += f"\n\nDescripción visual del diseño adjunto:\n{image_desc}"
+    return content
+
+
 async def analyze_fr(state: OVDState) -> dict:
     """Analiza el Feature Request y extrae contexto tecnico con structured output."""
     project_ctx = state.get("project_context", "")
@@ -555,7 +632,7 @@ async def analyze_fr(state: OVDState) -> dict:
                 language=state.get("language", "es"),
                 project_context=project_ctx,
             )),
-            HumanMessage(content=f"Feature Request:\n{state['feature_request']}"),
+            HumanMessage(content=_build_fr_content(state)),
         ], FRAnalysisOutput)
 
         span.set_attributes({
@@ -2568,6 +2645,9 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     # S6: clonar repo antes de analyze_fr (no-op si sin github_repo)
     builder.add_node("clone_repo", clone_repo)
 
+    # S21: pre-procesador de imagen (no-op si sin imagen)
+    builder.add_node("describe_image", describe_image)
+
     # Nodos principales
     builder.add_node("analyze_fr", analyze_fr)
     builder.add_node("web_research", web_research_node)   # S11: investigación web (no-op si sin trigger)
@@ -2587,8 +2667,9 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     builder.add_node("qa_retry", update_qa_retry)
 
     # Flujo principal
-    builder.add_edge(START, "clone_repo")      # S6
-    builder.add_edge("clone_repo", "analyze_fr")
+    builder.add_edge(START, "clone_repo")               # S6
+    builder.add_edge("clone_repo", "describe_image")    # S21: pre-procesador imagen (no-op si sin imagen)
+    builder.add_edge("describe_image", "analyze_fr")
     # S11: routing condicional — web_research si hay trigger, si no directo a generate_sdd
     builder.add_conditional_edges("analyze_fr", _route_after_analyze_fr, {
         "web_research": "web_research",
