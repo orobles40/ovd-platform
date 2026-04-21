@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ovdApi } from '../api/ovd'
 import { useAuth } from '../context/AuthContext'
-import { Zap, CheckCircle, XCircle, Clock, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Zap, CheckCircle, XCircle, Clock, ChevronRight, AlertTriangle, Download, Paperclip, RotateCcw } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Tipos de eventos SSE del engine
@@ -80,6 +80,10 @@ const GRAPH_NODES: GraphNode[] = [
   { name: 'deliver',          label: 'Entregar',           status: 'waiting' },
 ]
 
+// Rutas/nombres de archivo bloqueados por seguridad (igual que el TUI)
+const BLOCKED_FILE_PATTERNS = ['.ssh', '.aws', '.env', 'id_rsa', 'id_ed25519', '.ovd', 'credentials']
+const MAX_ATTACH_CHARS = 4000
+
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
@@ -107,8 +111,15 @@ export default function FrLauncher() {
   const [finalStatus, setFinalStatus] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // Fase 1 — estados de aprobación ampliados
+  const [feedbackText, setFeedbackText] = useState('')
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
+  const [revisionCount, setRevisionCount] = useState(0)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
   const logEndRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+  const attachFileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: projects } = useQuery({
     queryKey: ['projects', orgId],
@@ -152,6 +163,24 @@ export default function FrLauncher() {
     setNodes(prev => prev.map(n =>
       n.name === name ? { ...n, status, detail: detail ?? n.detail } : n
     ))
+  }
+
+  // Abre (o reabre) el stream SSE para una sesión activa
+  function openStream(sid: string) {
+    esRef.current?.close()
+    const token = localStorage.getItem('ovd_access_token') ?? ''
+    const es = new EventSource(`/session/${sid}/stream?token=${encodeURIComponent(token)}`)
+    esRef.current = es
+    es.onmessage = (e) => {
+      try {
+        const raw = JSON.parse(e.data)
+        if (raw.type) processEvent({ type: raw.type, data: raw.data ?? {} })
+      } catch { /* ignorar líneas de keep-alive */ }
+    }
+    es.onerror = () => {
+      pushLog('⏸ Conexión cerrada por el servidor')
+      es.close()
+    }
   }
 
   function processEvent(ev: SseEvent) {
@@ -199,6 +228,7 @@ export default function FrLauncher() {
           fr_type: (ev.data.fr_type as string) || '',
           complexity: (ev.data.complexity as string) || '',
         })
+        setRevisionCount((ev.data.revision_count as number) ?? 0)
         setSddExpanded(true)
         setNodeStatus('request_approval', 'running')
         pushLog('⏸ Aprobación pendiente — revisa el SDD antes de continuar')
@@ -259,6 +289,88 @@ export default function FrLauncher() {
     setImageName('')
   }
 
+  // Fase 4 — Adjuntar archivo al feedback
+  function handleFileAttach(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    // Reset para permitir re-seleccionar el mismo archivo
+    if (attachFileInputRef.current) attachFileInputRef.current.value = ''
+    if (!file) return
+
+    const nameLower = file.name.toLowerCase()
+    if (BLOCKED_FILE_PATTERNS.some(p => nameLower.includes(p))) {
+      pushLog(`✗ Archivo bloqueado por seguridad: ${file.name}`)
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const full = reader.result as string
+      const content = full.slice(0, MAX_ATTACH_CHARS)
+      const truncated = full.length > MAX_ATTACH_CHARS
+      setAttachedFile({ name: file.name, content })
+      const injection = `\n\n--- Archivo adjunto: ${file.name}${truncated ? ' (truncado a 4000 chars)' : ''} ---\n${content}`
+      setFeedbackText(prev => prev + injection)
+    }
+    reader.readAsText(file)
+  }
+
+  function removeAttachedFile() {
+    if (!attachedFile) return
+    // Quitar el bloque inyectado del textarea
+    setFeedbackText(prev => {
+      const marker = `\n\n--- Archivo adjunto: ${attachedFile.name}`
+      const idx = prev.indexOf(marker)
+      return idx >= 0 ? prev.slice(0, idx) : prev
+    })
+    setAttachedFile(null)
+  }
+
+  // Fase 6 — Exportar SDD a markdown (client-side, sin llamar al engine)
+  function exportSdd() {
+    if (!sddData) return
+    const lines: string[] = [
+      `# SDD — ${sessionId ?? 'ciclo'}`,
+      '',
+      `**Tipo:** ${sddData.fr_type || '—'} | **Complejidad:** ${sddData.complexity || '—'}${revisionCount > 0 ? ` | **Revisión:** #${revisionCount}` : ''}`,
+      '',
+      '## Resumen',
+      '',
+      sddData.sdd_summary,
+      '',
+      '## Requisitos',
+      '',
+      ...sddData.requirements.flatMap(req => [
+        `### ${req.id} — ${req.type} (${req.priority})`,
+        '',
+        req.description,
+        '',
+        ...(req.acceptance_criteria?.length ? [
+          '**Criterios de aceptación:**',
+          ...req.acceptance_criteria.map(ac => `- ${ac}`),
+          '',
+        ] : []),
+      ]),
+      '## Tareas',
+      '',
+      ...sddData.tasks.flatMap(task => [
+        `### ${task.id} — ${task.title}`,
+        '',
+        `**Agente:** ${task.agent} | **Complejidad:** ${task.estimated_complexity}`,
+        '',
+        task.description,
+        '',
+      ]),
+    ]
+    const md = lines.join('\n')
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${(sessionId ?? 'sdd').slice(0, 16)}-sdd.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!frText.trim()) return
@@ -289,29 +401,12 @@ export default function FrLauncher() {
       setPendingApproval(false)
       setSddData(null)
       setSddExpanded(false)
+      setFeedbackText('')
+      setAttachedFile(null)
+      setRevisionCount(0)
       setPhase('streaming')
 
-      // Abrir SSE stream
-      const token = localStorage.getItem('ovd_access_token') ?? ''
-      const es = new EventSource(`/session/${sid}/stream?token=${encodeURIComponent(token)}`)
-      esRef.current = es
-
-      es.onmessage = (e) => {
-        try {
-          const raw = JSON.parse(e.data)
-          // El engine envía {type, data} — lo mapeamos al tipo SseEvent
-          if (raw.type) processEvent({ type: raw.type, data: raw.data ?? {} })
-        } catch { /* ignorar líneas de keep-alive */ }
-      }
-
-      es.onerror = () => {
-        pushLog('⏸ Conexión cerrada por el servidor')
-        setPendingApproval(prev => {
-          if (!prev) return true
-          return prev
-        })
-        es.close()
-      }
+      openStream(sid)
     } catch (err) {
       pushLog(`✗ Error al iniciar sesión: ${err}`)
       setPhase('error')
@@ -320,38 +415,50 @@ export default function FrLauncher() {
     }
   }
 
-  async function handleApprove(approved: boolean) {
+  // Fase 2 — handleApproval unificado para approve / revise / reject
+  async function handleApproval(action: 'approve' | 'revise' | 'reject') {
     if (!sessionId) return
+    setIsSubmitting(true)
     try {
+      const comment = action !== 'approve' && feedbackText.trim()
+        ? feedbackText
+        : action === 'reject' ? 'Rechazado por el arquitecto' : undefined
+
       await fetch(`/session/${sessionId}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('ovd_access_token') ?? ''}`,
         },
-        body: JSON.stringify({ approved, comment: '' }),
+        body: JSON.stringify({ approved: action === 'approve', action, comment }),
       })
-      setPendingApproval(false)
-      pushLog(approved ? '✓ SDD aprobado — continuando...' : '✗ SDD rechazado')
 
-      if (approved) {
-        // Reabrir SSE para la segunda fase
-        const token = localStorage.getItem('ovd_access_token') ?? ''
-        const es = new EventSource(`/session/${sessionId}/stream?token=${encodeURIComponent(token)}`)
-        esRef.current = es
-        es.onmessage = (e) => {
-          try {
-            const raw = JSON.parse(e.data)
-            if (raw.type) processEvent({ type: raw.type, data: raw.data ?? {} })
-          } catch { /* ignore */ }
-        }
-        es.onerror = () => es.close()
+      setPendingApproval(false)
+      setFeedbackText('')
+      setAttachedFile(null)
+
+      if (action === 'approve') {
+        pushLog('✓ SDD aprobado — continuando...')
+        openStream(sessionId)
+      } else if (action === 'revise') {
+        pushLog(`↺ Revisión #${revisionCount + 1} solicitada — el engine regenerará el SDD...`)
+        // Resetear nodos desde generate_sdd en adelante para la nueva iteración
+        setNodes(prev => {
+          const sddIdx = prev.findIndex(n => n.name === 'generate_sdd')
+          return prev.map((n, i) =>
+            i >= sddIdx ? { ...n, status: 'waiting' as NodeStatus, detail: undefined } : n
+          )
+        })
+        openStream(sessionId)
       } else {
+        pushLog('✗ SDD rechazado')
         setPhase('done')
         setFinalStatus('rejected')
       }
     } catch {
       pushLog('✗ Error al enviar decisión de aprobación')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -497,6 +604,7 @@ export default function FrLauncher() {
                   line.startsWith('✗') ? 'text-red-400' :
                   line.startsWith('■') ? 'text-yellow-300' :
                   line.startsWith('⏸') ? 'text-purple-300' :
+                  line.startsWith('↺') ? 'text-blue-400' :
                   line.startsWith('▶') ? 'text-blue-400' :
                   'text-gray-400'
                 }`}>
@@ -509,9 +617,9 @@ export default function FrLauncher() {
             {/* Panel de aprobación pendiente */}
             {pendingApproval && (
               <div className="mt-4 border-t border-gray-700 pt-4">
-                {/* Header con botones */}
+                {/* Header */}
                 <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <AlertTriangle size={14} className="text-yellow-400 shrink-0" />
                     <p className="text-sm font-medium text-yellow-300">Aprobación requerida</p>
                     {sddData && (
@@ -520,14 +628,34 @@ export default function FrLauncher() {
                         · {sddData.requirements.length} req · {sddData.tasks.length} tareas
                       </span>
                     )}
+                    {/* Fase 5 — Badge de revisión */}
+                    {revisionCount > 0 && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                        revisionCount >= 2 ? 'bg-orange-900 text-orange-300' : 'bg-yellow-900 text-yellow-300'
+                      }`}>
+                        Revisión #{revisionCount}
+                      </span>
+                    )}
                   </div>
-                  <button
-                    onClick={() => setSddExpanded(v => !v)}
-                    className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 transition-colors"
-                  >
-                    <ChevronRight size={12} className={`transition-transform ${sddExpanded ? 'rotate-90' : ''}`} />
-                    {sddExpanded ? 'Ocultar SDD' : 'Ver SDD'}
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Fase 6 — Exportar SDD */}
+                    {sddData && (
+                      <button
+                        onClick={exportSdd}
+                        title="Exportar SDD como markdown"
+                        className="text-xs text-gray-500 hover:text-gray-200 flex items-center gap-1 transition-colors"
+                      >
+                        <Download size={12} /> .md
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSddExpanded(v => !v)}
+                      className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 transition-colors"
+                    >
+                      <ChevronRight size={12} className={`transition-transform ${sddExpanded ? 'rotate-90' : ''}`} />
+                      {sddExpanded ? 'Ocultar SDD' : 'Ver SDD'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Resumen */}
@@ -592,17 +720,70 @@ export default function FrLauncher() {
                   </div>
                 )}
 
+                {/* Fase 3 — Feedback / correcciones */}
+                <div className="mb-3">
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Correcciones / Feedback <span className="text-gray-600">(requerido para solicitar revisión)</span>
+                  </label>
+                  <textarea
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 resize-none focus:outline-none focus:border-violet-500 transition-colors"
+                    rows={3}
+                    placeholder="Describe qué debe cambiar en el SDD antes de continuar..."
+                    value={feedbackText}
+                    onChange={e => setFeedbackText(e.target.value)}
+                  />
+                  {/* Fase 4 — Archivo adjunto */}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => attachFileInputRef.current?.click()}
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                    >
+                      <Paperclip size={11} /> Adjuntar archivo
+                    </button>
+                    {attachedFile && (
+                      <span className="flex items-center gap-1 text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">
+                        {attachedFile.name}
+                        <button
+                          type="button"
+                          onClick={removeAttachedFile}
+                          className="text-gray-500 hover:text-red-400 ml-1 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    )}
+                    <input
+                      ref={attachFileInputRef}
+                      type="file"
+                      accept="text/*,.md,.txt,.ts,.tsx,.py,.json,.yaml,.yml,.toml,.sql"
+                      className="hidden"
+                      onChange={handleFileAttach}
+                    />
+                  </div>
+                </div>
+
                 {/* Botones de acción */}
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button
-                    onClick={() => handleApprove(true)}
-                    className="flex items-center gap-1.5 bg-green-700 hover:bg-green-600 text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
+                    onClick={() => handleApproval('approve')}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-1.5 bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
                   >
                     <CheckCircle size={13} /> Aprobar SDD
                   </button>
                   <button
-                    onClick={() => handleApprove(false)}
-                    className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
+                    onClick={() => handleApproval('revise')}
+                    disabled={isSubmitting || !feedbackText.trim()}
+                    title={!feedbackText.trim() ? 'Escribe correcciones antes de solicitar revisión' : ''}
+                    className="flex items-center gap-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
+                  >
+                    <RotateCcw size={13} /> Solicitar revisión
+                  </button>
+                  <button
+                    onClick={() => handleApproval('reject')}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
                   >
                     <XCircle size={13} /> Rechazar
                   </button>
