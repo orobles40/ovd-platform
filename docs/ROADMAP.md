@@ -1,6 +1,6 @@
 # OVD Platform — Roadmap Completo
 **Última actualización:** 2026-04-21
-**Versión actual:** v0.8.0-resilience
+**Versión actual:** v0.9.0-quality-docs
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
 > Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
@@ -8,6 +8,14 @@
 >
 > **Sesión 2026-04-16:** Sprint 18 completado — Skills externos (ui-ux-pro-max + superpowers integrados en templates + panel web de actualización), MCP Client Pool con context7 (docs de librerías en tiempo real para agentes implementadores), TUI --from-file + Ctrl+O.
 > Tests: 471/471 pasando.
+>
+> **Sesión 2026-04-21 — Visión + Dashboard (S21) + Calidad/Docs planificado (S22):**
+> - **S21 Vision:** nodo `describe_image` + `_build_fr_content` + `OVD_VISION_ENABLED`, `OVD_VISION_MODEL`. Drop zone + preview + paste (⌘V) en FrLauncher.tsx. Tests `test_vision.py` (8 tests).
+> - **S21 Dashboard SSE fix:** eliminado campo `event:` en `_make_sse_event` — todos los eventos disparan `onmessage`. `stream_mode=["values","updates"]` para emitir `node_end` por nodo completado.
+> - **S21 Panel SDD completo:** `pending_approval` muestra requisitos, criterios de aceptación, tareas y `revision_count`. Toggle Ver/Ocultar SDD.
+> - **S21 Grafo OVD indicators:** `NODE_ALIAS` + handler `node_end` actualiza nodos waiting→running→done en tiempo real.
+> - **S21 Panel aprobación completo:** feedback textarea + `action: "revise"` + adjuntar archivo (FileReader, max 4000 chars, bloquea rutas sensibles) + badge Revisión #N + exportar SDD como .md (client-side).
+> - **S22 planificado:** nodo `run_tests` (entre qa_review y request_approval), security scanning CLI (pip-audit/npm audit/gitleaks/semgrep extendiendo security_audit), nodo `generate_docs` (entre request_approval y deliver).
 >
 > **Sesión 2026-04-17 — Production Readiness (S19):**
 > - **Suite de tests A→E completa:** Block A Python unit (77 tests), Block B integration Alembic (14), Block C Vitest frontend (34/34), Block D Docker smoke (5, @docker), Block E Rust inline (26 nuevos, 63/63 total)
@@ -422,24 +430,97 @@ Cierre de 8 gaps de resiliencia detectados en auditoría. El código funcional e
 
 ---
 
-### Sprint 21 — Visión: input de imágenes/wireframes ⬜ (pendiente)
+### Sprint 21 — Visión + Dashboard Completo ✅ (2026-04-21)
 
-Integrar `qwen2-vl:7b` como pre-procesador de imágenes antes del nodo `analyze_fr`. El modelo de visión actúa como traductor imagen→texto; los agentes downstream no saben que hubo una imagen.
+Integración de visión artificial como pre-procesador de imágenes, fixes SSE críticos, panel SDD completo y panel de aprobación con revisión iterativa en el dashboard.
 
-> Ver propuesta completa en `docs/VISION_INTEGRATION.md`
+#### Visión — engine + dashboard
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S21.A | Campos `image_base64` + `image_description` en `StartSessionRequest` | Dos campos opcionales: base64 crudo (engine procesa) o descripción ya procesada (cliente procesa externamente) | `src/engine/api.py` | ⬜ |
-| S21.B | Campos nuevos en `OVDState` | `image_base64: str` + `image_description: str` — strings simples, sin impacto en checkpointer | `src/engine/graph.py` | ⬜ |
-| S21.C | Nodo `describe_image` | Pre-procesador: si hay `image_base64`, llama `qwen2-vl:7b` vía Ollama → genera descripción textual del layout. No-op si no hay imagen o ya hay descripción | `src/engine/graph.py` | ⬜ |
-| S21.D | Inyección en `analyze_fr` | 3 líneas: si hay `image_description`, appenda a `human_content` antes de invocar el analizador | `src/engine/graph.py` | ⬜ |
-| S21.E | Posición en el grafo | `START → describe_image → analyze_fr` (reemplaza edge directo `START → analyze_fr`) | `src/engine/graph.py` | ⬜ |
-| S21.F | Variables de entorno | `OVD_VISION_MODEL=qwen2-vl:7b`, `OVD_VISION_OLLAMA_URL`, `OVD_VISION_ENABLED=true` | `.env`, `.env.prod.example` | ⬜ |
-| S21.G | Dashboard: drop zone + preview | FileReader → base64. Drop zone + miniatura 200×200px + botón remover en `FrLauncher.tsx` | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
-| S21.H | Tests `test_vision.py` | No-op sin imagen, no reprocesa si ya hay descripción, inyección correcta en analyze_fr | `src/engine/tests/test_vision.py` | ⬜ |
+| S21.A | Campos `image_base64` + `image_description` en `StartSessionRequest` | Dos campos opcionales: base64 crudo (engine procesa) o descripción ya procesada | `src/engine/api.py` | ✅ |
+| S21.B | Campos nuevos en `OVDState` | `image_base64: str` + `image_description: str` — strings simples, sin impacto en checkpointer | `src/engine/graph.py` | ✅ |
+| S21.C | Nodo `describe_image` | Pre-procesador: si hay `image_base64`, llama modelo visión vía Ollama → descripción textual del layout. No-op si no hay imagen o ya hay descripción o `OVD_VISION_ENABLED=false` | `src/engine/graph.py` | ✅ |
+| S21.D | `_build_fr_content()` — inyección en `analyze_fr` | Si hay `image_description`, agrega bloque "Descripción visual del diseño adjunto" al prompt | `src/engine/graph.py` | ✅ |
+| S21.E | Posición en el grafo | `START → describe_image → analyze_fr` (reemplaza edge directo) | `src/engine/graph.py` | ✅ |
+| S21.F | Variables de entorno | `OVD_VISION_MODEL`, `OVD_VISION_OLLAMA_URL`, `OVD_VISION_ENABLED=true` | `.env` | ✅ |
+| S21.G | Dashboard: drop zone + preview + paste | FileReader → base64. Drop zone, miniatura, botón remover, paste ⌘V desde portapapeles | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.H | Tests `test_vision.py` (8 tests) | No-op sin imagen, no reprocesa si ya hay descripción, inyección correcta, error no rompe ciclo, limpieza base64 | `src/engine/tests/test_vision.py` | ✅ |
 
-**Prerequisito:** `ollama pull qwen2-vl:7b` (~5 GB). Verificar que acepta imagen base64 vía API OpenAI-compatible de Ollama antes de codificar.
+#### SSE + Grafo OVD — fixes críticos
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S21.I | Fix Error 422 en lanzador | `StartSessionRequest`: `session_id`, `project_id`, `directory` opcionales con defaults vacíos | `src/engine/api.py` | ✅ |
+| S21.J | Fix SSE named events ignorados | `_make_sse_event` elimina campo `event:` — todos los eventos disparan `onmessage` en el browser | `src/engine/api.py` | ✅ |
+| S21.K | Indicadores Grafo OVD en tiempo real | `stream_mode=["values","updates"]` emite `node_end` por nodo. `NODE_ALIAS` + handler actualiza waiting→running→done | `src/engine/api.py`, `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+
+#### Panel SDD + aprobación completa — dashboard
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S21.L | Panel SDD completo en aprobación | `pending_approval` muestra: resumen, requisitos con criterios de aceptación, tareas. Toggle Ver/Ocultar SDD | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.M | Feedback + acción `revise` | Textarea de correcciones + botón "Solicitar revisión" (habilitado si hay texto). `handleApproval(action)` unificado para approve/revise/reject | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.N | Adjuntar archivo al feedback | FileReader (max 4000 chars). Bloquea `.env`, `id_rsa`, `.ssh`, `.aws`, `credentials`. Chip con nombre + ✕ para quitar | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.O | Badge Revisión #N | Muestra contador de revisiones del SDD (amarillo → naranja desde #2). Leído desde evento `pending_approval` | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.P | Exportar SDD como markdown | Genera `{threadId}-sdd.md` client-side con resumen, requisitos, criterios y tareas. Sin llamar al engine | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+| S21.Q | `openStream()` helper | Reutilizable para approve/revise — evita duplicar lógica SSE. Resetea nodos desde `generate_sdd` al pedir revisión | `src/dashboard/src/pages/FrLauncher.tsx` | ✅ |
+
+**Grafo post-S21:**
+```
+START → describe_image → analyze_fr → generate_sdd → route_agents
+  → agent_executor → security_audit → qa_review → request_approval → deliver
+```
+
+---
+
+### Sprint 22 — Calidad y Documentación Automática ⬜ (planificado)
+
+Tres nuevos nodos que cierran los gaps de validación real: tests ejecutados, scanning de artefactos y documentación generada automáticamente en cada entrega.
+
+**Contexto:** el flujo actual genera código y lo entrega en un PR. S22 garantiza que ese PR incluye tests verdes, artefactos scaneados y documentación precisa — sin intervención manual adicional.
+
+#### Nodo `run_tests` — ejecución real de tests generados
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S22.A | Nodo `run_tests` en graph.py | Posición: entre `qa_review` y `request_approval`. Detecta stack por extensión de archivos (.py→pytest, .ts/.tsx→vitest, .rs→cargo test) | `src/engine/graph.py` | ⬜ |
+| S22.B | Ejecución en directorio temporal | Escribe código + tests en tmpdir, ejecuta runner con timeout configurable, captura stdout/stderr | `src/engine/graph.py` | ⬜ |
+| S22.C | Ciclo de retry ante fallos | Tests fallan → reinyecta error + contexto al agente generador (máx 2 rondas). Si persisten → continúa con reporte de fallos para que el arquitecto decida | `src/engine/graph.py` | ⬜ |
+| S22.D | Reporte de tests en panel de aprobación | El SDD que aprueba el arquitecto incluye resultados reales: N/M tests pasando, fallos detallados | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
+| S22.E | `run_tests` en Grafo OVD dashboard | Nuevo nodo visible entre QA Review y Aprobación | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
+| S22.F | Tests de `run_tests` | No-op sin tests generados, detecta stack correctamente, retry ante fallo, timeout no bloquea ciclo | `src/engine/tests/test_run_tests.py` | ⬜ |
+
+#### Security scanning CLI — artefactos reales
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S22.G | Fase de scanning en `security_audit` | Antes del LLM review: ejecuta herramientas CLI sobre artefactos generados | `src/engine/graph.py` | ⬜ |
+| S22.H | Dependencias: `pip-audit` / `npm audit` / `cargo audit` | Detecta CVEs en dependencias declaradas. Resultado se inyecta como contexto al LLM reviewer | `src/engine/graph.py` | ⬜ |
+| S22.I | Secretos: `gitleaks` | Detecta tokens, passwords, API keys hardcodeados en el código generado | `src/engine/graph.py` | ⬜ |
+| S22.J | SAST: `semgrep` | Detecta SQL injection, XSS, path traversal, command injection en código generado | `src/engine/graph.py` | ⬜ |
+| S22.K | Bloqueo automático ante críticos | CVE crítico o secreto detectado → flag en panel de aprobación. El arquitecto ve el hallazgo antes de aprobar | `src/engine/graph.py` | ⬜ |
+| S22.L | Herramientas en Dockerfile del engine | `pip install pip-audit gitleaks semgrep` en imagen de producción | `src/engine/Dockerfile` | ⬜ |
+
+#### Nodo `generate_docs` — documentación automática
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S22.M | Nodo `generate_docs` en graph.py | Posición: entre `request_approval` y `deliver`. Recibe estado completo: FR, SDD, código generado, resultados de security y QA | `src/engine/graph.py` | ⬜ |
+| S22.N | Lógica condicional por tipo de FR | Frontend component → README + props API. Backend endpoint → OpenAPI spec + curl examples. DB migration → migration guide + rollback. Servicio completo → README + OpenAPI + Mermaid + ADR. Refactor → CHANGELOG + ADR | `src/engine/graph.py` | ⬜ |
+| S22.O | Fallo parcial no bloquea entrega | Si la generación falla, entrega lo que puede + warning en descripción del PR. `deliver` recibe siempre un resultado | `src/engine/graph.py` | ⬜ |
+| S22.P | Documentos incluidos en el PR | Los artefactos de docs se agregan al commit junto al código generado | `src/engine/graph.py` | ⬜ |
+| S22.Q | `generate_docs` en Grafo OVD dashboard | Nuevo nodo visible entre Aprobación y Entregar | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
+| S22.R | Tests de `generate_docs` | Lógica condicional por tipo, fallo parcial no bloquea, docs incluidos en artifacts | `src/engine/tests/test_generate_docs.py` | ⬜ |
+
+**Grafo post-S22:**
+```
+START → describe_image → analyze_fr → generate_sdd → route_agents
+  → agent_executor → security_audit → qa_review → run_tests
+  → request_approval → generate_docs → deliver
+```
+
+**Al terminar S22:** el PR que aprueba el arquitecto habrá pasado por tests ejecutados y verificados, scanner de dependencias + secretos + SAST, y documentación generada según el tipo de FR. Sin intervención manual adicional.
 
 ---
 
