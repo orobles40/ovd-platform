@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ovdApi } from '../api/ovd'
-import { X, Shield, CheckCircle, Code } from 'lucide-react'
+import { X, Shield, CheckCircle, Code, FileCode, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 
 interface Props {
   orgId: string
@@ -8,11 +9,118 @@ interface Props {
   onClose: () => void
 }
 
+interface AgentResult {
+  agent: string
+  output: string
+  artifacts?: { path: string; size: number; lang: string }[]
+}
+
+interface ParsedFile {
+  agent: string
+  path: string
+  lang: string
+  content: string
+}
+
+/** Extrae bloques ```lang:path\ncode``` del output del agente */
+function extractCodeFiles(results: AgentResult[]): ParsedFile[] {
+  const files: ParsedFile[] = []
+  const pattern = /```([\w+\-]*):([\S]+)\n([\s\S]*?)```/g
+
+  for (const r of results) {
+    const output = r.output ?? ''
+    let match: RegExpExecArray | null
+    pattern.lastIndex = 0
+    while ((match = pattern.exec(output)) !== null) {
+      files.push({
+        agent: r.agent,
+        path:  match[2].trim(),
+        lang:  match[1] || 'text',
+        content: match[3],
+      })
+    }
+  }
+  return files
+}
+
+function langColor(lang: string): string {
+  const map: Record<string, string> = {
+    python: 'text-yellow-400',
+    py:     'text-yellow-400',
+    typescript: 'text-blue-400',
+    ts:     'text-blue-400',
+    tsx:    'text-blue-400',
+    javascript: 'text-yellow-300',
+    js:     'text-yellow-300',
+    jsx:    'text-yellow-300',
+    rust:   'text-orange-400',
+    rs:     'text-orange-400',
+    sql:    'text-green-400',
+    json:   'text-purple-400',
+    yaml:   'text-pink-400',
+    yml:    'text-pink-400',
+    markdown: 'text-gray-300',
+    md:     'text-gray-300',
+  }
+  return map[lang.toLowerCase()] ?? 'text-gray-400'
+}
+
+function CodeFile({ file }: { file: ParsedFile }) {
+  const [open, setOpen]     = useState(true)
+  const [copied, setCopied] = useState(false)
+
+  const copy = () => {
+    navigator.clipboard.writeText(file.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="border border-gray-800 rounded-lg overflow-hidden">
+      {/* Cabecera del archivo */}
+      <div
+        className="flex items-center justify-between bg-gray-900 px-3 py-2 cursor-pointer hover:bg-gray-800 transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {open
+            ? <ChevronDown size={13} className="text-gray-500 shrink-0" />
+            : <ChevronRight size={13} className="text-gray-500 shrink-0" />
+          }
+          <FileCode size={13} className={`${langColor(file.lang)} shrink-0`} />
+          <span className="font-mono text-xs text-gray-200 truncate">{file.path}</span>
+          <span className="text-xs text-gray-600 ml-1 shrink-0">{file.lang}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-gray-600">{file.agent}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); copy() }}
+            className="text-gray-500 hover:text-white transition-colors"
+            title="Copiar"
+          >
+            {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Contenido del archivo */}
+      {open && (
+        <pre className="text-xs text-gray-300 bg-gray-950 p-3 overflow-x-auto max-h-96 leading-relaxed">
+          {file.content}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 export default function CycleDetail({ orgId, cycleId, onClose }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: ['cycle', orgId, cycleId],
     queryFn: () => ovdApi.getCycle(orgId, cycleId),
   })
+
+  const agentResults = (data?.agent_results ?? []) as AgentResult[]
+  const codeFiles = extractCodeFiles(agentResults)
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex justify-end" onClick={onClose}>
@@ -61,9 +169,21 @@ export default function CycleDetail({ orgId, cycleId, onClose }: Props) {
                 <span>Tipo: <span className="text-gray-300">{data.fr_type ?? '—'}</span></span>
                 <span>Complejidad: <span className="text-gray-300">{data.complexity ?? '—'}</span></span>
                 <span>Proyecto: <span className="text-gray-300">{data.project_name ?? '—'}</span></span>
-                <span>Oracle: <span className="text-gray-300">{data.oracle_involved ? 'Sí' : 'No'}</span></span>
               </div>
             </section>
+
+            {/* Código generado */}
+            {codeFiles.length > 0 && (
+              <section>
+                <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <FileCode size={12} /> Código generado
+                  <span className="ml-1 text-gray-600 normal-case font-normal">({codeFiles.length} archivo{codeFiles.length !== 1 ? 's' : ''})</span>
+                </h3>
+                <div className="space-y-2">
+                  {codeFiles.map((f, i) => <CodeFile key={i} file={f} />)}
+                </div>
+              </section>
+            )}
 
             {/* FR Analysis */}
             {data.fr_analysis && Object.keys(data.fr_analysis).length > 0 && (

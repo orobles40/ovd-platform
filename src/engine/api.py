@@ -23,6 +23,7 @@ Endpoints públicos (S12 — API Web):
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import os
 import uuid
 import psycopg
@@ -329,7 +330,7 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                     )
                     await _conn.commit()
             except Exception as _db_err:
-                log.warning("persist_cycle: error guardando ciclo en DB — %s", _db_err)
+                logging.getLogger("ovd.api").warning("persist_cycle: error guardando ciclo en DB — %s", _db_err)
 
         # Tras el stream: detectar interrupt de aprobación pendiente (request_approval)
         if graph and not last_done_event:
@@ -424,12 +425,31 @@ async def start_session(
     )
     resolved_project_context = agent_ctx.to_prompt_block()
 
+    # Resolver directorio del workspace: usar body.directory si viene explícito,
+    # si no, hacer lookup en ovd_projects por project_id (dashboard no envía directory)
+    resolved_directory = body.directory
+    if not resolved_directory and body.project_id:
+        _db_url = os.environ.get("DATABASE_URL", "")
+        if _db_url:
+            try:
+                async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
+                    _row = await _conn.execute(
+                        "SELECT directory FROM ovd_projects WHERE id = %s AND org_id = %s",
+                        (body.project_id, body.org_id),
+                    )
+                    _r = await _row.fetchone()
+                    if _r and _r[0]:
+                        resolved_directory = _r[0]
+                        logging.getLogger("ovd.api").info("session_create: directory resuelto desde proyecto — %s", resolved_directory)
+            except Exception as _e:
+                logging.getLogger("ovd.api").warning("session_create: no se pudo resolver directory del proyecto — %s", _e)
+
     # Nueva sesion: inicializar el estado del grafo
     initial_state: OVDState = {
         "session_id": session_id,
         "org_id": body.org_id,
         "project_id": body.project_id,
-        "directory": body.directory,
+        "directory": resolved_directory,
         "feature_request": body.feature_request,
         "project_context": resolved_project_context,  # S8: bloque tipado con restricciones incluidas
         "stack_routing": agent_ctx.model_routing,      # S8: routing efectivo para model_router

@@ -1276,8 +1276,13 @@ async def agent_executor(state: OVDState) -> dict:
     runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
 
     # S17T.A+B + Fase A: file tools + MCP tools (context7 para agentes implementadores)
-    tools = make_file_tools(directory) if directory else []
-    tools += mcp_client.pool.get_langchain_tools(agent_name)
+    # Solo activar tool calling cuando hay directory real — sin directory el modelo
+    # entra en bucle infinito de MCP calls sin producir output (ADR-002).
+    if directory:
+        tools = make_file_tools(directory)
+        tools += mcp_client.pool.get_langchain_tools(agent_name)
+    else:
+        tools = []
 
     async def _invoke_agent_logic() -> dict:
         if tools:
