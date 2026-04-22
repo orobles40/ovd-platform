@@ -2916,7 +2916,7 @@ _Generado por OVD Platform · Omar Robles_
     try:
         report_path.write_text(report, encoding="utf-8")
         log.info("_generate_delivery_report: informe escrito en %s", report_path)
-        return report_name
+        return str(report_path)  # S37-B: ruta absoluta para que RAG-02 la encuentre
     except OSError as e:
         log.warning("_generate_delivery_report: no se pudo escribir informe: %s", e)
         return ""

@@ -44,12 +44,18 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S36 (QA issues parsing fix + float test values)
-- **Tests:** Python unit ~747 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~826
-- **Rama activa:** `dev` (commits S22→S36 sin mergear a `main`)
+- **Sprints completados:** S3 → S37 (audit_logger bigint + RAG-02 ruta absoluta)
+- **Tests:** Python unit ~754 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~833
+- **Rama activa:** `dev` (commits S22→S37 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S37 (2026-04-22) — rama `dev`
+- **audit_logger bigint fix (S37-A):** El INSERT en `ovd_audit_log` pasaba `str(uuid.uuid4())` para la columna `id` (que es `bigint` con `nextval` sequence). Fix: remover `id` del INSERT, dejar que la BD lo genere automáticamente. Error visible en logs: `invalid input syntax for type bigint: "887ba5d8-..."`.
+- **RAG-02 ruta absoluta (S37-B):** `_generate_delivery_report` retornaba `report_name` (solo nombre del archivo) en vez de `str(report_path)` (ruta absoluta). `_index_delivery_report` no podía encontrar el archivo. Fix: `return str(report_path)`. Error visible en logs: `RAG-02: error indexando informe de entrega — Ruta no encontrada: ovd-delivery-*.md`.
+- **7 tests nuevos** en `test_s37.py`. **754 tests pasan** (0 fallos).
+- **Ciclo `474f6d72` — validación exitosa:** Security 100/100, QA 68/100, **Tests 28/28 PASSED** ✅. S36-A (Issues: 10 en vez de 1548) y S36-B (valores float correctos calculados con `round()`) validados en producción.
 
 ### Novedades S36 (2026-04-22) — rama `dev`
 - **QA Issues: 1548 fix (S36-A):** `QAReviewOutput` ahora tiene `@field_validator("issues", "missing_requirements", "code_quality_issues", mode="before")` que convierte un `str` en `list[str]` partiendo por líneas, sin iterar caracteres. Causa raíz: Pydantic v2 coerciona `str` → `list[str]` iterando char a char cuando el LLM retorna el campo como texto libre.

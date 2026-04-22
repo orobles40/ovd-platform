@@ -228,18 +228,18 @@ async def _write_audit_log(
     new_value: str | None,
 ) -> None:
     """Inserta un registro en ovd_audit_logs."""
-    log_id = str(uuid.uuid4())
+    # S37-A: id es bigint con nextval — no pasar UUID, dejar que la BD lo genere
     now = datetime.now(timezone.utc)
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         await conn.execute(
             """
             INSERT INTO ovd_audit_log
-              (id, org_id, user_id, action, resource, resource_id, metadata, created_at)
+              (org_id, user_id, action, resource, resource_id, metadata, created_at)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s)
+              (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (log_id, org_id, user_id, event, resource_type, resource_id,
+            (org_id, user_id, event, resource_type, resource_id,
              json.dumps({"summary": summary, "old_value": old_value, "new_value": new_value}), now),
         )
         await conn.commit()

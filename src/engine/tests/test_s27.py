@@ -135,8 +135,8 @@ class TestAuditLoggerMetadata:
                 new_value=None,
             )
 
-        # El parámetro metadata (índice 6) debe ser un str JSON, no un dict
-        metadata_param = captured_params[6]
+        # El parámetro metadata (índice 5 tras S37-A: sin id) debe ser un str JSON, no un dict
+        metadata_param = captured_params[5]
         assert isinstance(metadata_param, str), (
             f"metadata debe ser str JSON, recibido: {type(metadata_param)}"
         )
