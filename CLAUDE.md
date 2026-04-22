@@ -44,12 +44,18 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S27 (fixes calidad: conftest injection, audit_logger JSON, RAG-02 sys.path, QA template)
-- **Tests:** Python unit ~657 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~736
+- **Sprints completados:** S3 → S28 (SDD agent routing: devops solo infra; pytest exit codes diagnóstico)
+- **Tests:** Python unit ~666 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~745
 - **Rama activa:** `dev` (commits S22→S27 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S28 (2026-04-22) — rama `dev`
+- **`system_sdd.md` regla de agentes (S28-A):** Tabla explícita que mapea tipo de tarea → agente correcto. `devops` EXCLUSIVAMENTE para Dockerfile/CI/CD/Kubernetes. Para Python puro → solo `backend`. Prohibición explícita de asignar código de aplicación a `devops`. Elimina la contaminación de 2 agentes escribiendo el mismo archivo.
+- **`run_tests` exit codes pytest (S28-C):** Eliminado conflicto `-v`/`-q` en el comando pytest. Nuevos warnings diferenciados: exit 5 = "0 tests encontrados, verificar convención test_*.py", exit 4 = "error de colección (SyntaxError/ImportError)", exit 2 = "ejecución interrumpida". Lista de archivos .py en workspace incluida en el warning de exit 5.
+- **S28-B descartado** (workspace cleanup): riesgo de borrar código preexistente del proyecto. La raíz real era S28-A.
+- **9 tests nuevos** en `test_s28.py`. **666 tests pasan** (0 fallos).
 
 ### Novedades S27 (2026-04-22) — rama `dev`
 - **`run_tests` conftest.py injection (S27-A):** Si `conftest.py` en la raíz del workspace está vacío o no existe, `run_tests` lo inyecta automáticamente con `sys.path.insert(0, "src")`. No sobreescribe si ya tiene contenido. Elimina el bloqueo de QA por conftest vacío.

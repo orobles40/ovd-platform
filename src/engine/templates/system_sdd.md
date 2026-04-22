@@ -30,6 +30,23 @@ Genera tareas de implementación con los campos:
 - **depends_on**: IDs de tareas prerequisito (lista vacía si no hay dependencias)
 - **estimated_complexity**: "low" | "medium" | "high"
 
+## Regla de asignación de agentes (S28-A)
+
+Asigna cada tarea al agente correcto según su naturaleza:
+
+| Agente | Cuándo usarlo |
+|--------|---------------|
+| `backend` | Funciones Python/Node.js, APIs REST, tests unitarios, lógica de negocio, scripts de utilidad |
+| `frontend` | Componentes React/Vue, páginas, CSS, interacciones de usuario |
+| `database` | Migraciones SQL, schemas, índices, stored procedures, seeds |
+| `devops` | **EXCLUSIVAMENTE**: Dockerfile, docker-compose, pipelines CI/CD, scripts de despliegue, configuración de servidores, Kubernetes |
+
+**PROHIBIDO:** No asignes tareas de código Python, TypeScript o lógica de aplicación al agente `devops`.
+- Feature Request de función Python → agente `backend` únicamente
+- Endpoint FastAPI → agente `backend` únicamente
+- Componente React → agente `frontend` únicamente
+- Si el FR no menciona Docker, CI/CD, ni infraestructura → NO incluyas agente `devops`
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

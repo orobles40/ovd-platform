@@ -2095,7 +2095,8 @@ async def run_tests(state: OVDState) -> dict:
     output = ""
     try:
         if runner == "pytest":
-            cmd = [sys.executable, "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q",
+            # S28-C: flags claros sin conflicto (-v y -q se anulan); --tb=long para ver errores de colección
+            cmd = [sys.executable, "-m", "pytest", work_dir, "--tb=short", "--no-header",
                    f"--rootdir={work_dir}", "--import-mode=importlib"]
         elif runner == "vitest":
             cmd = ["npx", "vitest", "run", "--reporter=verbose"]
@@ -2114,7 +2115,25 @@ async def run_tests(state: OVDState) -> dict:
             try:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
                 output = stdout.decode("utf-8", errors="replace") if stdout else ""
-                passed = proc.returncode == 0
+                rc = proc.returncode
+                passed = rc == 0
+                # S28-C: diagnóstico por exit code de pytest
+                if runner == "pytest":
+                    if rc == 5:
+                        log.warning(
+                            "run_tests: pytest exit 5 — 0 tests encontrados en %s. "
+                            "Verificar que los archivos sigan convención test_*.py con funciones def test_*(). "
+                            "Archivos en workspace: %s",
+                            work_dir,
+                            [str(p.relative_to(work_dir)) for p in pathlib.Path(work_dir).rglob("*.py")][:10],
+                        )
+                    elif rc == 4:
+                        log.warning(
+                            "run_tests: pytest exit 4 — error de colección (SyntaxError o ImportError). "
+                            "Output: %s", output[:500],
+                        )
+                    elif rc == 2:
+                        log.warning("run_tests: pytest exit 2 — ejecución interrumpida. Output: %s", output[:200])
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.communicate()
