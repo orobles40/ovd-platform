@@ -42,12 +42,29 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-17)
+## Estado actual (2026-04-21)
 
-- **Sprints completados:** S3 → S19 (Production readiness — CORS, RAG multi-provider, tests suite completo, README onboarding)
-- **Tests:** Python unit ~471 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~550
-- **Próximo foco:** Contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C) — todo el código P1 está listo
+- **Sprints completados:** S3 → S22 (Calidad y Documentación Automática — run_tests, security scan CLI, generate_docs)
+- **Tests:** Python unit ~602 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~681
+- **Rama activa:** `dev` (5 commits de S22 sin mergear a `main`)
+- **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
+
+### Novedades S22 (2026-04-21) — rama `dev`
+- **Nodo `run_tests`:** detecta runner (pytest/vitest/cargo), ejecuta con timeout 60s, retry loop máx 2 rondas antes de continuar
+- **Security scan CLI:** helpers `_run_security_scans` + `_exec_scan_tool` — semgrep, gitleaks, pip-audit — activado con `OVD_SECURITY_SCAN_ENABLED=true` (default: false)
+- **Nodo `generate_docs`:** genera README/OpenAPI/ADR/CHANGELOG según tipo de FR; falla gracefully (generated_docs=[] si LLM falla)
+- **Template `system_docs.md`:** `src/engine/templates/system_docs.md` — nuevo template para el documentador
+- **SSE events nuevos:** `test_results` y `generated_docs` emitidos en el stream; ambos incluidos en el evento `done`
+- **Dashboard:** 2 nodos nuevos en `GRAPH_NODES` (`Ejecutar tests`, `Generar docs`) + aliases en `NODE_ALIAS`
+- **Grafo actualizado:** `qa_review → run_tests → generate_docs → deliver` (antes: `qa_review → deliver`)
+- **Tests S22:** 23 tests nuevos en `test_s22_run_tests.py`, `test_s22_security_scan.py`, `test_s22_generate_docs.py`
+- **625 tests pasan** (0 fallos) — 2 tests de regresión actualizados para reflejar el nuevo routing
+
+### Novedades S21 (sesión anterior)
+- **Nodo `describe_image`:** visión multimodal para wireframes/mockups adjuntos al FR
+- **Dashboard approval panel:** feedback textarea, acción `revise`, adjunto de archivo, contador de revisiones, exportar SDD
+- **Documentación automática:** analizado y planificado (implementado en S22)
 
 ### Novedades S19 (2026-04-17)
 - **Tests Block C (frontend):** Vitest — `Approval.test.tsx` y `Telemetry.test.tsx` corregidos (34 tests pasando)
@@ -55,19 +72,7 @@ cd src/tui && cargo build && cargo run
 - **Tests Block E (Rust inline):** `#[cfg(test)]` en `workspace.rs`, `auth.rs`, `config/mod.rs` — 26 tests
 - **CORS:** `CORSMiddleware` en `src/engine/api.py` — configurable vía `OVD_CORS_ORIGINS`
 - **RAG multi-provider:** `src/engine/rag.py` — switch `OVD_RAG_EMBEDDING_PROVIDER=openai|ollama`
-- **Docker backup:** `ovd-backup` en `docker-compose.prod.yml` — pg_dump diario, retención 30 archivos
-- **Docker Secrets:** `openai_api_key` agregado a entrypoint y compose
-- **README reescrito:** guía de onboarding completa para nuevo integrante del equipo
-- **`docs/ROADMAP.md`:** actualizado a v0.7.0-production-ready
-
-### Novedades S18 (2026-04-16)
-- **Superpowers en agentes:** 7 system prompts actualizados con writing-plans, TDD, verification-before-completion
-- **ui-ux-pro-max:** clonado en `src/knowledge/ui-ux/`, consultado dinámicamente por agente frontend vía BM25 (`{ui_context}`)
-- **Skills Manager web:** `/admin/skills` — actualiza repos externos desde el dashboard (admin only)
-- **MCP Client Pool:** `src/engine/mcp_client.py` — context7 conectado a agentes backend/frontend/database/devops
-- **MCP tools adapter:** `src/engine/tools/mcp_tools.py` — convierte MCP tools a LangChain StructuredTool
-- **TUI --from-file:** carga archivos .md desde CLI o `Ctrl+O` interactivo en el formulario FR
-- **Dependencia nueva:** `mcp>=1.0` (v1.27.0) en `src/engine/pyproject.toml`
+- **`docs/ROADMAP.md`:** actualizado a v0.9.0-quality-docs
 
 ## RAG
 
