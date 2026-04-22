@@ -42,13 +42,34 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-21)
+## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S22 (Calidad y Documentación Automática — run_tests, security scan CLI, generate_docs)
-- **Tests:** Python unit ~602 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~681
-- **Rama activa:** `dev` (5 commits de S22 sin mergear a `main`)
+- **Sprints completados:** S3 → S24 (Robustez tool calling — artifacts, QA, run_tests filesystem-first)
+- **Tests:** Python unit ~639 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~718
+- **Rama activa:** `dev` (commits S22+S23+S24 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
+- **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S24 (2026-04-22) — rama `dev`
+- **`_scan_workspace_artifacts()`:** nueva función — escanea el workspace por archivos de código cuando `written_files[]` queda vacío por bug en tracking de tool calls. Excluye `__pycache__`, `node_modules`, `.md`, `.DS_Store`, `ovd-delivery-*`.
+- **`_detect_test_runner()` filesystem-first (S24-B):** busca `test_*.py`/`*.test.ts`/`*.rs` en disco directamente antes de revisar artifacts[] u output. Ignora `__pycache__` y `.venv` en el rglob.
+- **`qa_review` filesystem-first (S24-C):** cuando `directory` está seteado, lee TODOS los archivos `.py/.ts/.sql/etc.` del workspace directamente, sin depender de `artifacts[]` ni `output`. Evita el score bajo por "main.py vacío" que ocurría en S23.
+- **`deliver` S24-A fallback:** cuando `existing_arts=[]` y `agent_output=""`, llama `_scan_workspace_artifacts()` para recuperar los archivos que el agente escribió pero no registró.
+- **Logging S24-D:** `log.info` en `_run_agent_with_tools` (written_files, artifacts finales) y en `run_tests` (directory, artifacts por agente, runner detectado).
+- **639 tests pasan** (0 fallos)
+
+### Diagnóstico confirmado S24 (para referencia futura)
+- **Causa raíz artifacts=[]:** `tool_result` de `write_file` puede no ser `str` puro con algunos wrappers de LangChain/Ollama → `isinstance(tool_result, str)` falla silenciosamente → `written_files=[]` → `artifacts=[]`.
+- **Efecto cascada:** `run_tests` no detecta tests (runner=none), `qa_review` ve output vacío (score bajo), `deliver` reporta files=0 aunque los archivos SÍ estén en disco.
+- **Fix:** filesystem-first en todos los nodos que necesitan saber qué archivos existen.
+
+### Novedades S23 (2026-04-22) — rama `dev`
+- **`deliver` S23-A:** usa `artifacts[]` directamente cuando el agente escribió con tool calling (no re-parsea output vacío)
+- **`_detect_test_runner` S23-B:** busca en artifacts[], output fences y filesystem glob
+- **`qa_review` S23-C:** lee archivos del disco via artifacts+directory cuando output=""
+- **`system_backend.md` S23-D:** sección "Infraestructura obligatoria para proyectos Python" (`__init__.py`, `pytest.ini`, `conftest.py`) — ahora el SDD genera 4 req + 5 tareas incluyendo infraestructura
+- **Correcciones:** `factories.make_agent_result` artifacts=[] (era formato incorrecto), `test_s12_api_v1` mock row sin columna oracle_involved obsoleta
 
 ### Novedades S22 (2026-04-21) — rama `dev`
 - **Nodo `run_tests`:** detecta runner (pytest/vitest/cargo), ejecuta con timeout 60s, retry loop máx 2 rondas antes de continuar
@@ -59,7 +80,6 @@ cd src/tui && cargo build && cargo run
 - **Dashboard:** 2 nodos nuevos en `GRAPH_NODES` (`Ejecutar tests`, `Generar docs`) + aliases en `NODE_ALIAS`
 - **Grafo actualizado:** `qa_review → run_tests → generate_docs → deliver` (antes: `qa_review → deliver`)
 - **Tests S22:** 23 tests nuevos en `test_s22_run_tests.py`, `test_s22_security_scan.py`, `test_s22_generate_docs.py`
-- **625 tests pasan** (0 fallos) — 2 tests de regresión actualizados para reflejar el nuevo routing
 
 ### Novedades S21 (sesión anterior)
 - **Nodo `describe_image`:** visión multimodal para wireframes/mockups adjuntos al FR

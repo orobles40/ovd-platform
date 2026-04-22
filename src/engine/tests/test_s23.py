@@ -78,15 +78,17 @@ class TestDetectTestRunner:
         results = [{"agent": "backend", "output": "", "artifacts": []}]
         assert detect(results, directory=str(tmp_path)) == "pytest"
 
-    def test_artifacts_take_priority_over_filesystem(self, tmp_path):
-        """artifacts[] tiene prioridad sobre el filesystem."""
+    def test_filesystem_takes_priority_over_artifacts(self, tmp_path):
+        """S24-B: filesystem-first — el filesystem gana sobre artifacts[].
+        Si el filesystem tiene test_*.py, retorna pytest aunque artifacts apunte a Rust."""
         detect = _import_detect_test_runner()
-        # Filesystem tiene .rs, artifacts tiene test_*.py
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "lib.rs").write_text("fn main() {}")
+        # Filesystem tiene test_*.py, artifacts tiene .rs
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_calc.py").write_text("def test_pass(): pass")
         results = [{"agent": "backend", "output": "", "artifacts": [
-            {"path": "tests/test_math.py", "size": 100, "lang": "python"},
+            {"path": "src/lib.rs", "size": 100, "lang": "rust"},
         ]}]
+        # Filesystem (pytest) gana sobre artifacts (cargo)
         assert detect(results, directory=str(tmp_path)) == "pytest"
 
 

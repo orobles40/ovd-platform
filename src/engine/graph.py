@@ -1451,12 +1451,33 @@ async def _run_agent_with_tools(
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language)
 
-    # Construir artefactos desde archivos escritos
+    # S24-D: logging de tracking post-ejecución
+    log.info(
+        "_run_agent_with_tools[%s]: written_files=%d %s | final_output=%d chars",
+        agent_name, len(written_files), written_files[:5], len(final_output),
+    )
+
+    # Construir artefactos desde archivos escritos via tool calls
     artifacts = _build_artifacts_from_files(written_files, directory)
 
     # Si no se escribió nada via tools, intentar parsear del output del LLM
     if not artifacts and final_output:
         artifacts = _write_artifacts(final_output, directory, agent_name)
+
+    # S24-A: post-scan del workspace — detectar archivos escritos que no fueron
+    # capturados por el tracking de tool calls (e.g., tool_result no era str puro).
+    if not artifacts and directory:
+        artifacts = _scan_workspace_artifacts(directory, agent_start_ts=None)
+        if artifacts:
+            log.info(
+                "_run_agent_with_tools[%s]: S24-A post-scan encontró %d archivo(s) en disco",
+                agent_name, len(artifacts),
+            )
+
+    log.info(
+        "_run_agent_with_tools[%s]: artifacts finales=%d",
+        agent_name, len(artifacts),
+    )
 
     uncertainties = _extract_uncertainties(final_output, agent_name)
 
@@ -1483,6 +1504,56 @@ def _build_artifacts_from_files(written_files: list[str], directory: str) -> lis
             "size": size,
             "language": _guess_language(rel_path),
         })
+    return artifacts
+
+
+def _scan_workspace_artifacts(directory: str, agent_start_ts: float | None = None) -> list[dict]:
+    """S24-A — Escanea el directorio del workspace para descubrir archivos de implementación.
+
+    Fallback cuando el tracking de tool calls no captura los archivos escritos
+    (e.g., tool_result no era str puro, tool name distinto al esperado, etc.).
+
+    Solo incluye archivos de código fuente (.py, .ts, .tsx, .js, .sql, etc.).
+    Excluye: directorios ocultos, __pycache__, node_modules, *.md de entrega, .DS_Store.
+    """
+    _SKIP_DIRS  = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+    _CODE_EXTS  = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".yaml", ".yml",
+                   ".tf", ".sh", ".json", ".toml", ".ini", ".cfg", ".rs", ".go", ".java"}
+    _SKIP_FILES = {".DS_Store"}
+
+    base = pathlib.Path(directory).expanduser().resolve()
+    if not base.exists():
+        return []
+
+    artifacts = []
+    for abs_path in base.rglob("*"):
+        if not abs_path.is_file():
+            continue
+        # Excluir por directorio padre
+        if any(part in _SKIP_DIRS or part.startswith(".") for part in abs_path.parts):
+            continue
+        # Excluir archivos de sistema y entregas OVD
+        if abs_path.name in _SKIP_FILES:
+            continue
+        if abs_path.name.startswith("ovd-delivery-"):
+            continue
+        if abs_path.suffix.lower() == ".md":
+            continue
+        if abs_path.suffix.lower() not in _CODE_EXTS:
+            continue
+        # Filtrar por tiempo de modificación si se proporciona timestamp de inicio
+        if agent_start_ts is not None:
+            try:
+                if abs_path.stat().st_mtime < agent_start_ts:
+                    continue
+            except OSError:
+                continue
+        try:
+            rel = str(abs_path.relative_to(base))
+            size = abs_path.stat().st_size
+            artifacts.append({"path": rel, "size": size, "language": _guess_language(rel)})
+        except (ValueError, OSError):
+            continue
     return artifacts
 
 
@@ -1755,35 +1826,68 @@ async def qa_review(state: OVDState) -> dict:
         "qa", state.get("org_id", ""), state.get("project_id", ""),
         state.get("jwt_token", ""), state.get("stack_routing", "auto"),
     )
-    # S23-C: cuando el agente usó tool calling, output="" pero los archivos están en disco.
-    # Leer el contenido real desde el filesystem usando la lista de artifacts.
+    # S23-C / S24-C: construir contexto de código para QA.
+    # Estrategia (orden de prioridad):
+    #   1. Filesystem directo cuando directory disponible — más fiable que artifacts[] o output
+    #   2. artifacts[] del agente — tool calling path
+    #   3. output del agente — path clásico (fences en texto)
     qa_directory = state.get("directory", "")
     agent_output_parts: list[str] = []
-    for r in state.get("agent_results", []):
-        output    = r.get("output", "")
-        artifacts = r.get("artifacts", [])
-        if artifacts and qa_directory:
-            import pathlib as _pl
-            base = _pl.Path(qa_directory).expanduser().resolve()
-            file_blocks: list[str] = []
-            for art in artifacts:
-                p = art.get("path", "") if isinstance(art, dict) else str(art)
-                if not p:
+
+    if qa_directory:
+        # S24-C: leer archivos de código desde el workspace directamente
+        import pathlib as _pl
+        base = _pl.Path(qa_directory).expanduser().resolve()
+        _CODE_EXTS_QA = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
+        _SKIP_QA = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+        file_blocks: list[str] = []
+        if base.exists():
+            for fp in sorted(base.rglob("*")):
+                if not fp.is_file():
                     continue
-                fp = (base / p).resolve()
+                if any(part in _SKIP_QA or part.startswith(".") for part in fp.relative_to(base).parts):
+                    continue
+                if fp.suffix.lower() not in _CODE_EXTS_QA:
+                    continue
+                if fp.name.startswith("ovd-delivery-"):
+                    continue
                 try:
-                    fp.relative_to(base)  # path traversal guard
-                    if fp.exists():
-                        ext = fp.suffix.lstrip(".")
-                        file_blocks.append(f"```{ext}:{p}\n{fp.read_text(encoding='utf-8', errors='replace')}\n```")
-                except (ValueError, OSError):
+                    rel = str(fp.relative_to(base))
+                    ext = fp.suffix.lstrip(".")
+                    content = fp.read_text(encoding="utf-8", errors="replace")
+                    file_blocks.append(f"```{ext}:{rel}\n{content}\n```")
+                except (OSError, ValueError):
                     pass
-            if file_blocks:
-                agent_output_parts.append("\n\n".join(file_blocks))
-                continue
-        # Fallback: output del agente (path clásico o tool calling sin directory)
-        if output:
-            agent_output_parts.append(output)
+        if file_blocks:
+            agent_output_parts.append("\n\n".join(file_blocks))
+            log.info("qa_review: S24-C leyó %d archivo(s) del workspace para contexto QA", len(file_blocks))
+
+    # Fallback si no hay directory o no hay archivos en disco
+    if not agent_output_parts:
+        for r in state.get("agent_results", []):
+            output    = r.get("output", "")
+            artifacts = r.get("artifacts", [])
+            if artifacts and qa_directory:
+                import pathlib as _pl2
+                base2 = _pl2.Path(qa_directory).expanduser().resolve()
+                fb: list[str] = []
+                for art in artifacts:
+                    p = art.get("path", "") if isinstance(art, dict) else str(art)
+                    if not p:
+                        continue
+                    fp2 = (base2 / p).resolve()
+                    try:
+                        fp2.relative_to(base2)
+                        if fp2.exists():
+                            fb.append(f"```{fp2.suffix.lstrip('.')}:{p}\n{fp2.read_text(encoding='utf-8', errors='replace')}\n```")
+                    except (ValueError, OSError):
+                        pass
+                if fb:
+                    agent_output_parts.append("\n\n".join(fb))
+                    continue
+            if output:
+                agent_output_parts.append(output)
+
     agent_output = "\n\n".join(agent_output_parts)
     messages_qa = [
         SystemMessage(content=template_loader.render(
@@ -1916,7 +2020,14 @@ async def run_tests(state: OVDState) -> dict:
     directory     = state.get("directory", "")
     retry_round   = state.get("test_retry_count", 0)
 
+    # S24-D: logging de estado antes de detectar runner
+    arts_counts = [(r.get("agent","?"), len(r.get("artifacts",[]))) for r in agent_results]
+    log.info("run_tests: directory='%s' | agent_results artifacts=%s", directory, arts_counts)
+
     runner = _detect_test_runner(agent_results, directory=directory)
+
+    # S24-D: logging de resultado de detección
+    log.info("run_tests: runner detectado='%s'", runner)
 
     if not runner:
         log.info("run_tests: no se detectaron archivos de test, omitiendo ejecución")
@@ -2347,27 +2458,39 @@ def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str |
     .py → pytest | .ts/.tsx → vitest | .rs → cargo test
     Retorna None si no se detectan archivos de test generados.
 
-    S23-B: busca paths en tres fuentes (orden de prioridad):
+    S23-B / S24-B: orden de búsqueda:
+      0. Filesystem cuando directory disponible (más fiable — archivos ya en disco)
       1. artifacts[] del agente (tool calling path)
       2. fences ```lang:path del output (path clásico)
-      3. glob en el filesystem si directory está disponible
     """
     import re as _re
-    import glob as _glob
 
-    # 1. Artifacts del agente (tool calling path)
-    all_paths: list[str] = []
-    for r in agent_results:
-        for art in r.get("artifacts", []):
-            p = art.get("path", "") if isinstance(art, dict) else str(art)
-            if p:
-                all_paths.append(p)
+    # S24-B: filesystem-first cuando directory está disponible
+    # Los archivos ya están en disco al momento de correr run_tests.
+    # Es más fiable que depender del tracking de tool calls o del output del LLM.
+    if directory:
+        import pathlib as _pl
+        base = _pl.Path(directory).expanduser().resolve()
+        if base.exists():
+            _skip = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
+            def _safe_rglob(pattern: str) -> list:
+                return [
+                    p for p in base.rglob(pattern)
+                    if not any(part in _skip for part in p.parts)
+                ]
+            py_tests = _safe_rglob("test_*.py") + _safe_rglob("*_test.py")
+            ts_tests = _safe_rglob("*.test.ts") + _safe_rglob("*.spec.ts") + \
+                       _safe_rglob("*.test.tsx") + _safe_rglob("*.spec.tsx")
+            rs_files = _safe_rglob("*.rs")
+            if py_tests:
+                log.debug("_detect_test_runner: pytest detectado via filesystem — %s", py_tests[:3])
+                return "pytest"
+            if ts_tests:
+                return "vitest"
+            if rs_files:
+                return "cargo"
 
-    # 2. Fences ```lang:path en el output (path clásico)
-    all_output = "\n".join(r.get("output", "") for r in agent_results)
-    all_paths.extend(_re.findall(r"```[\w+\-]*:([^\n`]+)", all_output))
-
-    # Evaluar con paths recolectados hasta aquí
+    # Fallback: artifacts[] del agente y fences en output (sin directory)
     def _classify(paths: list[str]) -> str | None:
         if any(("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py") for p in paths):
             return "pytest"
@@ -2377,27 +2500,16 @@ def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str |
             return "cargo"
         return None
 
-    runner = _classify(all_paths)
-    if runner:
-        return runner
+    all_paths: list[str] = []
+    for r in agent_results:
+        for art in r.get("artifacts", []):
+            p = art.get("path", "") if isinstance(art, dict) else str(art)
+            if p:
+                all_paths.append(p)
+    all_output = "\n".join(r.get("output", "") for r in agent_results)
+    all_paths.extend(_re.findall(r"```[\w+\-]*:([^\n`]+)", all_output))
 
-    # 3. Filesystem glob fallback (solo si directory disponible y no se detectó nada)
-    if directory:
-        import pathlib as _pl
-        base = _pl.Path(directory).expanduser().resolve()
-        if base.exists():
-            py_tests = list(base.rglob("test_*.py")) + list(base.rglob("*_test.py"))
-            ts_tests = list(base.rglob("*.test.ts")) + list(base.rglob("*.spec.ts")) + \
-                       list(base.rglob("*.test.tsx")) + list(base.rglob("*.spec.tsx"))
-            rs_files = list(base.rglob("*.rs"))
-            if py_tests:
-                return "pytest"
-            if ts_tests:
-                return "vitest"
-            if rs_files:
-                return "cargo"
-
-    return None
+    return _classify(all_paths)
 
 
 async def _index_delivery_report(state: dict, report_file: str) -> None:
@@ -2765,6 +2877,11 @@ async def deliver(state: OVDState) -> dict:
             log.debug("deliver: agente '%s' usó tool calling — %d archivos ya en disco", agent_name, len(written))
         else:
             written = _write_artifacts(agent_output, directory, agent_name)
+            # S24-A: último fallback — escanear workspace si output vacío y nada fue escrito
+            if not written and directory and not agent_output:
+                written = _scan_workspace_artifacts(directory)
+                if written:
+                    log.info("deliver: S24-A scan encontró %d archivo(s) no trackeados para agente '%s'", len(written), agent_name)
         deliverables.append({
             "type": "implementation",
             "agent": agent_name,
