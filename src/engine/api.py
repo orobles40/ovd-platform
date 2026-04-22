@@ -217,9 +217,22 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
         async for mode, event in graph.astream(None, config, stream_mode=["values", "updates"]):
             if mode == "updates":
                 # Emitir node_end por cada nodo que acaba de completarse
-                for node_name in event:
-                    if node_name != "__interrupt__":
-                        yield _make_sse_event("node_end", {"node": node_name})
+                for node_name, node_output in event.items():
+                    if node_name == "__interrupt__":
+                        continue
+                    yield _make_sse_event("node_end", {"node": node_name})
+                    # S22: eventos custom para nodos de calidad y docs
+                    if isinstance(node_output, dict):
+                        if node_name == "run_tests" and node_output.get("test_results"):
+                            yield _make_sse_event("test_results", node_output["test_results"])
+                        elif node_name == "generate_docs" and node_output.get("generated_docs") is not None:
+                            yield _make_sse_event("generated_docs", {
+                                "count": len(node_output.get("generated_docs", [])),
+                                "docs": [
+                                    {"type": d.get("type"), "path": d.get("path")}
+                                    for d in node_output.get("generated_docs", [])
+                                ],
+                            })
                 continue
 
             # mode == "values": estado completo tras cada nodo
@@ -248,8 +261,12 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                 "summary": f"Ciclo completado. {len(last_done_event.get('deliverables', []))} artefacto(s).",
                 "deliverables": last_done_event.get("deliverables", []),
                 # P4.C — security y QA para resumen en TUI
-                "security_result": last_done_event.get("security_result", {}),
-                "qa_result":       last_done_event.get("qa_result", {}),
+                "security_result":      last_done_event.get("security_result", {}),
+                "qa_result":            last_done_event.get("qa_result", {}),
+                # S22 — calidad y docs
+                "test_results":         last_done_event.get("test_results", {}),
+                "security_scan_results": last_done_event.get("security_scan_results", {}),
+                "generated_docs":       last_done_event.get("generated_docs", []),
                 "token_summary": {
                     "total_input":  total_in,
                     "total_output": total_out,
@@ -258,14 +275,17 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                 "github_pr": last_done_event.get("github_pr", {}),
                 # Incluir estado para cycle log y fine-tuning
                 "state": {
-                    "feature_request": last_done_event.get("feature_request", ""),
-                    "fr_analysis":     last_done_event.get("fr_analysis", {}),
-                    "sdd":             last_done_event.get("sdd", {}),
-                    "agent_results":   last_done_event.get("agent_results", []),
-                    "security_result": last_done_event.get("security_result", {}),
-                    "qa_result":       last_done_event.get("qa_result", {}),
-                    "token_usage":     token_usage,
-                    "github_pr":       last_done_event.get("github_pr", {}),
+                    "feature_request":      last_done_event.get("feature_request", ""),
+                    "fr_analysis":          last_done_event.get("fr_analysis", {}),
+                    "sdd":                  last_done_event.get("sdd", {}),
+                    "agent_results":        last_done_event.get("agent_results", []),
+                    "security_result":      last_done_event.get("security_result", {}),
+                    "qa_result":            last_done_event.get("qa_result", {}),
+                    "test_results":         last_done_event.get("test_results", {}),
+                    "security_scan_results": last_done_event.get("security_scan_results", {}),
+                    "generated_docs":       last_done_event.get("generated_docs", []),
+                    "token_usage":          token_usage,
+                    "github_pr":            last_done_event.get("github_pr", {}),
                 },
             })
 
