@@ -44,12 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S37 (audit_logger bigint + RAG-02 ruta absoluta)
-- **Tests:** Python unit ~754 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~833
-- **Rama activa:** `dev` (commits S22→S37 sin mergear a `main`)
+- **Sprints completados:** S3 → S38 (async tool invocation + QA truncation multi-agent)
+- **Tests:** Python unit ~764 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~843
+- **Rama activa:** `dev` (commits S22→S38 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S38 (2026-04-22) — rama `dev`
+- **async tool invocation (S38-A):** `_run_agent_with_tools` ahora usa `await tool_fn.ainvoke(args)` con fallback a `tool_fn.invoke(args)` cuando lanza `NotImplementedError`. Fix para context7 `StructuredTool` que fallaba con "does not support sync invocation" en ciclos con research web.
+- **QA truncation 12k→20k (S38-B):** `qa_review` trunca `agent_output` a 20000 chars (antes 12000). Con 3 agentes (database+backend+frontend) generando ~6K cada uno, el output total (~18K) se cortaba, perdiendo código del agente frontend del análisis de QA.
+- **10 tests nuevos** en `test_s38.py`. **764 tests pasan** (0 fallos).
 
 ### Novedades S37 (2026-04-22) — rama `dev`
 - **audit_logger bigint fix (S37-A):** El INSERT en `ovd_audit_log` pasaba `str(uuid.uuid4())` para la columna `id` (que es `bigint` con `nextval` sequence). Fix: remover `id` del INSERT, dejar que la BD lo genere automáticamente. Error visible en logs: `invalid input syntax for type bigint: "887ba5d8-..."`.
