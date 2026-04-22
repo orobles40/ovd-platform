@@ -87,12 +87,13 @@ class TestRouteAfterSecurity:
 
 class TestRouteAfterQA:
 
-    def test_qa_passed_va_a_deliver(self):
+    def test_qa_passed_va_a_run_tests(self):
+        """S22: QA pasa → run_tests (ya no va directo a deliver)."""
         state = make_state(
             qa_result={"passed": True, "score": 85},
             qa_retry_count=0,
         )
-        assert route_after_qa(state) == "deliver"
+        assert route_after_qa(state) == "run_tests"
 
     def test_qa_failed_primer_reintento(self):
         state = make_state(

@@ -272,7 +272,7 @@ class TestGAP005RetryLoop:
         assert result == "route_agents"
 
     def test_route_qa_pasa_si_passed_true(self):
-        """Con QA passed=True → route_after_qa retorna 'deliver'."""
+        """S22: Con QA passed=True → route_after_qa retorna 'run_tests' (no 'deliver')."""
         from graph import route_after_qa
 
         state = make_state(
@@ -280,7 +280,7 @@ class TestGAP005RetryLoop:
             qa_retry_count=0,
         )
         result = route_after_qa(state)
-        assert result == "deliver"
+        assert result == "run_tests"
 
 
 # ---------------------------------------------------------------------------
