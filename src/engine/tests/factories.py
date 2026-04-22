@@ -124,11 +124,14 @@ def make_agent_result(
     agent: str = "backend",
     output: str = "```python\ndef login():\n    pass\n```",
     passed: bool = True,
+    artifacts: list | None = None,
 ) -> dict:
     return {
         "agent":     agent,
         "output":    output,
-        "artifacts": [{"name": f"{agent}_impl.py", "content": output}],
+        # artifacts=[] → path clásico (deliver llama _write_artifacts sobre output)
+        # Para simular tool calling, pasar artifacts=[{"path": ..., "size": ..., "lang": ...}]
+        "artifacts": artifacts if artifacts is not None else [],
         "passed":    passed,
     }
 

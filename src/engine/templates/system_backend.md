@@ -38,6 +38,31 @@ Si generas múltiples archivos, incluye un bloque por archivo con su ruta. Nunca
 
 Devuelve SOLO código de implementación con comentarios claros.
 
+## Infraestructura obligatoria para proyectos Python
+
+Cuando generes código Python, SIEMPRE incluye estos archivos de infraestructura si no existen:
+
+1. **`src/__init__.py`** y **`src/<paquete>/__init__.py`** — paquetes vacíos para que los imports funcionen
+2. **`tests/__init__.py`** — paquete de tests
+3. **`conftest.py`** (raíz del proyecto) — fixtures globales y configuración de pytest
+4. **`pytest.ini`** o **`pyproject.toml`** — configuración de pytest con `testpaths = tests`
+
+Ejemplo mínimo de `pytest.ini`:
+```ini:pytest.ini
+[pytest]
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+```
+
+Ejemplo mínimo de `conftest.py`:
+```python:conftest.py
+# Fixtures globales del proyecto
+```
+
+Sin estos archivos, `pytest` no puede descubrir los tests ni resolver los imports relativos.
+
 ## Metodología obligatoria
 
 ### TDD — Ley de hierro

@@ -1755,9 +1755,36 @@ async def qa_review(state: OVDState) -> dict:
         "qa", state.get("org_id", ""), state.get("project_id", ""),
         state.get("jwt_token", ""), state.get("stack_routing", "auto"),
     )
-    agent_output = "\n\n".join(
-        r.get("output", "") for r in state.get("agent_results", [])
-    )
+    # S23-C: cuando el agente usó tool calling, output="" pero los archivos están en disco.
+    # Leer el contenido real desde el filesystem usando la lista de artifacts.
+    qa_directory = state.get("directory", "")
+    agent_output_parts: list[str] = []
+    for r in state.get("agent_results", []):
+        output    = r.get("output", "")
+        artifacts = r.get("artifacts", [])
+        if artifacts and qa_directory:
+            import pathlib as _pl
+            base = _pl.Path(qa_directory).expanduser().resolve()
+            file_blocks: list[str] = []
+            for art in artifacts:
+                p = art.get("path", "") if isinstance(art, dict) else str(art)
+                if not p:
+                    continue
+                fp = (base / p).resolve()
+                try:
+                    fp.relative_to(base)  # path traversal guard
+                    if fp.exists():
+                        ext = fp.suffix.lstrip(".")
+                        file_blocks.append(f"```{ext}:{p}\n{fp.read_text(encoding='utf-8', errors='replace')}\n```")
+                except (ValueError, OSError):
+                    pass
+            if file_blocks:
+                agent_output_parts.append("\n\n".join(file_blocks))
+                continue
+        # Fallback: output del agente (path clásico o tool calling sin directory)
+        if output:
+            agent_output_parts.append(output)
+    agent_output = "\n\n".join(agent_output_parts)
     messages_qa = [
         SystemMessage(content=template_loader.render(
             "system_qa",
@@ -1889,7 +1916,7 @@ async def run_tests(state: OVDState) -> dict:
     directory     = state.get("directory", "")
     retry_round   = state.get("test_retry_count", 0)
 
-    runner = _detect_test_runner(agent_results)
+    runner = _detect_test_runner(agent_results, directory=directory)
 
     if not runner:
         log.info("run_tests: no se detectaron archivos de test, omitiendo ejecución")
@@ -2314,28 +2341,62 @@ async def _run_security_scans(agent_results: list[dict], directory: str) -> dict
 # S22 — Detección de runner de tests y ejecución
 # ---------------------------------------------------------------------------
 
-def _detect_test_runner(agent_results: list[dict]) -> str | None:
+def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str | None:
     """Detecta el runner de tests apropiado según las extensiones de los archivos generados.
 
     .py → pytest | .ts/.tsx → vitest | .rs → cargo test
     Retorna None si no se detectan archivos de test generados.
+
+    S23-B: busca paths en tres fuentes (orden de prioridad):
+      1. artifacts[] del agente (tool calling path)
+      2. fences ```lang:path del output (path clásico)
+      3. glob en el filesystem si directory está disponible
     """
-    all_output = "\n".join(r.get("output", "") for r in agent_results)
-
-    # Buscar bloques de código con extensión de archivo
     import re as _re
-    paths = _re.findall(r"```[\w+\-]*:([^\n`]+)", all_output)
+    import glob as _glob
 
-    has_test_py  = any(("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py") for p in paths)
-    has_test_ts  = any(("test." in p or "spec." in p) and (p.endswith(".ts") or p.endswith(".tsx")) for p in paths)
-    has_test_rs  = any(p.endswith(".rs") for p in paths)  # Rust tests están inline
+    # 1. Artifacts del agente (tool calling path)
+    all_paths: list[str] = []
+    for r in agent_results:
+        for art in r.get("artifacts", []):
+            p = art.get("path", "") if isinstance(art, dict) else str(art)
+            if p:
+                all_paths.append(p)
 
-    if has_test_py:
-        return "pytest"
-    if has_test_ts:
-        return "vitest"
-    if has_test_rs:
-        return "cargo"
+    # 2. Fences ```lang:path en el output (path clásico)
+    all_output = "\n".join(r.get("output", "") for r in agent_results)
+    all_paths.extend(_re.findall(r"```[\w+\-]*:([^\n`]+)", all_output))
+
+    # Evaluar con paths recolectados hasta aquí
+    def _classify(paths: list[str]) -> str | None:
+        if any(("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py") for p in paths):
+            return "pytest"
+        if any(("test." in p or "spec." in p) and (p.endswith(".ts") or p.endswith(".tsx")) for p in paths):
+            return "vitest"
+        if any(p.endswith(".rs") for p in paths):
+            return "cargo"
+        return None
+
+    runner = _classify(all_paths)
+    if runner:
+        return runner
+
+    # 3. Filesystem glob fallback (solo si directory disponible y no se detectó nada)
+    if directory:
+        import pathlib as _pl
+        base = _pl.Path(directory).expanduser().resolve()
+        if base.exists():
+            py_tests = list(base.rglob("test_*.py")) + list(base.rglob("*_test.py"))
+            ts_tests = list(base.rglob("*.test.ts")) + list(base.rglob("*.spec.ts")) + \
+                       list(base.rglob("*.test.tsx")) + list(base.rglob("*.spec.tsx"))
+            rs_files = list(base.rglob("*.rs"))
+            if py_tests:
+                return "pytest"
+            if ts_tests:
+                return "vitest"
+            if rs_files:
+                return "cargo"
+
     return None
 
 
@@ -2695,9 +2756,15 @@ async def deliver(state: OVDState) -> dict:
     # Artefactos de implementacion de cada agente — S16T.A: escribir archivos al disco
     directory = state.get("directory", "")
     for result in state.get("agent_results", []):
-        agent_name   = result.get("agent", "unknown")
-        agent_output = result.get("output", "")
-        written      = _write_artifacts(agent_output, directory, agent_name)
+        agent_name       = result.get("agent", "unknown")
+        agent_output     = result.get("output", "")
+        existing_arts    = result.get("artifacts", [])
+        # S23-A: si el agente usó tool calling (artifacts ya en disco), no re-parsear output
+        if existing_arts and directory:
+            written = existing_arts
+            log.debug("deliver: agente '%s' usó tool calling — %d archivos ya en disco", agent_name, len(written))
+        else:
+            written = _write_artifacts(agent_output, directory, agent_name)
         deliverables.append({
             "type": "implementation",
             "agent": agent_name,

@@ -271,7 +271,7 @@ class TestGetCycle:
             _CYCLE_ID, _PROJECT_ID, "OVD Platform",
             "sess1", "thread1", "Implementar JWT",
             fr_analysis, sdd, agent_res, qa_result,
-            85, "medium", "feature", False,
+            85, "medium", "feature",
             500, 300, 800,
             by_agent, Decimal("0.000250"), now,
         )
