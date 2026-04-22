@@ -257,6 +257,25 @@ export default function FrLauncher() {
         esRef.current?.close()
         break
       }
+      case 'message': {
+        const content = ev.data.content as string
+        if (content) pushLog(content)
+        break
+      }
+      case 'test_results': {
+        const passed = ev.data.passed as boolean
+        const runner = ev.data.runner as string
+        const output = ev.data.output as string
+        pushLog(`${passed ? '✓' : '✗'} Tests [${runner}]: ${output?.substring(0, 120) || 'sin output'}`)
+        break
+      }
+      case 'generated_docs': {
+        const docs = ev.data as Array<{type: string, path: string}>
+        if (Array.isArray(docs) && docs.length > 0) {
+          pushLog(`✓ Docs generados: ${docs.map(d => d.path).join(', ')}`)
+        }
+        break
+      }
       default:
         break
     }
