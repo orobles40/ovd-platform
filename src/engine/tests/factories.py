@@ -57,6 +57,11 @@ _STATE_DEFAULTS: dict[str, Any] = {
     "qa_retry_count":       0,
     "retry_feedback":       "",
     "escalation_resolution": "",
+    # S22
+    "test_results":          {},
+    "test_retry_count":      0,
+    "security_scan_results": {},
+    "generated_docs":        [],
     # Tokens / timing
     "token_usage":    {},
     "cycle_start_ts": time.time() - 5.0,

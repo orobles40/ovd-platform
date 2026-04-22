@@ -377,6 +377,16 @@ class OVDState(TypedDict):
 
     escalation_resolution: str
 
+    # S22 — run_tests: ejecución real de tests generados
+    test_results: dict[str, Any]    # {passed, output, runner, retry_round, error}
+    test_retry_count: int           # 0..2, máx 2 rondas de retry vía route_agents
+
+    # S22 — security scanning CLI (previo al LLM review)
+    security_scan_results: dict[str, Any]  # {tools_run, findings, blocked}
+
+    # S22 — generate_docs: documentación automática post-QA
+    generated_docs: list[dict]      # [{type, content, path}]
+
     # FASE 4.D: uso de tokens por agente — reducer fusiona los dicts en paralelo
     # Formato: { "frontend": { "input": N, "output": N }, "backend": {...} }
     token_usage: Annotated[dict, _merge_token_usage]
@@ -1633,6 +1643,30 @@ async def security_audit(state: OVDState) -> dict:
         "security", org_id, project_id, jwt_token, state.get("stack_routing", "auto"),
     )
 
+    # S22 — Fase 1: Security scanning CLI (opcional, controlado por OVD_SECURITY_SCAN_ENABLED)
+    scan_results: dict = {}
+    scan_context = ""
+    if os.getenv("OVD_SECURITY_SCAN_ENABLED", "false").lower() == "true":
+        try:
+            scan_results = await _run_security_scans(
+                state.get("agent_results", []),
+                state.get("directory", ""),
+            )
+            if scan_results.get("findings"):
+                findings_text = "\n".join(
+                    f"  [{f['severity']}] {f['tool']}: {f['message']}"
+                    for f in scan_results["findings"][:20]
+                )
+                scan_context = (
+                    f"\n\n## Resultados de Security Scanning CLI\n"
+                    f"Tools ejecutadas: {', '.join(scan_results['tools_run']) or 'ninguna'}\n"
+                    f"Hallazgos ({len(scan_results['findings'])}):\n{findings_text}\n"
+                    f"Bloqueado por scan: {scan_results.get('blocked', False)}"
+                )
+        except Exception as scan_exc:
+            log.warning("security_audit: error en CLI scanning (%s), continuando sin scan", scan_exc)
+
+    agent_code = _truncate('\n\n'.join(r.get('output', '') for r in state.get('agent_results', [])), 16000)
     messages = [
         SystemMessage(content=template_loader.render(
             "system_security",
@@ -1640,7 +1674,7 @@ async def security_audit(state: OVDState) -> dict:
             project_context=project_ctx,
         )),
         HumanMessage(content=(
-            f"Codigo generado por los agentes:\n{_truncate('\n\n'.join(r.get('output', '') for r in state.get('agent_results', [])), 16000)}"
+            f"Codigo generado por los agentes:\n{agent_code}{scan_context}"
         )),
     ]
 
@@ -1684,8 +1718,18 @@ async def security_audit(state: OVDState) -> dict:
         "summary": result.summary,
     }
 
+    # S22: marcar como bloqueado si el scan CLI detectó secretos/CVE críticos
+    if scan_results.get("blocked"):
+        security["severity"] = "critical"
+        security["passed"] = False
+        security["summary"] = (
+            f"[BLOQUEADO POR SECURITY SCAN] {security.get('summary', '')} "
+            f"| Scan findings: {len(scan_results.get('findings', []))}"
+        )
+
     return {
         "security_result": security,
+        "security_scan_results": scan_results,
         "status": "security_reviewed",
         "messages": state.get("messages", []) + [{
             "role": "agent",
@@ -1822,6 +1866,242 @@ async def handle_escalation(state: OVDState) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# S22 — Nodo run_tests: ejecución real de tests generados
+# ---------------------------------------------------------------------------
+
+async def run_tests(state: OVDState) -> dict:
+    """S22 — Ejecuta los tests generados por los agentes y captura el resultado.
+
+    Detecta el runner (pytest / vitest / cargo test) por extensión de archivos.
+    Si no hay archivos de test detectados, retorna passed=True con warning.
+    Escribe los archivos al directorio de workspace y ejecuta el runner.
+    En caso de fallo: incluye output completo para el retry loop.
+    No bloquea el ciclo — el arquitecto ve el resultado real en el panel de aprobación.
+    """
+    import tempfile
+
+    agent_results = state.get("agent_results", [])
+    directory     = state.get("directory", "")
+    retry_round   = state.get("test_retry_count", 0)
+
+    runner = _detect_test_runner(agent_results)
+
+    if not runner:
+        log.info("run_tests: no se detectaron archivos de test, omitiendo ejecución")
+        return {
+            "test_results": {
+                "passed": True,
+                "output": "No se detectaron archivos de test en los artefactos generados.",
+                "runner": "none",
+                "retry_round": retry_round,
+            },
+            "status": "tests_skipped",
+            "messages": state.get("messages", []) + [{
+                "role": "agent",
+                "content": "Tests: no se detectaron archivos de test — continuando sin ejecutar.",
+            }],
+        }
+
+    # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
+    work_dir = directory or tempfile.mkdtemp(prefix="ovd_tests_")
+
+    # Ejecutar runner
+    passed = False
+    output = ""
+    try:
+        if runner == "pytest":
+            cmd = ["python", "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q"]
+        elif runner == "vitest":
+            cmd = ["npx", "vitest", "run", "--reporter=verbose"]
+        elif runner == "cargo":
+            cmd = ["cargo", "test", "--manifest-path", f"{work_dir}/Cargo.toml"]
+        else:
+            cmd = []
+
+        if cmd:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=work_dir if runner in ("vitest", "cargo") else None,
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+                output = stdout.decode("utf-8", errors="replace") if stdout else ""
+                passed = proc.returncode == 0
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                output = f"[timeout después de 60s — tests interrumpidos]"
+                passed = False
+    except FileNotFoundError:
+        output = f"[runner '{runner}' no está instalado en el entorno]"
+        passed = True  # No bloquear si el runner no está disponible
+        log.warning("run_tests: runner '%s' no encontrado, continuando", runner)
+    except Exception as exc:
+        output = f"[error ejecutando tests: {exc}]"
+        passed = False
+        log.warning("run_tests: error inesperado: %s", exc)
+
+    log.info("run_tests: runner=%s passed=%s retry_round=%d", runner, passed, retry_round)
+
+    status_msg = f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
+    return {
+        "test_results": {
+            "passed": passed,
+            "output": output[:4000],  # truncar para no inflar el state
+            "runner": runner,
+            "retry_round": retry_round,
+        },
+        "status": "tests_done" if passed else "tests_failed",
+        "messages": state.get("messages", []) + [{"role": "agent", "content": status_msg}],
+    }
+
+
+def _route_after_tests(state: OVDState) -> str:
+    """S22 — Routing condicional después de run_tests.
+
+    - Tests OK → generate_docs
+    - Tests FAIL y retry_count < 2 → test_retry (→ route_agents)
+    - Tests FAIL y retry agotado → generate_docs (con warning, no bloquea)
+    """
+    tr = state.get("test_results", {})
+    if tr.get("passed", True):
+        return "generate_docs"
+    retry_count = state.get("test_retry_count", 0)
+    if retry_count < 2:
+        return "test_retry"
+    log.warning("run_tests: max retries alcanzado, continuando con generate_docs (tests fallidos)")
+    return "generate_docs"
+
+
+def update_test_retry(state: OVDState) -> dict:
+    """S22 — Incrementa el contador de retries de tests e inyecta feedback al retry loop."""
+    tr = state.get("test_results", {})
+    test_output = tr.get("output", "")
+    new_feedback = (
+        f"TESTS FALLIDOS (ronda {state.get('test_retry_count', 0) + 1}/2) — "
+        f"runner: {tr.get('runner', '?')}\n"
+        f"Output:\n{test_output[:2000]}\n\n"
+        "Corregir el código para que los tests pasen."
+    )
+    existing = state.get("retry_feedback", "")
+    accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
+
+    return {
+        "test_retry_count": state.get("test_retry_count", 0) + 1,
+        "retry_feedback": accumulated,
+        "status": "retrying_after_test_failure",
+        "messages": state.get("messages", []) + [{
+            "role": "agent",
+            "content": (
+                f"Tests fallidos (reintento {state.get('test_retry_count', 0) + 1}/2). "
+                f"Runner: {tr.get('runner', '?')}. Regenerando implementación con feedback de tests..."
+            ),
+        }],
+    }
+
+
+# ---------------------------------------------------------------------------
+# S22 — Nodo generate_docs: documentación automática post-QA
+# ---------------------------------------------------------------------------
+
+async def generate_docs(state: OVDState) -> dict:
+    """S22 — Genera documentación técnica a partir del SDD y el código entregado.
+
+    Tipo de doc generado según el tipo de FR:
+      - endpoint/backend → OpenAPI spec + ejemplos curl
+      - component/frontend → README de componente + props API
+      - migration/database → migration guide + rollback instructions
+      - service → README + OpenAPI + diagrama Mermaid
+      - refactor → CHANGELOG entry + ADR si hay decisión arquitectónica
+
+    Fallo graceful: si el LLM falla, retorna generated_docs=[] sin romper el ciclo.
+    """
+    sdd          = state.get("sdd", {})
+    fr_type      = state.get("fr_analysis", {}).get("type", "feature")
+    agent_output = "\n\n".join(r.get("output", "") for r in state.get("agent_results", []))
+    test_results = state.get("test_results", {})
+
+    llm = await model_router.get_llm_with_context(
+        "backend",  # usa el LLM de backend — capacidad general de texto
+        state.get("org_id", ""),
+        state.get("project_id", ""),
+        state.get("jwt_token", ""),
+        state.get("stack_routing", "auto"),
+    )
+
+    # Instrucciones según tipo de FR
+    doc_instructions = {
+        "endpoint":  "Genera: 1) spec OpenAPI YAML del endpoint con todos los campos, 2) ejemplos curl para happy path y error cases.",
+        "backend":   "Genera: 1) spec OpenAPI YAML del endpoint con todos los campos, 2) ejemplos curl para happy path y error cases.",
+        "component": "Genera: 1) README de uso del componente con ejemplos de código, 2) tabla de props/API con tipos y valores por defecto.",
+        "frontend":  "Genera: 1) README de uso del componente con ejemplos de código, 2) tabla de props/API con tipos y valores por defecto.",
+        "migration": "Genera: 1) guía de migración paso a paso, 2) instrucciones de rollback con el SQL de downgrade.",
+        "database":  "Genera: 1) guía de migración paso a paso, 2) instrucciones de rollback con el SQL de downgrade.",
+        "service":   "Genera: 1) README del servicio con arquitectura, 2) spec OpenAPI, 3) diagrama Mermaid del flujo principal.",
+        "refactor":  "Genera: 1) entrada de CHANGELOG con el cambio y motivación, 2) ADR si hay decisión arquitectónica relevante.",
+    }.get(fr_type, "Genera la documentación técnica apropiada para el cambio implementado.")
+
+    test_summary = ""
+    if test_results:
+        status = "PASARON" if test_results.get("passed") else "FALLARON"
+        test_summary = f"\nTests: {status} (runner: {test_results.get('runner', 'none')})\n"
+
+    prompt_content = (
+        f"SDD (resumen):\n{_truncate(sdd.get('summary', ''), 4000)}\n\n"
+        f"Tipo de Feature Request: {fr_type}\n{test_summary}\n"
+        f"Código implementado:\n{_truncate(agent_output, 8000)}\n\n"
+        f"Tarea: {doc_instructions}\n\n"
+        "Usa bloques de código con nombre de archivo (```lang:path/to/doc.md) para cada documento.\n"
+        "Sé conciso y técnico. No repitas el código implementado, documenta cómo usarlo."
+    )
+
+    try:
+        system_prompt = template_loader.render(
+            "system_docs",
+            language=state.get("language", "es"),
+            project_context=state.get("project_context", ""),
+        )
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=prompt_content),
+        ]
+        response = await llm.ainvoke(messages)
+        raw = response.content if hasattr(response, "content") else str(response)
+
+        # Parsear bloques de documentación (mismo patrón que _write_artifacts)
+        import re as _re
+        pattern = _re.compile(r"```[\w+\-]*:([^\n`]+)\n(.*?)```", _re.DOTALL)
+        docs = []
+        for match in pattern.finditer(raw):
+            rel_path = match.group(1).strip()
+            content  = match.group(2).strip()
+            doc_type = (
+                "openapi"  if rel_path.endswith((".yaml", ".yml")) else
+                "adr"      if "adr" in rel_path.lower() else
+                "changelog" if "changelog" in rel_path.lower() else
+                "readme"
+            )
+            docs.append({"type": doc_type, "content": content, "path": rel_path})
+
+        log.info("generate_docs: %d documentos generados para FR tipo '%s'", len(docs), fr_type)
+    except Exception as exc:
+        log.warning("generate_docs: error generando docs (%s) — continuando sin docs", exc)
+        docs = []
+
+    msg = (
+        f"Documentación generada: {len(docs)} archivo(s)" if docs
+        else "Documentación: no se pudo generar (ciclo continúa sin docs)"
+    )
+    return {
+        "generated_docs": docs,
+        "status": "docs_done" if docs else "docs_skipped",
+        "messages": state.get("messages", []) + [{"role": "agent", "content": msg}],
+    }
+
+
+# ---------------------------------------------------------------------------
 # S16T.A — Escritura de artefactos al directorio del workspace
 # ---------------------------------------------------------------------------
 
@@ -1881,6 +2161,177 @@ def _write_artifacts(agent_output: str, directory: str, agent: str) -> list[dict
             log.warning("_write_artifacts[%s]: no se pudo escribir '%s': %s", agent, rel_path, e)
 
     return written
+
+
+# ---------------------------------------------------------------------------
+# S22 — Security scanning CLI (previo al LLM review en security_audit)
+# ---------------------------------------------------------------------------
+
+async def _exec_scan_tool(cmd: list[str], timeout: int = 30) -> str:
+    """Ejecuta una CLI de security scanning y retorna stdout+stderr.
+
+    Si el tool no está instalado (FileNotFoundError) retorna string vacío y loguea warning.
+    Si excede el timeout retorna mensaje de error sin propagar excepción.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return stdout.decode("utf-8", errors="replace") if stdout else ""
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return f"[timeout después de {timeout}s]"
+    except FileNotFoundError:
+        log.warning("_exec_scan_tool: '%s' no está instalado, omitiendo", cmd[0])
+        return ""
+    except Exception as exc:
+        log.warning("_exec_scan_tool: '%s' falló (%s), omitiendo", cmd[0], exc)
+        return ""
+
+
+async def _run_security_scans(agent_results: list[dict], directory: str) -> dict:
+    """Ejecuta tools CLI de security scanning sobre el código generado.
+
+    Tools (todas opcionales — si no están instaladas se omiten sin error):
+      - semgrep   : SAST (SQL injection, XSS, path traversal)
+      - gitleaks  : secretos hardcodeados en el código
+      - pip-audit / npm audit : vulnerabilidades en dependencias
+
+    Retorna:
+      {tools_run: [str], findings: [{tool, severity, message}], blocked: bool}
+    """
+    import tempfile
+
+    results: dict = {"tools_run": [], "findings": [], "blocked": False}
+
+    # Determinar directorio de trabajo: preferir el workspace, sino usar tmpdir efímero
+    work_dir: str | None = None
+    if directory:
+        work_dir_path = pathlib.Path(directory).expanduser().resolve()
+        if work_dir_path.exists():
+            work_dir = str(work_dir_path)
+
+    if not work_dir:
+        # Si no hay directorio de workspace, escribir code en tmpdir para scan
+        work_dir = tempfile.mkdtemp(prefix="ovd_scan_")
+        for r in agent_results:
+            output = r.get("output", "")
+            if output:
+                tmp_file = pathlib.Path(work_dir) / f"{r.get('agent', 'agent')}.txt"
+                try:
+                    tmp_file.write_text(output, encoding="utf-8")
+                except OSError:
+                    pass
+
+    # 1. SAST — semgrep
+    semgrep_out = await _exec_scan_tool(
+        ["semgrep", "--config=auto", "--json", "--no-git-ignore", work_dir],
+        timeout=60,
+    )
+    if semgrep_out and semgrep_out != f"[timeout después de 60s]":
+        results["tools_run"].append("semgrep")
+        try:
+            import json as _json
+            sg = _json.loads(semgrep_out)
+            for r in sg.get("results", []):
+                sev = r.get("extra", {}).get("severity", "WARNING").upper()
+                results["findings"].append({
+                    "tool": "semgrep",
+                    "severity": sev,
+                    "message": f"{r.get('check_id', '')}: {r.get('extra', {}).get('message', '')} [{r.get('path', '')}:{r.get('start', {}).get('line', '?')}]",
+                })
+                if sev in ("ERROR", "CRITICAL"):
+                    results["blocked"] = True
+        except Exception:
+            if semgrep_out.strip():
+                results["findings"].append({"tool": "semgrep", "severity": "INFO", "message": semgrep_out[:500]})
+
+    # 2. Secretos — gitleaks
+    gitleaks_out = await _exec_scan_tool(
+        ["gitleaks", "detect", "--source", work_dir, "--no-git", "--exit-code", "0", "--report-format", "json"],
+        timeout=30,
+    )
+    if gitleaks_out and gitleaks_out != f"[timeout después de 30s]":
+        results["tools_run"].append("gitleaks")
+        try:
+            import json as _json
+            leaks = _json.loads(gitleaks_out)
+            if isinstance(leaks, list):
+                for leak in leaks:
+                    results["findings"].append({
+                        "tool": "gitleaks",
+                        "severity": "CRITICAL",
+                        "message": f"Secreto detectado: {leak.get('Description', '')} en {leak.get('File', '')}:{leak.get('StartLine', '?')}",
+                    })
+                    results["blocked"] = True
+        except Exception:
+            if gitleaks_out.strip():
+                results["findings"].append({"tool": "gitleaks", "severity": "INFO", "message": gitleaks_out[:500]})
+
+    # 3. Dependencias — pip-audit (si hay requirements.txt o pyproject.toml)
+    has_py_deps = any(
+        (pathlib.Path(work_dir) / f).exists()
+        for f in ["requirements.txt", "pyproject.toml", "requirements-dev.txt"]
+    )
+    if has_py_deps:
+        pip_out = await _exec_scan_tool(["pip-audit", "--json", "-r", f"{work_dir}/requirements.txt"], timeout=60)
+        if pip_out:
+            results["tools_run"].append("pip-audit")
+            try:
+                import json as _json
+                audit = _json.loads(pip_out)
+                for dep in audit.get("dependencies", []):
+                    for vuln in dep.get("vulns", []):
+                        sev = vuln.get("aliases", [""])[0] if vuln.get("aliases") else "CVE"
+                        results["findings"].append({
+                            "tool": "pip-audit",
+                            "severity": "HIGH",
+                            "message": f"{dep.get('name')}: {vuln.get('id', '')} — {vuln.get('description', '')[:200]}",
+                        })
+                        if "CRITICAL" in str(vuln).upper():
+                            results["blocked"] = True
+            except Exception:
+                pass
+
+    log.info(
+        "_run_security_scans: tools=%s findings=%d blocked=%s",
+        results["tools_run"], len(results["findings"]), results["blocked"],
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# S22 — Detección de runner de tests y ejecución
+# ---------------------------------------------------------------------------
+
+def _detect_test_runner(agent_results: list[dict]) -> str | None:
+    """Detecta el runner de tests apropiado según las extensiones de los archivos generados.
+
+    .py → pytest | .ts/.tsx → vitest | .rs → cargo test
+    Retorna None si no se detectan archivos de test generados.
+    """
+    all_output = "\n".join(r.get("output", "") for r in agent_results)
+
+    # Buscar bloques de código con extensión de archivo
+    import re as _re
+    paths = _re.findall(r"```[\w+\-]*:([^\n`]+)", all_output)
+
+    has_test_py  = any(("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py") for p in paths)
+    has_test_ts  = any(("test." in p or "spec." in p) and (p.endswith(".ts") or p.endswith(".tsx")) for p in paths)
+    has_test_rs  = any(p.endswith(".rs") for p in paths)  # Rust tests están inline
+
+    if has_test_py:
+        return "pytest"
+    if has_test_ts:
+        return "vitest"
+    if has_test_rs:
+        return "cargo"
+    return None
 
 
 async def _index_delivery_report(state: dict, report_file: str) -> None:
@@ -2249,6 +2700,30 @@ async def deliver(state: OVDState) -> dict:
             "artifacts": written,  # [{path, size, lang}] escritos al disco
         })
 
+    # S22 — Artefactos de documentación generados por generate_docs
+    if directory:
+        base_path = pathlib.Path(directory).expanduser().resolve()
+        for doc in state.get("generated_docs", []):
+            doc_path = doc.get("path", "")
+            doc_content = doc.get("content", "")
+            if not doc_path or not doc_content:
+                continue
+            target = (base_path / doc_path).resolve()
+            try:
+                target.relative_to(base_path)  # seguridad: no escapar del directorio base
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(doc_content, encoding="utf-8")
+                deliverables.append({
+                    "type": "docs",
+                    "agent": "docs",
+                    "path": doc_path,
+                    "doc_type": doc.get("type", "readme"),
+                    "artifacts": [{"path": doc_path, "size": len(doc_content.encode("utf-8")), "lang": "markdown"}],
+                })
+                log.info("deliver: doc escrito: %s (%d bytes)", doc_path, len(doc_content.encode("utf-8")))
+            except (ValueError, OSError) as e:
+                log.warning("deliver: no se pudo escribir doc '%s': %s", doc_path, e)
+
     # P3.A — Costo estimado (cached — sin llamada de red)
     org_id      = state.get("org_id", "")
     project_id  = state.get("project_id", "")
@@ -2553,7 +3028,7 @@ def route_after_qa(state: OVDState) -> str:
                 qa.get("score", 0), _QA_MIN_SCORE,
             )
     if passed:
-        return "deliver"
+        return "run_tests"  # S22: pasar por run_tests antes de generate_docs → deliver
 
     retry_count = state.get("qa_retry_count", 0)
     if retry_count < MAX_RETRIES:
@@ -2666,6 +3141,11 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     builder.add_node("security_retry", update_security_retry)
     builder.add_node("qa_retry", update_qa_retry)
 
+    # S22: nodos de calidad y documentación automática
+    builder.add_node("run_tests", run_tests)          # ejecución real de tests generados
+    builder.add_node("test_retry", update_test_retry) # retry de tests → route_agents
+    builder.add_node("generate_docs", generate_docs)  # documentación automática post-QA
+
     # Flujo principal
     builder.add_edge(START, "clone_repo")               # S6
     builder.add_edge("clone_repo", "describe_image")    # S21: pre-procesador imagen (no-op si sin imagen)
@@ -2705,12 +3185,26 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
         "qa_review",
         route_after_qa,
         {
-            "deliver": "deliver",
+            "run_tests": "run_tests",           # S22: QA pasa → ejecutar tests reales
             "route_agents": "qa_retry",         # GAP-002: retry va a route_agents
             "handle_escalation": "handle_escalation",
         },
     )
     builder.add_edge("qa_retry", "route_agents")   # GAP-002
+
+    # S22: run_tests → generate_docs | test_retry → route_agents
+    builder.add_conditional_edges(
+        "run_tests",
+        _route_after_tests,
+        {
+            "generate_docs": "generate_docs",
+            "test_retry": "test_retry",
+        },
+    )
+    builder.add_edge("test_retry", "route_agents")  # S22: retry de tests re-ejecuta agentes
+
+    # S22: generate_docs → deliver
+    builder.add_edge("generate_docs", "deliver")
 
     builder.add_edge("handle_escalation", "deliver")
     builder.add_edge("deliver", "create_pr")   # S6
