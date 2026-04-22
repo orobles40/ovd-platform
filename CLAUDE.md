@@ -44,12 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S24 (Robustez tool calling — artifacts, QA, run_tests filesystem-first)
-- **Tests:** Python unit ~639 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~718
-- **Rama activa:** `dev` (commits S22+S23+S24 sin mergear a `main`)
+- **Sprints completados:** S3 → S25 (run_tests usa sys.executable para pytest)
+- **Tests:** Python unit ~640 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~719
+- **Rama activa:** `dev` (commits S22+S23+S24+S25 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S25 (2026-04-22) — rama `dev`
+- **`run_tests` usa `sys.executable` (S25-A):** en vez de `"python"` (no en PATH en macOS), usa el intérprete del venv del engine → pytest 9.0.3 disponible. Validado: 10 tests recolectados y ejecutados, loop de retry 3 rondas funcional.
+- **Diagnóstico validado S23+S24:** reimport `sys` en `graph.py` (no estaba importado). Engine **sin `--reload`** → reiniciar manualmente después de cada cambio de código.
+- **Resultado ciclo de validación S25:** Security 100/100, QA 95/100 (round 1), run_tests ejecuta pytest real, retry loop funcional. Tests fallan por estructura de agente (`__init__.py` raíz con import relativo) — issue pendiente en template `system_backend.md`.
 
 ### Novedades S24 (2026-04-22) — rama `dev`
 - **`_scan_workspace_artifacts()`:** nueva función — escanea el workspace por archivos de código cuando `written_files[]` queda vacío por bug en tracking de tool calls. Excluye `__pycache__`, `node_modules`, `.md`, `.DS_Store`, `ovd-delivery-*`.

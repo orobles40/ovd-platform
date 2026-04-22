@@ -39,6 +39,7 @@ import logging
 import operator
 import os
 import pathlib
+import sys
 import time
 from typing import Any
 
@@ -2053,7 +2054,7 @@ async def run_tests(state: OVDState) -> dict:
     output = ""
     try:
         if runner == "pytest":
-            cmd = ["python", "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q"]
+            cmd = [sys.executable, "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q"]
         elif runner == "vitest":
             cmd = ["npx", "vitest", "run", "--reporter=verbose"]
         elif runner == "cargo":
