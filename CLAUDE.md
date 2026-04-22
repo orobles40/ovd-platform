@@ -44,12 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S34 (detección de error repetido + extracción bloque test fallido)
+- **Sprints completados:** S3 → S35 (dashboard persiste proyecto seleccionado + warning directory vacío)
 - **Tests:** Python unit ~734 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~813
-- **Rama activa:** `dev` (commits S22→S32 sin mergear a `main`)
+- **Rama activa:** `dev` (commits S22→S35 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S35 (2026-04-22) — rama `dev`
+- **Dashboard persiste proyecto seleccionado (S35):** `FrLauncher.tsx` ahora inicializa `selectedProject` desde `localStorage('ovd_last_project')`. Si no hay valor guardado o el proyecto ya no existe, auto-selecciona el primer proyecto de la lista. Cada cambio de proyecto actualiza localStorage. Evita lanzar ciclos sin `project_id` (lo que causaba `directory=""` y `run_tests` usando tmpdir en vez del workspace real).
+- **Warning en API cuando `directory` vacío:** `session_create` loguea un warning explícito cuando `resolved_directory=""` después de todos los lookups. Facilita diagnóstico en logs del engine.
+- **Causa raíz documentada:** El ciclo `ef3ebab7` fue lanzado sin seleccionar proyecto → `project_id=""` → lookup DB no ocurrió → `directory=""` → `run_tests` creó tmpdir (`ovd_tests_hqvg00o0`) → "Sin test files encontrados" aunque el agente sí había escrito en el workspace real.
 
 ### Novedades S34 (2026-04-22) — rama `dev`
 - **Detección de error repetido (S34-A):** `update_test_retry` compara los `AssertionError` del round actual con los del round anterior (via `_extract_assert_errors`). Si el mismo error aparece dos veces, agrega al feedback: "⚠️ MISMO ERROR POR SEGUNDA VEZ — revisa la fórmula matemática desde cero. El valor esperado ES correcto." Evita que el agente haga ajustes superficiales cuando la lógica es fundamentalmente incorrecta.

@@ -406,6 +406,12 @@ async def start_session(
             except Exception as _e:
                 logging.getLogger("ovd.api").warning("session_create: no se pudo resolver directory del proyecto — %s", _e)
 
+    if not resolved_directory:
+        logging.getLogger("ovd.api").warning(
+            "session_create: directory vacío — run_tests usará tmpdir. "
+            "Seleccionar proyecto en el dashboard o pasar directory en el body."
+        )
+
     # Nueva sesion: inicializar el estado del grafo
     initial_state: OVDState = {
         "session_id": session_id,

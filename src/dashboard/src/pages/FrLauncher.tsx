@@ -102,7 +102,7 @@ export default function FrLauncher() {
 
   const [frText, setFrText] = useState('')
   const [autoApprove, setAutoApprove] = useState(false)
-  const [selectedProject, setSelectedProject] = useState('')
+  const [selectedProject, setSelectedProject] = useState(() => localStorage.getItem('ovd_last_project') ?? '')
   // S21 — Visión
   const [imageBase64, setImageBase64] = useState<string>('')
   const [imagePreview, setImagePreview] = useState<string>('')
@@ -136,6 +136,18 @@ export default function FrLauncher() {
     queryFn: () => ovdApi.listProjects(orgId),
     enabled: !!orgId,
   })
+
+  // S35: auto-seleccionar primer proyecto si no hay ninguno guardado
+  useEffect(() => {
+    if (!projects?.length) return
+    const saved = localStorage.getItem('ovd_last_project')
+    const validSaved = saved && projects.some(p => p.id === saved)
+    if (!validSaved) {
+      const first = projects[0].id
+      setSelectedProject(first)
+      localStorage.setItem('ovd_last_project', first)
+    }
+  }, [projects])
 
   // Reconexión — detectar ciclos en progreso al entrar al formulario
   useEffect(() => {
@@ -557,7 +569,11 @@ export default function FrLauncher() {
             <select
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
               value={selectedProject}
-              onChange={e => setSelectedProject(e.target.value)}
+              onChange={e => {
+                setSelectedProject(e.target.value)
+                if (e.target.value) localStorage.setItem('ovd_last_project', e.target.value)
+                else localStorage.removeItem('ovd_last_project')
+              }}
             >
               <option value="">— Sin proyecto —</option>
               {projects?.map(p => (
