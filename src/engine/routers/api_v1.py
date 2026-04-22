@@ -407,8 +407,8 @@ async def get_cycle(
             """
             SELECT cl.id, cl.project_id, p.name,
                    cl.session_id, cl.thread_id, cl.fr_text,
-                   cl.fr_analysis_json, cl.sdd_json, cl.agent_results_json, cl.qa_result_json,
-                   cl.qa_score, cl.complexity, cl.fr_type, cl.oracle_involved,
+                   cl.fr_analysis, cl.sdd, cl.agent_results, cl.qa_result,
+                   cl.qa_score, cl.complexity, cl.fr_type,
                    cl.tokens_input, cl.tokens_output, cl.tokens_total,
                    cl.tokens_by_agent, cl.cost_usd, cl.created_at
             FROM ovd_cycles cl
@@ -422,9 +422,14 @@ async def get_cycle(
     if not r:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
 
-    def _parse(s: str) -> Any:
+    def _coerce(v: Any) -> Any:
+        """JSONB columns llegan como dict/list desde psycopg3; strings como fallback."""
+        if v is None:
+            return {}
+        if isinstance(v, (dict, list)):
+            return v
         try:
-            return json.loads(s) if s else {}
+            return json.loads(v)
         except Exception:
             return {}
 
@@ -435,22 +440,21 @@ async def get_cycle(
         "session_id":      r[3],
         "thread_id":       r[4],
         "feature_request": r[5],
-        "fr_analysis":     _parse(r[6]),
-        "sdd":             _parse(r[7]),
-        "agent_results":   _parse(r[8]),
-        "qa_result":       _parse(r[9]),
+        "fr_analysis":     _coerce(r[6]),
+        "sdd":             _coerce(r[7]),
+        "agent_results":   _coerce(r[8]),
+        "qa_result":       _coerce(r[9]),
         "qa_score":        r[10],
         "complexity":      r[11],
         "fr_type":         r[12],
-        "oracle_involved": r[13],
         "tokens": {
-            "input":    r[14],
-            "output":   r[15],
-            "total":    r[16],
-            "by_agent": _parse(r[17]),
+            "input":    r[13],
+            "output":   r[14],
+            "total":    r[15],
+            "by_agent": _coerce(r[16]),
         },
-        "cost_usd":   float(r[18]) if r[18] else 0.0,
-        "created_at": r[19].isoformat() if r[19] else None,
+        "cost_usd":   float(r[17]) if r[17] else 0.0,
+        "created_at": r[18].isoformat() if r[18] else None,
     }
 
 
