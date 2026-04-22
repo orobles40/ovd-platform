@@ -2278,21 +2278,79 @@ def _route_after_tests(state: OVDState) -> str:
     return "generate_docs"
 
 
+def _extract_assert_errors(output: str) -> list[str]:
+    """S34: Extrae líneas de AssertionError / assert X == Y del output de pytest."""
+    return [
+        line.strip() for line in output.splitlines()
+        if "AssertionError" in line
+        or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
+        or (line.strip().startswith("assert ") and "==" in line)
+    ]
+
+
+def _extract_failed_test_blocks(output: str) -> str:
+    """S34-B: Extrae bloques FAILED con nombre de test y línea de aserción del output --tb=long."""
+    blocks: list[str] = []
+    lines = output.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Detectar inicio de bloque FAILED (línea de guiones con nombre de test)
+        if line.startswith("FAILED ") or (line.startswith("_") and "::" in line):
+            block_lines = [line]
+            i += 1
+            # Capturar hasta 12 líneas del bloque (suficiente para ver la aserción)
+            while i < len(lines) and len(block_lines) < 12:
+                block_lines.append(lines[i])
+                stripped = lines[i].strip()
+                # Detectar línea de aserción independiente del número de espacios
+                if (stripped.startswith("E") and "assert" in stripped.lower()) or "AssertionError" in lines[i]:
+                    break
+                i += 1
+            blocks.append("\n".join(block_lines))
+        i += 1
+    return "\n\n".join(blocks[:3])  # máx 3 bloques para no inflar el feedback
+
+
 def update_test_retry(state: OVDState) -> dict:
     """S22 — Incrementa el contador de retries de tests e inyecta feedback al retry loop."""
     tr = state.get("test_results", {})
     test_output = tr.get("output", "")
+    existing = state.get("retry_feedback", "")
+    retry_round = state.get("test_retry_count", 0)
+
+    # S34-A: detectar si el mismo AssertionError se repite respecto al round anterior
+    current_assert_errors = _extract_assert_errors(test_output)
+    repeat_hint = ""
+    if existing and current_assert_errors:
+        repeated = [e for e in current_assert_errors if e in existing]
+        if repeated:
+            repeat_hint = (
+                "\n\n⚠️ MISMO ERROR POR SEGUNDA VEZ (S34-A): La siguiente aserción falló igual que en el round anterior:\n"
+                + "\n".join(repeated[:3])
+                + "\nEsto indica un error en la fórmula o lógica matemática. "
+                "Revisa la implementación desde cero. No son los tests — el valor esperado ES correcto."
+            )
+            log.warning("update_test_retry: S34-A error repetido detectado: %s", repeated[:2])
+
+    # S34-B: extraer bloque del test fallido para contexto
+    failed_blocks = _extract_failed_test_blocks(test_output)
+    failed_block_section = (
+        f"\nBloque(s) del test fallido:\n{failed_blocks}\n" if failed_blocks else ""
+    )
+
     new_feedback = (
         # S33-A: instrucción crítica de no modificar tests — solo corregir implementación
         "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
         "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
         "NUNCA modifiques, elimines ni agregues tests.\n\n"
-        f"TESTS FALLIDOS (ronda {state.get('test_retry_count', 0) + 1}/2) — "
+        f"TESTS FALLIDOS (ronda {retry_round + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
-        f"Output:\n{test_output[:2000]}\n\n"
+        + failed_block_section
+        + f"Output:\n{test_output[:1500]}\n\n"
         "Corregir SOLO la implementación para que los tests pasen."
+        + repeat_hint
     )
-    existing = state.get("retry_feedback", "")
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
     accumulated = _truncate(accumulated, 3000)  # S31-B: cap para no explotar contexto del agente
 

@@ -44,12 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S33 (retry feedback mejorado: no modificar tests + AssertionError diagnosis + --tb=long)
-- **Tests:** Python unit ~720 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~799
+- **Sprints completados:** S3 → S34 (detección de error repetido + extracción bloque test fallido)
+- **Tests:** Python unit ~734 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~813
 - **Rama activa:** `dev` (commits S22→S32 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S34 (2026-04-22) — rama `dev`
+- **Detección de error repetido (S34-A):** `update_test_retry` compara los `AssertionError` del round actual con los del round anterior (via `_extract_assert_errors`). Si el mismo error aparece dos veces, agrega al feedback: "⚠️ MISMO ERROR POR SEGUNDA VEZ — revisa la fórmula matemática desde cero. El valor esperado ES correcto." Evita que el agente haga ajustes superficiales cuando la lógica es fundamentalmente incorrecta.
+- **Extracción de bloque de test fallido (S34-B):** `_extract_failed_test_blocks` parsea el output `--tb=long` y extrae hasta 3 bloques `FAILED test_name / def test_... / E   assert X == Y`. El bloque se incluye al inicio del retry_feedback para que el agente vea exactamente qué función se llama y con qué valores, sin buscar en 200 líneas de output.
+- **14 tests nuevos** en `test_s34.py`. **734 tests pasan** (0 fallos).
 
 ### Fix dashboard GRAPH_NODES (2026-04-22) — rama `dev`
 - **Bug:** `request_approval` estaba en posición 7 de `GRAPH_NODES` (después de `run_tests`), pero en el grafo real dispara en posición 3 (después de `generate_sdd`). La lógica `node_end` activa automáticamente el nodo `idx+1`, por lo que cuando el SDD se auto-aprobaba, `generate_docs` aparecía como spinning simultáneamente con `agents`.
@@ -182,7 +187,7 @@ Al retomar desarrollo, incluir este contexto en el primer mensaje:
 ```
 Context: I'm continuing development of OVD (Oficina Virtual de Desarrollo).
 - Stack: LangGraph + FastAPI + pgvector + Ollama (embeddings) + Multi-LLM router (Claude/OpenAI/Ollama) + Oracle 19c (vía MCP server)
-- Status: S3→S33 completados, próximo: despliegue VPS (C01)
+- Status: S3→S34 completados, próximo: despliegue VPS (C01)
 - Existing code: do not redesign or refactor already completed phases
 - Next task: [DESCRIBIR TAREA CONCRETA]
 
