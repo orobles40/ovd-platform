@@ -1,6 +1,6 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-21
-**Versión actual:** v0.9.0-quality-docs
+**Última actualización:** 2026-04-22
+**Versión actual:** v0.9.1-agent-routing
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
 > Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
@@ -8,6 +8,16 @@
 >
 > **Sesión 2026-04-16:** Sprint 18 completado — Skills externos (ui-ux-pro-max + superpowers integrados en templates + panel web de actualización), MCP Client Pool con context7 (docs de librerías en tiempo real para agentes implementadores), TUI --from-file + Ctrl+O.
 > Tests: 471/471 pasando.
+>
+> **Sesión 2026-04-22 — S27 + S28 — fixes de calidad y routing de agentes:**
+> - **S27-A:** `run_tests` inyecta `conftest.py` con `sys.path.insert` si está vacío o no existe.
+> - **S27-B:** `audit_logger` serializa metadata como `json.dumps()` (psycopg3 no adapta dict a JSONB automáticamente).
+> - **S27-C:** `_index_delivery_report` agrega `src/` a `sys.path` antes de importar `knowledge` (fix RAG-02).
+> - **S27-D:** `system_qa.md` con cláusula de infraestructura en criterio de aprobación (conftest.py vacío no invalida compliance, M≥N tests es correcto).
+> - **S28-A:** `system_sdd.md` con tabla de asignación de agentes — prohíbe explícitamente `devops` para FRs sin infraestructura. Fix raíz de contaminación fan-out.
+> - **S28-C:** `run_tests` — eliminados flags `-v`/`-q` en conflicto, diagnósticos explícitos de exit codes 4/5/2 de pytest.
+> - **C10 documentado** en ROADMAP como bloqueante P0 pre-producción: Stack Profile por proyecto (`test_command`, `build_command`, `lint_command`) para que el engine sea agnóstico al lenguaje.
+> - Tests totales: 666 (Python unit ~666 + integration 14 + docker 5 | Frontend Vitest 34 | Rust 26)
 >
 > **Sesión 2026-04-21 — Visión + Dashboard (S21) + Calidad/Docs planificado (S22):**
 > - **S21 Vision:** nodo `describe_image` + `_build_fr_content` + `OVD_VISION_ENABLED`, `OVD_VISION_MODEL`. Drop zone + preview + paste (⌘V) en FrLauncher.tsx. Tests `test_vision.py` (8 tests).
@@ -847,12 +857,78 @@ ollama create ovd-arch-assistant -f src/finetune/Modelfile
 
 ---
 
+### GAP-CLOUD-10 — Stack Profile por proyecto ⚠️ BLOQUEANTE PRE-PRODUCCIÓN
+
+> **Decisión de diseño (2026-04-22):** El engine detecta el runner de tests automáticamente por extensión de archivo (`.py` → pytest, `.ts` → vitest, `.rs` → cargo). Este enfoque requiere código nuevo en `graph.py` por cada lenguaje adicional y no es agnóstico al stack real del proyecto. La solución correcta es que **cada proyecto declare su propia configuración de comandos** al momento de crearse en la plataforma. Esto debe implementarse antes de salir a producción, ya que sin ello los ciclos multi-lenguaje pueden fallar silenciosamente o ejecutar el runner equivocado.
+
+**Objetivo:** el motor OVD debe ser agnóstico al lenguaje. Los comandos de test, build y lint deben configurarse por proyecto, no estar hardcodeados en el engine.
+
+#### Cambios requeridos
+
+**C10.A — Migración: campos de stack en `ovd_projects`**
+
+```sql
+ALTER TABLE ovd_projects
+  ADD COLUMN test_command  TEXT,   -- ej: "pytest tests/ -v"
+  ADD COLUMN build_command TEXT,   -- ej: "npm run build"
+  ADD COLUMN lint_command  TEXT;   -- ej: "ruff check src/"
+```
+
+- Columnas opcionales (`NULL` = usar detección automática como fallback)
+- Migración Alembic en `src/engine/migrations/`
+
+**C10.B — Dashboard: formulario de creación/edición de proyecto**
+
+Agregar campos al formulario de proyecto (`src/dashboard/src/pages/Projects.tsx`):
+
+| Campo | Placeholder | Descripción |
+|-------|-------------|-------------|
+| Comando de tests | `pytest tests/ -v` | Se ejecuta en `run_tests` |
+| Comando de build | `npm run build` | Opcional — validación pre-entrega |
+| Comando de lint | `ruff check src/` | Opcional — calidad de código |
+| Lenguaje principal | `python / typescript / rust` | Info para el SDD y los agentes |
+| Framework | `fastapi / react / actix` | Contexto adicional para SDD |
+
+**C10.C — Engine: `run_tests` lee configuración del proyecto**
+
+En `src/engine/graph.py`, función `run_tests`:
+
+```python
+# Prioridad: 1) project_test_command del estado, 2) detección automática
+project_test_command = state.get("project_test_command")
+if project_test_command:
+    # Ejecutar el comando configurado directamente (split para subprocess)
+    cmd = project_test_command.split()
+    runner = "custom"
+else:
+    # Fallback: detección automática actual (pytest/vitest/cargo)
+    runner, cmd = _detect_runner_and_cmd(work_dir, sys.executable)
+```
+
+La API `/run` debe leer `test_command` de `ovd_projects` y inyectarlo en el estado como `project_test_command`.
+
+**C10.D — Propagación del stack profile al SDD**
+
+El nodo `generate_sdd` debe recibir el stack profile del proyecto (lenguaje, framework, test_command) para que el SDD generado sea coherente con las herramientas reales del workspace. Hoy el perfil se lee vía RAG pero no se pasa directamente.
+
+| # | Item | Descripción | Estado |
+|---|------|-------------|--------|
+| C10.A | Migración DB: columnas de stack | `ALTER TABLE ovd_projects ADD COLUMN test_command TEXT, build_command TEXT, lint_command TEXT` | ⬜ |
+| C10.B | Dashboard: formulario de stack profile | Campos test_command, build_command, lint_command, language, framework en create/edit proyecto | ⬜ |
+| C10.C | Engine: `run_tests` lee project_test_command | Prioridad: config del proyecto → fallback: detección automática. Sin cambios de código por cada lenguaje nuevo | ⬜ |
+| C10.D | SDD recibe stack profile explícito | `generate_sdd` recibe language/framework/test_command del proyecto para generar tareas coherentes | ⬜ |
+
+> **Impacto de no implementar:** el engine continuará funcionando para proyectos Python (pytest auto-detectado), pero proyectos con stacks no estándar (Gradle, Maven, Go test, Makefile, etc.) requerirán modificaciones manuales en `graph.py` por cada caso. En producción con múltiples clientes esto es un bloqueante operacional.
+
+---
+
 ### Resumen de prioridades cloud
 
 | Prioridad | GAP | Bloqueante para | Estado |
 |-----------|-----|-----------------|--------|
 | **P0** | C01 — VPS + dominio + TLS | Todo lo demás | ⬜ Pendiente (infraestructura) |
 | **P0** | C02 — Embeddings cloud | RAG funcional | ✅ Resuelto en código |
+| **P0** | C10 — Stack Profile por proyecto | Engine agnóstico al lenguaje — pre-producción | ⬜ Pendiente (debe implementarse antes del go-live) |
 | **P1** | C03 — Node.js en Dockerfile | MCP context7 en prod | ✅ Resuelto |
 | **P1** | C04 — Dockerfile dashboard | Web App accesible | ✅ Resuelto |
 | **P1** | C05 — Migraciones automáticas | Deploy sin intervención manual | ✅ Resuelto |
@@ -861,7 +937,7 @@ ollama create ovd-arch-assistant -f src/finetune/Modelfile
 | **P3** | C08 — GitHub App | SaaS multi-cliente | ⬜ Pendiente |
 | **P3** | C09 — Observabilidad | Diagnóstico en producción | 🔨 Básica lista, alertas pendientes |
 
-**Próximo paso real:** contratar VPS (C01.A) y configurar dominio (C01.B). Todo el código está listo para ese deploy.
+**Próximo paso real:** contratar VPS (C01.A) y configurar dominio (C01.B). Todo el código está listo para ese deploy, excepto C10 que debe implementarse antes del go-live.
 
 ---
 

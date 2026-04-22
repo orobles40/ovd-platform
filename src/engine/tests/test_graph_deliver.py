@@ -278,3 +278,56 @@ class TestPP01Budget:
         )
         result = asyncio.get_event_loop().run_until_complete(_graph.agent_executor(state))
         assert result["agent_results"][0].get("skipped") is True
+
+
+# ---------------------------------------------------------------------------
+# S29-A — Persistencia de ciclos desde deliver
+# ---------------------------------------------------------------------------
+
+class TestS29APersistCycle:
+    """S29-A: el nodo deliver persiste el ciclo en ovd_cycles directamente,
+    sin depender de que el stream SSE esté conectado."""
+
+    @pytest.mark.asyncio
+    async def test_deliver_persiste_ciclo_en_db(self, monkeypatch):
+        """deliver ejecuta el INSERT a ovd_cycles cuando DATABASE_URL está presente."""
+        monkeypatch.setenv("DATABASE_URL", "postgresql://mock")
+
+        conn_mock = AsyncMock()
+        conn_mock.__aenter__ = AsyncMock(return_value=conn_mock)
+        conn_mock.__aexit__  = AsyncMock(return_value=False)
+        conn_mock.execute    = AsyncMock()
+        conn_mock.commit     = AsyncMock()
+
+        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
+             patch("psycopg.AsyncConnection.connect", return_value=conn_mock):
+            state = _make_deliver_state()
+            await deliver(state)
+
+        conn_mock.execute.assert_called()
+        conn_mock.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_deliver_no_falla_si_db_lanza_excepcion(self, monkeypatch):
+        """Si el INSERT falla, deliver no propaga la excepción — solo loguea."""
+        monkeypatch.setenv("DATABASE_URL", "postgresql://mock")
+
+        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
+             patch("psycopg.AsyncConnection.connect", side_effect=Exception("db down")):
+            state = _make_deliver_state()
+            result = await deliver(state)
+
+        assert result["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_deliver_no_intenta_insert_sin_db_url(self, monkeypatch):
+        """Sin DATABASE_URL, deliver no llama a psycopg."""
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+
+        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
+             patch("psycopg.AsyncConnection.connect") as mock_connect:
+            state = _make_deliver_state()
+            result = await deliver(state)
+
+        mock_connect.assert_not_called()
+        assert result["status"] == "done"

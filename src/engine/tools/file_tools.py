@@ -89,7 +89,9 @@ def make_file_tools(base_dir: str) -> list:
         Retorna la ruta absoluta donde se guardó el archivo.
         """
         abs_path = _resolve_safe(base_dir, path)
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        dir_path = os.path.dirname(abs_path)
+        if dir_path:  # S30-A: evita FileNotFoundError cuando dirname=""
+            os.makedirs(dir_path, exist_ok=True)
         with open(abs_path, "w", encoding="utf-8") as fh:
             fh.write(content)
         return abs_path

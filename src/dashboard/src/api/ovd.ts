@@ -166,4 +166,10 @@ export const ovdApi = {
       { headers: { 'Content-Type': 'multipart/form-data' } },
     ).then((r) => r.data)
   },
+
+  // Sessions — reconexión a ciclos en progreso
+  listActiveSessions: (orgId: string) =>
+    api.get<{ thread_id: string; org_id: string; started_at: string; fr_text?: string }[]>(
+      `/api/v1/orgs/${orgId}/sessions/active`
+    ).then((r) => r.data),
 }

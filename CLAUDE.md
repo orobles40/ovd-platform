@@ -44,12 +44,42 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S28 (SDD agent routing: devops solo infra; pytest exit codes diagnóstico)
-- **Tests:** Python unit ~666 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~745
-- **Rama activa:** `dev` (commits S22→S27 sin mergear a `main`)
+- **Sprints completados:** S3 → S33 (retry feedback mejorado: no modificar tests + AssertionError diagnosis + --tb=long)
+- **Tests:** Python unit ~720 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~799
+- **Rama activa:** `dev` (commits S22→S32 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Fix dashboard GRAPH_NODES (2026-04-22) — rama `dev`
+- **Bug:** `request_approval` estaba en posición 7 de `GRAPH_NODES` (después de `run_tests`), pero en el grafo real dispara en posición 3 (después de `generate_sdd`). La lógica `node_end` activa automáticamente el nodo `idx+1`, por lo que cuando el SDD se auto-aprobaba, `generate_docs` aparecía como spinning simultáneamente con `agents`.
+- **Fix:** Reordenado `GRAPH_NODES` en `FrLauncher.tsx` para reflejar el flujo real: `generate_sdd → request_approval → route_agents → agents → ... → run_tests → generate_docs → deliver`. Label cambiada de "Aprobación" a "Aprobar SDD" para mayor claridad.
+
+### Novedades S33 (2026-04-22) — rama `dev`
+- **`update_test_retry` instrucción no modificar tests (S33-A):** El feedback de retry ahora incluye "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. Solo corrige la IMPLEMENTACIÓN (archivos en src/)." — evita que el agente modifique tests en rondas de retry, lo que causaba regresión (más fallos en round 3 que en round 1).
+- **`run_tests` extracción de AssertionError (S33-B):** Cuando pytest retorna exit 1 (fallos lógicos), extrae líneas con `AssertionError` y líneas `assert X == Y` del output y las prepende como `[DIAGNÓSTICO S33-B]`. El agente recibe los fallos de aserción exactos al inicio del retry_feedback, no enterrados en 200 líneas de output.
+- **`run_tests` --tb=long en retry (S33-C):** El primer round usa `--tb=short` (más compacto). Rondas de retry (`retry_round > 0`) usan `--tb=long` para dar contexto completo del fallo al agente. Mejora el diagnóstico cuando el agente necesita entender la causa raíz de un fallo de aserción.
+- **15 tests nuevos** en `test_s33.py`. **720 tests pasan** (0 fallos).
+
+### Novedades S32 (2026-04-22) — rama `dev`
+- **`run_tests` pytest target logic refinada (S32-A):** 3 casos según disponibilidad de test files: (1) hay tests nuevos del ciclo → ejecutar solo esos (S31-C); (2) solo hay tests pre-existentes (proyecto real clonado) → ejecutar `work_dir` completo; (3) sin ningún test file → skip graceful `passed=True` con warning. Corrige regresión donde S31-C hacía skip de tests de proyectos reales.
+- **`system_backend.md` orden de escritura (S32-B):** Sección de infraestructura obligatoria ahora incluye etiquetas `← PRIMERO / SEGUNDO / TERCERO / CUARTO` y texto explícito "Solo después escribe el código de negocio". Fuerza al agente a escribir `src/<paquete>/__init__.py` antes que cualquier módulo Python.
+- **`run_tests` diagnóstico ImportError (S32-C):** Cuando pytest retorna exit 4 (error de colección), extrae líneas con `ImportError`, `ModuleNotFoundError` o `attempted relative import` del output y los prepende como `[DIAGNÓSTICO S32-C]` con instrucción de solución. Este diagnóstico queda en `retry_feedback` para que el agente corrija la estructura en el siguiente round.
+- **16 tests nuevos** en `test_s32.py`. **705 tests pasan** (0 fallos). Tests S22 (`timeout`, `runner_not_installed`) actualizados para crear test files reales en tmpdir (requerido por S32-A).
+
+### Novedades S31 (2026-04-22) — rama `dev`
+- **Filtro mtime en `qa_review` y `security_audit` (S31-A):** Solo se leen archivos con `mtime >= cycle_start_ts - 5s`. Evita que archivos de ciclos anteriores contaminen el scoring de QA o la auditoría de seguridad en workspaces compartidos.
+- **Cap de `retry_feedback` (S31-B):** `update_test_retry` y `update_qa_retry` truncan el feedback acumulado a 3000 caracteres antes de pasarlo al agente. Previene la explosión de contexto (hasta 48K tokens) en la 3ª ronda de reintentos.
+- **`run_tests` test isolation por mtime (S31-C):** Cuando `cycle_start_ts` está disponible, pytest recibe como target solo los `test_*.py` con mtime del ciclo actual, no el `work_dir` completo. Evita que pytest recoja tests de ciclos anteriores acumulados en el workspace.
+- **9 tests nuevos** en `test_s31.py`. **696 tests pasan** (0 fallos).
+
+### Novedades S30 (2026-04-22) — rama `dev`
+- **`write_file` dirname guard (S30-A):** `dir_path = os.path.dirname(abs_path); if dir_path: os.makedirs(dir_path, exist_ok=True)` — evita `FileNotFoundError` cuando el agente escribe un archivo sin directorio (e.g. `"main.py"` sin ruta).
+- **Warning en tool failure (S30-B):** `_run_agent_with_tools` captura errores de tool calls y emite `log.warning` con nombre de tool y agente. Facilita diagnóstico sin romper el ciclo.
+- **Instrucción de subdirectorios (S30-C):** El `human_content` enviado a cada agente incluye: "IMPORTANTE: Organiza los archivos en subdirectorios apropiados (ej: src/app/components/). NO uses rutas planas sin directorio." Reduce archivos escritos en raíz del workspace.
+- **Compresión de mensajes (S30-D):** Loop de tool-calling mantiene solo system + human + últimos 8 mensajes (`_MAX_HIST=8`). Previene acumulación de 48K+ tokens en conversaciones largas con múltiples tool calls.
+- **`cycle_start_ts` en estado (S30-E):** `OVDState` incluye `cycle_start_ts: float` inicializado con `time.time()` al crear el ciclo. Usado por S31-A y S31-C para filtrar artefactos por timestamp.
+- **11 tests nuevos** en `test_s30.py`. **687 tests pasan** (0 fallos).
 
 ### Novedades S28 (2026-04-22) — rama `dev`
 - **`system_sdd.md` regla de agentes (S28-A):** Tabla explícita que mapea tipo de tarea → agente correcto. `devops` EXCLUSIVAMENTE para Dockerfile/CI/CD/Kubernetes. Para Python puro → solo `backend`. Prohibición explícita de asignar código de aplicación a `devops`. Elimina la contaminación de 2 agentes escribiendo el mismo archivo.
@@ -152,7 +182,7 @@ Al retomar desarrollo, incluir este contexto en el primer mensaje:
 ```
 Context: I'm continuing development of OVD (Oficina Virtual de Desarrollo).
 - Stack: LangGraph + FastAPI + pgvector + Ollama (embeddings) + Multi-LLM router (Claude/OpenAI/Ollama) + Oracle 19c (vía MCP server)
-- Status: S3→S19 completados, próximo: despliegue VPS (C01)
+- Status: S3→S33 completados, próximo: despliegue VPS (C01)
 - Existing code: do not redesign or refactor already completed phases
 - Next task: [DESCRIBIR TAREA CONCRETA]
 

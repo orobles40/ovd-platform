@@ -72,15 +72,18 @@ const NODE_ALIAS: Record<string, string> = {
   create_pr:        'deliver',
 }
 
+// Orden refleja el flujo real del grafo:
+// analyze_fr → generate_sdd → request_approval (SDD) → route_agents → agents
+//   → security_audit → qa_review → run_tests → generate_docs → deliver
 const GRAPH_NODES: GraphNode[] = [
   { name: 'analyze_fr',       label: 'Analizar FR',          status: 'waiting' },
   { name: 'generate_sdd',     label: 'Generar SDD',          status: 'waiting' },
+  { name: 'request_approval', label: 'Aprobar SDD',          status: 'waiting' },
   { name: 'route_agents',     label: 'Asignar agentes',      status: 'waiting' },
   { name: 'agents',           label: 'Ejecutar agentes',     status: 'waiting' },
   { name: 'security_audit',   label: 'Auditoría seguridad',  status: 'waiting' },
   { name: 'qa_review',        label: 'QA Review',            status: 'waiting' },
   { name: 'run_tests',        label: 'Ejecutar tests',       status: 'waiting' },
-  { name: 'request_approval', label: 'Aprobación',           status: 'waiting' },
   { name: 'generate_docs',    label: 'Generar docs',         status: 'waiting' },
   { name: 'deliver',          label: 'Entregar',             status: 'waiting' },
 ]
@@ -122,6 +125,8 @@ export default function FrLauncher() {
   const [revisionCount, setRevisionCount] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const [activeSessions, setActiveSessions] = useState<{ thread_id: string; started_at: string; fr_text?: string }[]>([])
+
   const logEndRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
   const attachFileInputRef = useRef<HTMLInputElement>(null)
@@ -131,6 +136,14 @@ export default function FrLauncher() {
     queryFn: () => ovdApi.listProjects(orgId),
     enabled: !!orgId,
   })
+
+  // Reconexión — detectar ciclos en progreso al entrar al formulario
+  useEffect(() => {
+    if (phase !== 'form' || !orgId) return
+    ovdApi.listActiveSessions(orgId)
+      .then(sessions => setActiveSessions(sessions ?? []))
+      .catch(() => setActiveSessions([]))
+  }, [phase, orgId])
 
   // Auto-scroll del log
   useEffect(() => {
@@ -270,7 +283,7 @@ export default function FrLauncher() {
         break
       }
       case 'generated_docs': {
-        const docs = ev.data as Array<{type: string, path: string}>
+        const docs = ev.data as unknown as Array<{type: string, path: string}>
         if (Array.isArray(docs) && docs.length > 0) {
           pushLog(`✓ Docs generados: ${docs.map(d => d.path).join(', ')}`)
         }
@@ -439,6 +452,19 @@ export default function FrLauncher() {
     }
   }
 
+  // Reconexión a ciclo en progreso
+  function handleReconnect(threadId: string) {
+    setSessionId(threadId)
+    setNodes(GRAPH_NODES.map(n => ({ ...n })))
+    setLog(['Reconectando al ciclo en progreso...'])
+    setPendingApproval(false)
+    setSddData(null)
+    setSddExpanded(false)
+    setPhase('streaming')
+    setActiveSessions([])
+    openStream(threadId)
+  }
+
   // Fase 2 — handleApproval unificado para approve / revise / reject
   async function handleApproval(action: 'approve' | 'revise' | 'reject') {
     if (!sessionId) return
@@ -494,6 +520,34 @@ export default function FrLauncher() {
         <h1 className="text-xl font-semibold text-white">Lanzador de FR</h1>
         <p className="text-gray-400 text-sm mt-0.5">Inicia un ciclo OVD con un Feature Request</p>
       </div>
+
+      {/* Banner de reconexión — ciclos en progreso detectados */}
+      {phase === 'form' && activeSessions.length > 0 && (
+        <div className="space-y-2">
+          {activeSessions.map(s => (
+            <div key={s.thread_id} className="flex items-center justify-between gap-3 bg-amber-950/40 border border-amber-700/50 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-amber-300 text-sm font-medium">Ciclo en progreso detectado</p>
+                  <p className="text-amber-500 text-xs truncate">
+                    {s.thread_id.slice(0, 8)}… · iniciado {new Date(s.started_at).toLocaleTimeString()}
+                    {s.fr_text ? ` · ${s.fr_text.slice(0, 60)}…` : ''}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleReconnect(s.thread_id)}
+                className="shrink-0 flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
+              >
+                <RotateCcw size={12} />
+                Reconectar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {phase === 'form' && (
         <form onSubmit={handleSubmit} className="space-y-4">

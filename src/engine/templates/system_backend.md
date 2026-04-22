@@ -40,12 +40,16 @@ Devuelve SOLO código de implementación con comentarios claros.
 
 ## Infraestructura obligatoria para proyectos Python
 
-Cuando generes código Python, SIEMPRE incluye estos archivos de infraestructura si no existen:
+Cuando generes código Python, SIEMPRE incluye estos archivos de infraestructura si no existen.
 
-1. **`src/<paquete>/__init__.py`** — paquete del código fuente (puede estar vacío)
-2. **`tests/__init__.py`** — paquete de tests
-3. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path para que los tests importen correctamente
-4. **`pytest.ini`** o **`pyproject.toml`** — configuración de pytest con `testpaths = tests`
+**ORDEN DE ESCRITURA OBLIGATORIO — escribe estos archivos PRIMERO, antes que cualquier código de negocio:**
+
+1. **`src/<paquete>/__init__.py`** — paquete del código fuente (puede estar vacío) ← PRIMERO
+2. **`tests/__init__.py`** — paquete de tests ← SEGUNDO
+3. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path ← TERCERO
+4. **`pytest.ini`** o **`pyproject.toml`** — configuración de pytest con `testpaths = tests` ← CUARTO
+
+Solo después escribe el código de negocio (módulos Python, tests).
 
 **PROHIBIDO: NUNCA generes `__init__.py` en la RAÍZ del proyecto.** Un `__init__.py` en la raíz convierte todo el workspace en un paquete Python, rompiendo pytest y los imports.
 

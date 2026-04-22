@@ -101,28 +101,34 @@ async def test_run_tests_noop_without_test_files():
 @pytest.mark.asyncio
 async def test_run_tests_timeout_returns_failed():
     """Si el proceso de tests excede el timeout, retorna passed=False con mensaje de timeout."""
-    import asyncio
+    import asyncio, tempfile, os
     import graph as g
 
-    state = make_state(
-        agent_results=_make_agent_results(["tests/test_api.py"]),
-        directory="/tmp",
-        test_retry_count=0,
-    )
+    # S32-A: necesita test files en el directorio para que pytest se ejecute
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_file = os.path.join(tmpdir, "test_sample.py")
+        with open(test_file, "w") as f:
+            f.write("def test_ok(): pass\n")
 
-    mock_proc = MagicMock()
-    mock_proc.kill = MagicMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", None))
+        state = make_state(
+            agent_results=_make_agent_results(["tests/test_api.py"]),
+            directory=tmpdir,
+            test_retry_count=0,
+        )
 
-    # Simular timeout en wait_for: el primer call lanza TimeoutError, communicate() retorna normal
-    async def fake_wait_for(coro, timeout):
-        raise asyncio.TimeoutError()
+        mock_proc = MagicMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", None))
 
-    with (
-        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-        patch("asyncio.wait_for", side_effect=fake_wait_for),
-    ):
-        result = await g.run_tests(state)
+        # Simular timeout en wait_for: el primer call lanza TimeoutError, communicate() retorna normal
+        async def fake_wait_for(coro, timeout):
+            raise asyncio.TimeoutError()
+
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("asyncio.wait_for", side_effect=fake_wait_for),
+        ):
+            result = await g.run_tests(state)
 
     assert result["test_results"]["passed"] is False
     assert "timeout" in result["test_results"]["output"].lower()
@@ -131,16 +137,23 @@ async def test_run_tests_timeout_returns_failed():
 @pytest.mark.asyncio
 async def test_run_tests_runner_not_installed():
     """Si el runner no está instalado, retorna passed=True (no bloquear)."""
+    import tempfile, os
     import graph as g
 
-    state = make_state(
-        agent_results=_make_agent_results(["tests/test_api.py"]),
-        directory="/tmp",
-        test_retry_count=0,
-    )
+    # S32-A: necesita test files en el directorio para que llegue al subprocess
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_file = os.path.join(tmpdir, "test_sample.py")
+        with open(test_file, "w") as f:
+            f.write("def test_ok(): pass\n")
 
-    with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("pytest not found")):
-        result = await g.run_tests(state)
+        state = make_state(
+            agent_results=_make_agent_results(["tests/test_api.py"]),
+            directory=tmpdir,
+            test_retry_count=0,
+        )
+
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("pytest not found")):
+            result = await g.run_tests(state)
 
     assert result["test_results"]["passed"] is True
     assert "no está instalado" in result["test_results"]["output"]

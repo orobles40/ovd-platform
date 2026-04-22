@@ -41,7 +41,10 @@ import os
 import pathlib
 import sys
 import time
+import uuid
 from typing import Any
+
+import psycopg  # S29-A: persistencia de ciclos desde deliver
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -1377,7 +1380,9 @@ async def _run_agent_with_tools(
     human_content = (
         f"SDD Aprobado:\n{sdd_content}\n\n"
         f"Comentario del arquitecto: {comment}\n\n"
-        f"Implementa los artefactos {agent_name} definidos en el SDD usando las herramientas disponibles."
+        f"Implementa los artefactos {agent_name} definidos en el SDD usando las herramientas disponibles.\n\n"
+        f"IMPORTANTE: Organiza los archivos en subdirectorios apropiados (ej: src/app/components/, src/routes/, etc.). "
+        f"NO uses rutas planas sin directorio. Empieza a escribir archivos directamente con write_file."
     )
 
     messages: list = [
@@ -1436,11 +1441,18 @@ async def _run_agent_with_tools(
                                     written_files.append(rel)
                     except Exception as e:
                         tool_result = f"ERROR al ejecutar {tool_name}: {e}"
+                        log.warning("S30-B: tool '%s' falló para agente '%s': %s", tool_name, agent_name, e)
 
                 messages.append(ToolMessage(
                     content=str(tool_result),
                     tool_call_id=tool_id,
                 ))
+
+            # S30-D: compresión de ventana de contexto — evita explosión a 48K+ tokens
+            # Mantener: [SystemMessage, HumanMessage] + últimos 6 mensajes (3 exchanges)
+            _MAX_HIST = 8
+            if len(messages) > _MAX_HIST + 2:
+                messages = messages[:2] + messages[-_MAX_HIST:]
 
         else:
             # Se alcanzó el límite de iteraciones — usar el último response
@@ -1452,11 +1464,13 @@ async def _run_agent_with_tools(
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language)
 
-    # S24-D: logging de tracking post-ejecución
+    # S24-D / S30-B: logging de tracking post-ejecución
     log.info(
-        "_run_agent_with_tools[%s]: written_files=%d %s | final_output=%d chars",
-        agent_name, len(written_files), written_files[:5], len(final_output),
+        "_run_agent_with_tools[%s]: written_files=%d %s | final_output=%d chars | total_tokens=%s",
+        agent_name, len(written_files), written_files[:5], len(final_output), total_tokens,
     )
+    if len(written_files) == 0:
+        log.warning("S30-B: agente '%s' no escribió ningún archivo via tools — fallback a output parsing", agent_name)
 
     # Construir artefactos desde archivos escritos via tool calls
     artifacts = _build_artifacts_from_files(written_files, directory)
@@ -1743,13 +1757,14 @@ async def security_audit(state: OVDState) -> dict:
         except Exception as scan_exc:
             log.warning("security_audit: error en CLI scanning (%s), continuando sin scan", scan_exc)
 
-    # S26-C: filesystem-first — leer código del workspace (mismo patrón que qa_review S24-C)
+    # S26-C / S31-A: filesystem-first — solo archivos del ciclo actual (mtime >= cycle_start_ts)
     sec_directory = state.get("directory", "")
     agent_code_parts: list[str] = []
     if sec_directory:
         base = pathlib.Path(sec_directory).expanduser().resolve()
         _CODE_EXTS_SEC = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
         _SKIP_SEC = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+        sec_cycle_ts = state.get("cycle_start_ts", 0)
         if base.exists():
             for fp in sorted(base.rglob("*")):
                 if not fp.is_file():
@@ -1760,6 +1775,13 @@ async def security_audit(state: OVDState) -> dict:
                     continue
                 if fp.name.startswith("ovd-delivery-"):
                     continue
+                # S31-A: excluir archivos de ciclos anteriores
+                if sec_cycle_ts > 0:
+                    try:
+                        if fp.stat().st_mtime < sec_cycle_ts - 5:
+                            continue
+                    except OSError:
+                        pass
                 try:
                     rel = str(fp.relative_to(base))
                     ext = fp.suffix.lstrip(".")
@@ -1768,7 +1790,7 @@ async def security_audit(state: OVDState) -> dict:
                 except (OSError, ValueError):
                     pass
             if agent_code_parts:
-                log.info("security_audit: S26-C leyó %d archivo(s) del workspace", len(agent_code_parts))
+                log.info("security_audit: S26-C/S31-A leyó %d archivo(s) del ciclo actual", len(agent_code_parts))
     if not agent_code_parts:
         agent_code_parts = [r.get("output", "") for r in state.get("agent_results", [])]
     agent_code = _truncate("\n\n".join(agent_code_parts), 16000)
@@ -1871,6 +1893,8 @@ async def qa_review(state: OVDState) -> dict:
         _CODE_EXTS_QA = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
         _SKIP_QA = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
         file_blocks: list[str] = []
+        # S31-A: solo archivos escritos en este ciclo (mtime >= cycle_start_ts - 5s buffer)
+        cycle_ts = state.get("cycle_start_ts", 0)
         if base.exists():
             for fp in sorted(base.rglob("*")):
                 if not fp.is_file():
@@ -1881,6 +1905,13 @@ async def qa_review(state: OVDState) -> dict:
                     continue
                 if fp.name.startswith("ovd-delivery-"):
                     continue
+                # S31-A: excluir archivos de ciclos anteriores
+                if cycle_ts > 0:
+                    try:
+                        if fp.stat().st_mtime < cycle_ts - 5:
+                            continue
+                    except OSError:
+                        pass
                 try:
                     rel = str(fp.relative_to(base))
                     ext = fp.suffix.lstrip(".")
@@ -1890,7 +1921,7 @@ async def qa_review(state: OVDState) -> dict:
                     pass
         if file_blocks:
             agent_output_parts.append("\n\n".join(file_blocks))
-            log.info("qa_review: S24-C leyó %d archivo(s) del workspace para contexto QA", len(file_blocks))
+            log.info("qa_review: S24-C / S31-A leyó %d archivo(s) del ciclo actual para contexto QA", len(file_blocks))
 
     # Fallback si no hay directory o no hay archivos en disco
     if not agent_output_parts:
@@ -2095,9 +2126,41 @@ async def run_tests(state: OVDState) -> dict:
     output = ""
     try:
         if runner == "pytest":
-            # S28-C: flags claros sin conflicto (-v y -q se anulan); --tb=long para ver errores de colección
-            cmd = [sys.executable, "-m", "pytest", work_dir, "--tb=short", "--no-header",
-                   f"--rootdir={work_dir}", "--import-mode=importlib"]
+            # S31-C / S32-A: selección inteligente de test files según mtime del ciclo
+            # - Si hay test files nuevos (del ciclo actual) → ejecutar solo esos
+            # - Si solo hay test files antiguos (proyecto real pre-existente) → ejecutar todos
+            # - Si no hay ningún test file → skip graceful (passed=True + warning)
+            cycle_ts = state.get("cycle_start_ts", 0)
+            _pytest_args: list[str] = []
+            if cycle_ts > 0 and work_dir:
+                _base = pathlib.Path(work_dir)
+                _all_tests = [str(fp) for fp in sorted(_base.rglob("test_*.py"))]
+                _cycle_tests = [
+                    str(fp) for fp in sorted(_base.rglob("test_*.py"))
+                    if fp.stat().st_mtime >= cycle_ts - 5
+                ]
+                if _cycle_tests:
+                    # Hay tests nuevos del ciclo — ejecutar solo esos (evita contaminación)
+                    _pytest_args = _cycle_tests
+                    log.info("run_tests: S31-C usando %d test file(s) del ciclo actual", len(_cycle_tests))
+                elif _all_tests:
+                    # Proyecto real con tests pre-existentes — ejecutar todos (S32-A)
+                    _pytest_args = [work_dir]
+                    log.info("run_tests: S32-A sin tests nuevos, %d test(s) pre-existentes → work_dir", len(_all_tests))
+                else:
+                    # Sin ningún test file en el workspace → skip graceful
+                    log.warning("run_tests: S32-A sin test files en %s — passed=True con warning", work_dir)
+                    passed = True
+                    output = "[Sin test files encontrados en el workspace — convención test_*.py]"
+                    cmd = []  # no ejecutar pytest
+            else:
+                _pytest_args = [work_dir]
+            # S28-C: flags claros sin conflicto (-v y -q se anulan)
+            # S33-C: en retry rounds, usar --tb=long para dar más contexto al agente
+            _tb_mode = "long" if retry_round > 0 else "short"
+            cmd = ([sys.executable, "-m", "pytest"] + _pytest_args
+                   + [f"--tb={_tb_mode}", "--no-header", f"--rootdir={work_dir}", "--import-mode=importlib"]
+                   ) if _pytest_args else []
         elif runner == "vitest":
             cmd = ["npx", "vitest", "run", "--reporter=verbose"]
         elif runner == "cargo":
@@ -2128,12 +2191,47 @@ async def run_tests(state: OVDState) -> dict:
                             [str(p.relative_to(work_dir)) for p in pathlib.Path(work_dir).rglob("*.py")][:10],
                         )
                     elif rc == 4:
-                        log.warning(
-                            "run_tests: pytest exit 4 — error de colección (SyntaxError o ImportError). "
-                            "Output: %s", output[:500],
-                        )
+                        # S32-C: extraer ImportError específico para feedback al agente
+                        _import_errors = [
+                            line for line in output.splitlines()
+                            if "ImportError" in line or "ModuleNotFoundError" in line or "attempted relative import" in line
+                        ]
+                        if _import_errors:
+                            log.warning(
+                                "run_tests: S32-C pytest exit 4 — ImportError detectado: %s",
+                                " | ".join(_import_errors[:3]),
+                            )
+                            # Inyectar diagnóstico claro al inicio del output para el retry_feedback
+                            output = (
+                                f"[DIAGNÓSTICO S32-C] ImportError detectado:\n"
+                                + "\n".join(_import_errors[:5])
+                                + "\n\nSOLUCIÓN: Asegúrate de que src/<paquete>/__init__.py existe y que "
+                                "conftest.py tiene sys.path.insert(0, 'src'). "
+                                "Escribe estos archivos de infraestructura PRIMERO antes que el código de negocio.\n\n"
+                                + output
+                            )
+                        else:
+                            log.warning(
+                                "run_tests: pytest exit 4 — error de colección (SyntaxError o ImportError). "
+                                "Output: %s", output[:500],
+                            )
                     elif rc == 2:
                         log.warning("run_tests: pytest exit 2 — ejecución interrumpida. Output: %s", output[:200])
+                # S33-B: cuando hay fallos (rc==1), extraer líneas de AssertionError para diagnóstico
+                if rc == 1 and not passed:
+                    _assert_lines = [
+                        line for line in output.splitlines()
+                        if "AssertionError" in line or (line.strip().startswith("assert ") and "==" in line)
+                        or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
+                    ]
+                    if _assert_lines:
+                        log.info("run_tests: S33-B AssertionError(s) detectados: %d líneas", len(_assert_lines))
+                        output = (
+                            f"[DIAGNÓSTICO S33-B] Fallos de aserción detectados:\n"
+                            + "\n".join(_assert_lines[:10])
+                            + "\n\n"
+                            + output
+                        )
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.communicate()
@@ -2185,13 +2283,18 @@ def update_test_retry(state: OVDState) -> dict:
     tr = state.get("test_results", {})
     test_output = tr.get("output", "")
     new_feedback = (
+        # S33-A: instrucción crítica de no modificar tests — solo corregir implementación
+        "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
+        "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
+        "NUNCA modifiques, elimines ni agregues tests.\n\n"
         f"TESTS FALLIDOS (ronda {state.get('test_retry_count', 0) + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
         f"Output:\n{test_output[:2000]}\n\n"
-        "Corregir el código para que los tests pasen."
+        "Corregir SOLO la implementación para que los tests pasen."
     )
     existing = state.get("retry_feedback", "")
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
+    accumulated = _truncate(accumulated, 3000)  # S31-B: cap para no explotar contexto del agente
 
     return {
         "test_retry_count": state.get("test_retry_count", 0) + 1,
@@ -3059,6 +3162,51 @@ async def deliver(state: OVDState) -> dict:
         model_routing=state.get("stack_routing", "auto"),
     )
 
+    # S29-A — Persistir ciclo en ovd_cycles desde el nodo deliver
+    # Movido desde api._stream_graph_events para garantizar persistencia
+    # aunque el cliente SSE se desconecte antes de recibir el evento "done".
+    _db_url = os.environ.get("DATABASE_URL", "")
+    if _db_url:
+        try:
+            _fr_analysis_p = state.get("fr_analysis", {})
+            _qa_result_p   = state.get("qa_result", {})
+            _session_id_p  = state.get("session_id", "")
+            async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
+                await _conn.execute(
+                    """
+                    INSERT INTO ovd_cycles
+                      (id, org_id, project_id, session_id, thread_id,
+                       fr_text, fr_analysis, sdd, agent_results, qa_result,
+                       qa_score, complexity, fr_type, auto_approved,
+                       tokens_input, tokens_output, tokens_total,
+                       tokens_by_agent, cost_usd)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        state.get("org_id", ""),
+                        state.get("project_id") or None,
+                        _session_id_p, _session_id_p,
+                        state.get("feature_request", ""),
+                        _json.dumps(_fr_analysis_p),
+                        _json.dumps(state.get("sdd", {})),
+                        _json.dumps(state.get("agent_results", [])),
+                        _json.dumps(_qa_result_p),
+                        _qa_result_p.get("score") or 0,
+                        _fr_analysis_p.get("complexity", ""),
+                        _fr_analysis_p.get("type", ""),
+                        state.get("auto_approve", False),
+                        total_in, total_out, total_in + total_out,
+                        _json.dumps(state.get("token_usage", {})),
+                        cost_usd,
+                    ),
+                )
+                await _conn.commit()
+            log.info("deliver: ciclo persistido en ovd_cycles (session=%s)", _session_id_p)
+        except Exception as _db_err:
+            log.warning("deliver: persist_cycle: error al guardar en DB — %s", _db_err)
+
     return {
         "deliverables": deliverables,
         "security_result": security_result,
@@ -3328,6 +3476,7 @@ def update_qa_retry(state: OVDState) -> dict:
     new_feedback = _build_qa_feedback(qa)
     existing_feedback = state.get("retry_feedback", "")
     accumulated = f"{existing_feedback}\n\n{new_feedback}".strip() if existing_feedback else new_feedback
+    accumulated = _truncate(accumulated, 3000)  # S31-B: cap para no explotar contexto del agente
 
     return {
         "qa_retry_count": state.get("qa_retry_count", 0) + 1,
