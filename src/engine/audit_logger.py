@@ -234,11 +234,12 @@ async def _write_audit_log(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         await conn.execute(
             """
-            INSERT INTO ovd_audit_logs
-              (id, org_id, user_id, action, resource_type, resource_id, summary, old_value, new_value, time_created)
+            INSERT INTO ovd_audit_log
+              (id, org_id, user_id, action, resource, resource_id, metadata, created_at)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+              (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (log_id, org_id, user_id, event, resource_type, resource_id, summary, old_value, new_value, now),
+            (log_id, org_id, user_id, event, resource_type, resource_id,
+             {"summary": summary, "old_value": old_value, "new_value": new_value}, now),
         )
         await conn.commit()

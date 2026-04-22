@@ -98,13 +98,13 @@ async def list_projects(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         rows = await conn.execute(
             """
-            SELECT p.id, p.name, p.description, p.directory, p.active, p.time_created,
+            SELECT p.id, p.name, p.description, p.directory, p.active, p.created_at,
                    pp.language, pp.framework, pp.db_engine
             FROM ovd_projects p
             LEFT JOIN ovd_project_profiles pp ON pp.project_id = p.id AND pp.active = true
             WHERE p.org_id = %s
               AND (%s OR p.active = true)
-            ORDER BY p.time_created DESC
+            ORDER BY p.created_at DESC
             """,
             (org_id, include_inactive),
         )
@@ -142,7 +142,7 @@ async def create_project(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         await conn.execute(
             """
-            INSERT INTO ovd_projects (id, org_id, name, description, directory, active, time_created, time_updated)
+            INSERT INTO ovd_projects (id, org_id, name, description, directory, active)
             VALUES (%s, %s, %s, %s, %s, true, %s, %s)
             """,
             (project_id, org_id, body.name, body.description, body.directory, now, now),
@@ -163,7 +163,7 @@ async def get_project(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         rows = await conn.execute(
             """
-            SELECT p.id, p.name, p.description, p.directory, p.active, p.time_created,
+            SELECT p.id, p.name, p.description, p.directory, p.active, p.created_at,
                    pp.id, pp.language, pp.framework, pp.db_engine, pp.runtime,
                    pp.additional_stack, pp.legacy_stack, pp.external_integrations,
                    pp.qa_tools, pp.ci_cd, pp.constraints, pp.code_style,
@@ -228,8 +228,7 @@ async def update_project(
     if not updates:
         raise HTTPException(status_code=400, detail="Sin campos para actualizar")
 
-    updates["time_updated"] = datetime.now(timezone.utc)
-    set_clause = ", ".join(f"{k} = %s" for k in updates)
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
     values = list(updates.values()) + [project_id, org_id]
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
@@ -254,8 +253,8 @@ async def deactivate_project(
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         result = await conn.execute(
-            "UPDATE ovd_projects SET active = false, time_updated = %s WHERE id = %s AND org_id = %s",
-            (datetime.now(timezone.utc), project_id, org_id),
+            "UPDATE ovd_projects SET active = false WHERE id = %s AND org_id = %s",
+            (project_id, org_id),
         )
         await conn.commit()
         if result.rowcount == 0:
@@ -302,7 +301,7 @@ async def upsert_stack_profile(
               (id, org_id, project_id, language, framework, db_engine, runtime,
                additional_stack, legacy_stack, external_integrations, qa_tools,
                ci_cd, constraints, code_style, project_description, team_size,
-               active, time_created, time_updated)
+               active)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s)
             """,
             (
@@ -351,14 +350,14 @@ async def list_cycles(
         rows = await conn.execute(
             f"""
             SELECT cl.id, cl.project_id, p.name as project_name,
-                   cl.session_id, cl.feature_request,
+                   cl.session_id, cl.fr_text,
                    cl.qa_score, cl.complexity, cl.fr_type,
-                   cl.tokens_total, cl.estimated_cost_usd,
-                   cl.time_created
-            FROM ovd_cycle_logs cl
+                   cl.tokens_total, cl.cost_usd,
+                   cl.created_at
+            FROM ovd_cycles cl
             LEFT JOIN ovd_projects p ON p.id = cl.project_id
             WHERE {where}
-            ORDER BY cl.time_created DESC
+            ORDER BY cl.created_at DESC
             LIMIT %s OFFSET %s
             """,
             params,
@@ -367,7 +366,7 @@ async def list_cycles(
 
         # Total para paginación (params sin limit/offset)
         count_row = await conn.execute(
-            f"SELECT COUNT(*) FROM ovd_cycle_logs cl WHERE {where}",
+            f"SELECT COUNT(*) FROM ovd_cycles cl WHERE {where}",
             params[:-2],
         )
         total = (await count_row.fetchone())[0]
@@ -407,12 +406,12 @@ async def get_cycle(
         row = await conn.execute(
             """
             SELECT cl.id, cl.project_id, p.name,
-                   cl.session_id, cl.thread_id, cl.feature_request,
+                   cl.session_id, cl.thread_id, cl.fr_text,
                    cl.fr_analysis_json, cl.sdd_json, cl.agent_results_json, cl.qa_result_json,
                    cl.qa_score, cl.complexity, cl.fr_type, cl.oracle_involved,
                    cl.tokens_input, cl.tokens_output, cl.tokens_total,
-                   cl.tokens_by_agent_json, cl.estimated_cost_usd, cl.time_created
-            FROM ovd_cycle_logs cl
+                   cl.tokens_by_agent, cl.cost_usd, cl.created_at
+            FROM ovd_cycles cl
             LEFT JOIN ovd_projects p ON p.id = cl.project_id
             WHERE cl.id = %s AND cl.org_id = %s
             """,
@@ -474,12 +473,12 @@ async def get_stats(
                 COUNT(*)                          AS total_cycles,
                 COALESCE(AVG(qa_score), 0)        AS avg_qa_score,
                 COALESCE(SUM(tokens_total), 0)    AS total_tokens,
-                COALESCE(SUM(estimated_cost_usd), 0) AS total_cost_usd,
+                COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
                 COUNT(*) FILTER (WHERE qa_score >= 80) AS high_quality_cycles,
                 COUNT(DISTINCT project_id)        AS active_projects
-            FROM ovd_cycle_logs
+            FROM ovd_cycles
             WHERE org_id = %s
-              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+              AND created_at >= NOW() - (%s * INTERVAL '1 day')
             """,
             (org_id, days),
         )
@@ -489,8 +488,8 @@ async def get_stats(
         fr_rows = await conn.execute(
             """
             SELECT fr_type, COUNT(*) as cnt
-            FROM ovd_cycle_logs
-            WHERE org_id = %s AND time_created >= NOW() - (%s * INTERVAL '1 day')
+            FROM ovd_cycles
+            WHERE org_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day')
               AND fr_type IS NOT NULL
             GROUP BY fr_type ORDER BY cnt DESC
             """,
@@ -501,9 +500,9 @@ async def get_stats(
         # Ciclos por día (últimos 14 días)
         daily_rows = await conn.execute(
             """
-            SELECT DATE(time_created) as day, COUNT(*) as cnt
-            FROM ovd_cycle_logs
-            WHERE org_id = %s AND time_created >= NOW() - INTERVAL '14 days'
+            SELECT DATE(created_at) as day, COUNT(*) as cnt
+            FROM ovd_cycles
+            WHERE org_id = %s AND created_at >= NOW() - INTERVAL '14 days'
             GROUP BY day ORDER BY day
             """,
             (org_id,),
@@ -592,7 +591,7 @@ async def get_telemetry(
       - daily_qa: QA promedio diario + conteo de ciclos
       - daily_cost: costo diario acumulado
       - daily_tokens: tokens input/output diarios
-      - agent_tokens: desglose de tokens por agente (suma de tokens_by_agent_json)
+      - agent_tokens: desglose de tokens por agente (suma de tokens_by_agent)
       - complexity_dist: distribución de ciclos por complejidad
       - security_dist: distribución por severity (none/low/medium/high)
     """
@@ -603,15 +602,15 @@ async def get_telemetry(
         daily_rows = await conn.execute(
             """
             SELECT
-                DATE(time_created)              AS day,
+                DATE(created_at)              AS day,
                 COUNT(*)                        AS cycle_count,
                 COALESCE(AVG(qa_score), 0)      AS avg_qa,
-                COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd,
+                COALESCE(SUM(cost_usd), 0) AS cost_usd,
                 COALESCE(SUM(tokens_input), 0)  AS tokens_in,
                 COALESCE(SUM(tokens_output), 0) AS tokens_out
-            FROM ovd_cycle_logs
+            FROM ovd_cycles
             WHERE org_id = %s
-              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+              AND created_at >= NOW() - (%s * INTERVAL '1 day')
             GROUP BY day
             ORDER BY day
             """,
@@ -619,7 +618,7 @@ async def get_telemetry(
         )
         daily = await daily_rows.fetchall()
 
-        # Tokens por agente: expandir tokens_by_agent_json (JSONB)
+        # Tokens por agente: expandir tokens_by_agent (JSONB)
         agent_rows = await conn.execute(
             """
             SELECT
@@ -627,12 +626,12 @@ async def get_telemetry(
                 SUM((agent_val->>'input')::int)  AS tokens_in,
                 SUM((agent_val->>'output')::int) AS tokens_out,
                 COUNT(*)                         AS cycle_count
-            FROM ovd_cycle_logs,
-                 jsonb_each(tokens_by_agent_json) AS kv(agent_key, agent_val)
+            FROM ovd_cycles,
+                 jsonb_each(tokens_by_agent) AS kv(agent_key, agent_val)
             WHERE org_id = %s
-              AND time_created >= NOW() - (%s * INTERVAL '1 day')
-              AND tokens_by_agent_json IS NOT NULL
-              AND tokens_by_agent_json != 'null'::jsonb
+              AND created_at >= NOW() - (%s * INTERVAL '1 day')
+              AND tokens_by_agent IS NOT NULL
+              AND tokens_by_agent != 'null'::jsonb
             GROUP BY agent_key
             ORDER BY tokens_in + tokens_out DESC
             """,
@@ -644,9 +643,9 @@ async def get_telemetry(
         complexity_rows = await conn.execute(
             """
             SELECT complexity, COUNT(*) AS cnt
-            FROM ovd_cycle_logs
+            FROM ovd_cycles
             WHERE org_id = %s
-              AND time_created >= NOW() - (%s * INTERVAL '1 day')
+              AND created_at >= NOW() - (%s * INTERVAL '1 day')
               AND complexity IS NOT NULL
             GROUP BY complexity
             """,
@@ -658,10 +657,10 @@ async def get_telemetry(
         delta_row = await conn.execute(
             """
             SELECT
-                COALESCE(AVG(qa_score) FILTER (WHERE time_created >= NOW() - (%s * INTERVAL '1 day')), 0)         AS qa_current,
-                COALESCE(AVG(qa_score) FILTER (WHERE time_created <  NOW() - (%s * INTERVAL '1 day')
-                                                AND time_created >= NOW() - (%s * INTERVAL '1 day')), 0) AS qa_prev
-            FROM ovd_cycle_logs
+                COALESCE(AVG(qa_score) FILTER (WHERE created_at >= NOW() - (%s * INTERVAL '1 day')), 0)         AS qa_current,
+                COALESCE(AVG(qa_score) FILTER (WHERE created_at <  NOW() - (%s * INTERVAL '1 day')
+                                                AND created_at >= NOW() - (%s * INTERVAL '1 day')), 0) AS qa_prev
+            FROM ovd_cycles
             WHERE org_id = %s
             """,
             (days, days, days * 2, org_id),
@@ -727,7 +726,7 @@ async def export_project(
         # Proyecto
         p_row = await conn.execute(
             """
-            SELECT id, name, description, directory, active, time_created
+            SELECT id, name, description, directory, active, created_at
             FROM ovd_projects WHERE id = %s AND org_id = %s
             """,
             (project_id, org_id),
@@ -769,11 +768,11 @@ async def export_project(
         # Ciclos (campos ligeros — sin agent_results_json ni sdd_json)
         cyc_rows = await conn.execute(
             """
-            SELECT id, session_id, feature_request, qa_score, complexity,
-                   fr_type, tokens_total, estimated_cost_usd, time_created
-            FROM ovd_cycle_logs
+            SELECT id, session_id, fr_text, qa_score, complexity,
+                   fr_type, tokens_total, cost_usd, created_at
+            FROM ovd_cycles
             WHERE project_id = %s AND org_id = %s
-            ORDER BY time_created DESC
+            ORDER BY created_at DESC
             LIMIT %s
             """,
             (project_id, org_id, _EXPORT_MAX_CYCLES),
@@ -868,7 +867,7 @@ async def import_project(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         await conn.execute(
             """
-            INSERT INTO ovd_projects (id, org_id, name, description, directory, active, time_created, time_updated)
+            INSERT INTO ovd_projects (id, org_id, name, description, directory, active)
             VALUES (%s, %s, %s, %s, %s, true, %s, %s)
             """,
             (
@@ -889,7 +888,7 @@ async def import_project(
                   (id, org_id, project_id, language, framework, db_engine, runtime,
                    additional_stack, legacy_stack, external_integrations, qa_tools,
                    ci_cd, constraints, code_style, project_description, team_size,
-                   active, time_created, time_updated)
+                   active)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s)
                 """,
                 (
@@ -1144,7 +1143,7 @@ async def get_model_status(
                 COUNT(*) FILTER (WHERE qa_score >= 70)           AS training_ready,
                 COUNT(*) FILTER (WHERE qa_score >= 80)           AS high_quality,
                 COALESCE(AVG(qa_score), 0)                       AS avg_qa
-            FROM ovd_cycle_logs
+            FROM ovd_cycles
             WHERE org_id = %s
             """,
             (org_id,),
@@ -1157,7 +1156,7 @@ async def get_model_status(
                 p.name,
                 COUNT(c.id)                                       AS total,
                 COUNT(c.id) FILTER (WHERE c.qa_score >= 70)      AS training_ready
-            FROM ovd_cycle_logs c
+            FROM ovd_cycles c
             LEFT JOIN ovd_projects p ON p.id = c.project_id
             WHERE c.org_id = %s
             GROUP BY p.name

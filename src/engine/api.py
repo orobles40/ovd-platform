@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import uuid
+import psycopg
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -289,6 +290,47 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                 },
             })
 
+        # Persistir ciclo en ovd_cycles
+        if last_done_event is not None:
+            try:
+                _db_url = os.environ.get("DATABASE_URL", "")
+                fr_analysis = last_done_event.get("fr_analysis", {})
+                qa_result   = last_done_event.get("qa_result", {})
+                async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
+                    await _conn.execute(
+                        """
+                        INSERT INTO ovd_cycles
+                          (id, org_id, project_id, session_id, thread_id,
+                           fr_text, fr_analysis, sdd, agent_results, qa_result,
+                           qa_score, complexity, fr_type, auto_approved,
+                           tokens_input, tokens_output, tokens_total,
+                           tokens_by_agent, cost_usd)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (id) DO NOTHING
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            config["configurable"].get("org_id", ""),
+                            config["configurable"].get("project_id", ""),
+                            thread_id, thread_id,
+                            last_done_event.get("feature_request", ""),
+                            json.dumps(fr_analysis),
+                            json.dumps(last_done_event.get("sdd", {})),
+                            json.dumps(last_done_event.get("agent_results", [])),
+                            json.dumps(qa_result),
+                            qa_result.get("score", 0),
+                            fr_analysis.get("complexity", ""),
+                            fr_analysis.get("type", ""),
+                            last_done_event.get("auto_approve", False),
+                            total_in, total_out, total_in + total_out,
+                            json.dumps(last_done_event.get("token_usage", {})),
+                            0.0,
+                        ),
+                    )
+                    await _conn.commit()
+            except Exception as _db_err:
+                log.warning("persist_cycle: error guardando ciclo en DB — %s", _db_err)
+
         # Tras el stream: detectar interrupt de aprobación pendiente (request_approval)
         if graph and not last_done_event:
             try:
@@ -350,7 +392,7 @@ async def start_session(
     thread_id = body.parent_thread_id or str(uuid.uuid4())
     session_id = body.session_id or thread_id  # dashboard no genera session_id propio
 
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id, "org_id": body.org_id, "project_id": body.project_id}}
 
     # Verificar si el thread ya existe (resumir sesion)
     if _checkpointer:
