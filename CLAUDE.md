@@ -44,12 +44,20 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S26 (fix __init__.py raíz + security_audit filesystem-first)
-- **Tests:** Python unit ~648 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~727
-- **Rama activa:** `dev` (commits S22+S23+S24+S25 sin mergear a `main`)
+- **Sprints completados:** S3 → S27 (fixes calidad: conftest injection, audit_logger JSON, RAG-02 sys.path, QA template)
+- **Tests:** Python unit ~657 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~736
+- **Rama activa:** `dev` (commits S22→S27 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S27 (2026-04-22) — rama `dev`
+- **`run_tests` conftest.py injection (S27-A):** Si `conftest.py` en la raíz del workspace está vacío o no existe, `run_tests` lo inyecta automáticamente con `sys.path.insert(0, "src")`. No sobreescribe si ya tiene contenido. Elimina el bloqueo de QA por conftest vacío.
+- **`audit_logger` JSON fix (S27-B):** El campo `metadata` (JSONB) se pasaba como `dict` Python → `cannot adapt type 'dict'`. Fix: `json.dumps({...})`. Eventos `session_created` y `cycle_completed` ahora se graban correctamente en BD.
+- **`_index_delivery_report` sys.path fix (S27-C):** `from knowledge import bootstrap` fallaba porque `src/` no estaba en sys.path. Fix: insertar `sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))` antes del import. Informes de entrega ahora se indexan en RAG.
+- **`system_qa.md` cláusula infraestructura (S27-D):** QA ya no marca `sdd_compliance=False` por diferencias menores en archivos de infraestructura (conftest.py vacío vs con contenido) ni por tener más tests que los especificados en el SDD.
+- **9 tests nuevos** en `test_s27.py` — conftest injection (3 casos), audit_logger JSON, RAG-02 sys.path, QA template.
+- **657 tests pasan** (0 fallos).
 
 ### Novedades S26 (2026-04-22) — rama `dev`
 - **`system_backend.md` fix (S26-A):** Prohibición explícita de `__init__.py` en la raíz del workspace. Estructura correcta: `src/<paquete>/` + `conftest.py` con `sys.path.insert(0, "src")`. Ejemplo visual de ✅ vs ❌ estructura.

@@ -240,6 +240,6 @@ async def _write_audit_log(
               (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (log_id, org_id, user_id, event, resource_type, resource_id,
-             {"summary": summary, "old_value": old_value, "new_value": new_value}, now),
+             json.dumps({"summary": summary, "old_value": old_value, "new_value": new_value}), now),
         )
         await conn.commit()

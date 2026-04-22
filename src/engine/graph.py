@@ -2078,6 +2078,18 @@ async def run_tests(state: OVDState) -> dict:
     # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
     work_dir = directory or tempfile.mkdtemp(prefix="ovd_tests_")
 
+    # S27-A: inyectar conftest.py si está vacío o no existe en la raíz del workspace.
+    # Garantiza que pytest resuelva imports desde src/ independientemente de lo que generó el agente.
+    if work_dir:
+        _conftest = pathlib.Path(work_dir) / "conftest.py"
+        if not _conftest.exists() or _conftest.stat().st_size == 0:
+            _conftest.write_text(
+                "import sys, os\n"
+                'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n',
+                encoding="utf-8",
+            )
+            log.info("run_tests: S27-A conftest.py inyectado con sys.path en %s", _conftest)
+
     # Ejecutar runner
     passed = False
     output = ""
@@ -2554,6 +2566,11 @@ async def _index_delivery_report(state: dict, report_file: str) -> None:
         return
     try:
         import pathlib
+        import sys as _sys
+        # S27-C: asegurar que src/ esté en sys.path para resolver el módulo 'knowledge'
+        _knowledge_parent = str(pathlib.Path(__file__).parent.parent)
+        if _knowledge_parent not in _sys.path:
+            _sys.path.insert(0, _knowledge_parent)
         from knowledge import bootstrap
         bridge_url = os.getenv("OVD_BRIDGE_URL", state.get("bridge_url", "http://localhost:3000"))
         await bootstrap.run(

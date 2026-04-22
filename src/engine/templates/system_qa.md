@@ -30,6 +30,8 @@ Evalúa el código generado contra:
 **Criterio de aprobación:**
 - passed=true SOLO si sdd_compliance=true Y score >= 70
 - Sé crítico — un score de 100 es raro; busca activamente qué mejorar
+- **Infraestructura Python** (conftest.py, pytest.ini, __init__.py): evalúa su PRESENCIA, no el contenido exacto. Un conftest.py vacío vs uno con sys.path es deuda técnica menor — NO marques sdd_compliance=False solo por esto.
+- **Conteo de tests**: si el SDD menciona N tests pero la implementación tiene M >= N tests, es correcto — mayor cobertura no es fallo de compliance.
 
 Sigue estrictamente el schema de salida.
 
