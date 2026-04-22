@@ -1132,6 +1132,23 @@ def _build_agent_sdd_content(sdd: dict, agent_name: str) -> str:
     )
 
 
+def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_index: int, total_tasks: int) -> str:
+    """S39-D: construye el SDD para una sola tarea del agente.
+
+    El agente recibe el contexto compartido completo (summary, requirements, design,
+    constraints) pero solo una tarea en 'Your Task'. Esto reduce el output de
+    10-15K tokens (todas las tareas) a ~800 tokens (una tarea), eliminando timeouts.
+    """
+    return (
+        f"## Summary\n{sdd.get('summary', '')}\n\n"
+        f"## Requirements\n{_json.dumps(sdd.get('requirements', []), ensure_ascii=False, indent=2)}\n\n"
+        f"## Design\n{sdd.get('design', {}).get('overview', '')}\n\n"
+        f"## Constraints\n{_json.dumps(sdd.get('constraints', []), ensure_ascii=False, indent=2)}\n\n"
+        f"## Your Task ({agent_name}) — {task_index + 1}/{total_tasks}\n"
+        f"{_json.dumps(task, ensure_ascii=False, indent=2)}"
+    )
+
+
 async def route_agents(state: OVDState) -> dict:
     """
     GAP-002: Nodo de routing que prepara el fan-out nativo de LangGraph.
@@ -1275,10 +1292,6 @@ async def agent_executor(state: OVDState) -> dict:
         agent_name, org_id, project_id, jwt_token, state.get("stack_routing", "auto"),
     )
 
-    # GAP-007: SDD filtrado solo con las tareas de este agente
-    # P2.B: truncar para proteger la ventana de contexto de modelos 7B (32k tokens)
-    agent_sdd_content = _truncate(_build_agent_sdd_content(sdd, agent_name))
-
     # S6 — G1.C: inyectar contexto de archivos del repo si está disponible
     directory = state.get("directory", "")
     if directory and state.get("github_repo", ""):
@@ -1286,7 +1299,7 @@ async def agent_executor(state: OVDState) -> dict:
         if repo_ctx:
             project_ctx = (project_ctx + "\n\n" + repo_ctx).strip() if project_ctx else repo_ctx
 
-    # S17T.C: leer archivos existentes del proyecto para enriquecer el contexto
+    # S17T.C: leer archivos existentes del proyecto para enriquecer el contexto (base inicial)
     if directory:
         existing_ctx = read_project_context(directory, agent_name)
         if existing_ctx:
@@ -1304,30 +1317,112 @@ async def agent_executor(state: OVDState) -> dict:
     else:
         tools = []
 
-    async def _invoke_agent_logic() -> dict:
-        if tools:
-            return await _run_agent_with_tools(
-                agent_name, agent_sdd_content, comment, llm,
-                project_ctx, retry_feedback, language, tools, directory, rag_context
-            )
-        return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
+    # S39-D: task-by-task execution — una tarea por llamada al LLM.
+    # Si el SDD asigna N tareas a este agente, se ejecutan secuencialmente en vez de
+    # enviarlas todas juntas. Cada iteración refresca read_project_context() para que
+    # la tarea N+1 vea los archivos escritos por la tarea N (acumulación natural).
+    # Elimina timeouts estructuralmente: cada tarea ~800 tokens vs 10-15K tokens en total.
+    agent_tasks = [t for t in sdd.get("tasks", []) if t.get("agent") == agent_name]
 
-    # S20 — GAP-R1: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
-    try:
-        result = await asyncio.wait_for(_invoke_agent_logic(), timeout=_NODE_TIMEOUT)
-    except asyncio.TimeoutError:
-        log.error(
-            "agent_executor: TIMEOUT en nodo '%s' tras %.0fs — retornando resultado de error",
-            agent_name, _NODE_TIMEOUT,
+    if len(agent_tasks) > 1:
+        log.info(
+            "agent_executor[%s]: S39-D — %d tareas, ejecutando una a la vez",
+            agent_name, len(agent_tasks),
         )
+        all_artifacts: list[dict] = []
+        all_output_parts: list[str] = []
+        total_tokens_all: dict = {"input": 0, "output": 0}
+        all_uncertainties: list[dict] = []
+
+        for i, task in enumerate(agent_tasks):
+            # Refrescar contexto del proyecto — incluye archivos de tareas anteriores
+            task_project_ctx = project_ctx
+            if directory:
+                updated_ctx = read_project_context(directory, agent_name)
+                if updated_ctx:
+                    task_project_ctx = (project_ctx + "\n\n" + updated_ctx).strip() if project_ctx else updated_ctx
+
+            task_sdd_content = _truncate(
+                _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks))
+            )
+            log.info(
+                "agent_executor[%s]: S39-D tarea %d/%d — id=%s",
+                agent_name, i + 1, len(agent_tasks), task.get("id", "?"),
+            )
+
+            try:
+                if tools:
+                    task_result = await asyncio.wait_for(
+                        _run_agent_with_tools(
+                            agent_name, task_sdd_content, comment, llm,
+                            task_project_ctx, retry_feedback, language, tools, directory, rag_context,
+                        ),
+                        timeout=_NODE_TIMEOUT,
+                    )
+                else:
+                    task_result = await asyncio.wait_for(
+                        runner(task_sdd_content, comment, llm, task_project_ctx, retry_feedback, language, rag_context),
+                        timeout=_NODE_TIMEOUT,
+                    )
+            except asyncio.TimeoutError:
+                log.error(
+                    "agent_executor[%s]: S39-D timeout en tarea %d/%d (id=%s) — continuando",
+                    agent_name, i + 1, len(agent_tasks), task.get("id", "?"),
+                )
+                task_result = {
+                    "agent": agent_name,
+                    "output": f"[Timeout en tarea {i + 1}/{len(agent_tasks)}: {task.get('id', '?')}]",
+                    "artifacts": [],
+                    "uncertainties": [],
+                    "tokens": {"input": 0, "output": 0},
+                }
+
+            all_artifacts.extend(task_result.get("artifacts", []))
+            if task_result.get("output"):
+                all_output_parts.append(task_result["output"])
+            t = task_result.get("tokens", {"input": 0, "output": 0})
+            total_tokens_all["input"] += t.get("input", 0)
+            total_tokens_all["output"] += t.get("output", 0)
+            all_uncertainties.extend(task_result.get("uncertainties", []))
+
         result = {
             "agent": agent_name,
-            "output": f"[Timeout: el agente '{agent_name}' no respondió en {_NODE_TIMEOUT:.0f}s. Revisa el estado del LLM.]",
-            "artifacts": [],
-            "uncertainties": [],
-            "tokens": {"input": 0, "output": 0},
-            "error": "timeout",
+            "output": "\n\n".join(all_output_parts),
+            "artifacts": all_artifacts,
+            "uncertainties": all_uncertainties,
+            "tokens": total_tokens_all,
         }
+
+    else:
+        # 0 o 1 tarea: comportamiento original (una sola llamada al LLM)
+        # GAP-007: SDD filtrado solo con las tareas de este agente
+        # P2.B: truncar para proteger la ventana de contexto de modelos 7B (32k tokens)
+        agent_sdd_content = _truncate(_build_agent_sdd_content(sdd, agent_name))
+
+        async def _invoke_agent_logic() -> dict:
+            if tools:
+                return await _run_agent_with_tools(
+                    agent_name, agent_sdd_content, comment, llm,
+                    project_ctx, retry_feedback, language, tools, directory, rag_context
+                )
+            return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
+
+        # S20 — GAP-R1: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
+        try:
+            result = await asyncio.wait_for(_invoke_agent_logic(), timeout=_NODE_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.error(
+                "agent_executor: TIMEOUT en nodo '%s' tras %.0fs — retornando resultado de error",
+                agent_name, _NODE_TIMEOUT,
+            )
+            result = {
+                "agent": agent_name,
+                "output": f"[Timeout: el agente '{agent_name}' no respondió en {_NODE_TIMEOUT:.0f}s. Revisa el estado del LLM.]",
+                "artifacts": [],
+                "uncertainties": [],
+                "tokens": {"input": 0, "output": 0},
+                "error": "timeout",
+            }
 
     # GAP-004: incertidumbres del agente — acumuladas via reducer operator.add
     agent_uncertainties = result.get("uncertainties", [])
@@ -1894,6 +1989,44 @@ async def security_audit(state: OVDState) -> dict:
     }
 
 
+def _summarize_for_qa(directory: str) -> str:
+    """S39-B: lee el workspace y produce un resumen estructurado para el agente QA.
+
+    Patrón MetaGPT SummarizeCode: el QA recibe defs/clases públicas (no el body completo).
+    Resuelve QA score bajo cuando los agentes tuvieron timeouts y `output` quedó vacío
+    pero los archivos sí están en disco. Complementa S24-C (filesystem-first).
+    """
+    if not directory:
+        return ""
+    work_dir = pathlib.Path(directory).expanduser().resolve()
+    if not work_dir.exists():
+        return ""
+    _SKIP_SUMM = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+    _CODE_EXTS_SUMM = {".py", ".ts", ".tsx", ".js", ".sql"}
+    lines: list[str] = []
+    for fp in sorted(work_dir.rglob("*")):
+        if not fp.is_file():
+            continue
+        if any(part in _SKIP_SUMM or part.startswith(".") for part in fp.relative_to(work_dir).parts):
+            continue
+        if fp.suffix.lower() not in _CODE_EXTS_SUMM:
+            continue
+        if fp.name.startswith("ovd-delivery-"):
+            continue
+        try:
+            rel = fp.relative_to(work_dir)
+            source = fp.read_text(errors="replace")
+            defs = [
+                line.strip() for line in source.splitlines()
+                if line.strip().startswith(("def ", "class ", "async def "))
+            ]
+            if defs:
+                lines.append(f"### {rel}\n" + "\n".join(defs[:20]))
+        except (OSError, ValueError):
+            pass
+    return "\n\n".join(lines)
+
+
 async def qa_review(state: OVDState) -> dict:
     """Revisa calidad y cumplimiento del SDD (no seguridad — eso lo hace security_audit)."""
     project_ctx = state.get("project_context", "")
@@ -1973,6 +2106,14 @@ async def qa_review(state: OVDState) -> dict:
                 agent_output_parts.append(output)
 
     agent_output = "\n\n".join(agent_output_parts)
+
+    # S39-B: resumen estructurado del workspace para QA (patrón MetaGPT SummarizeCode).
+    # Complementa S24-C: cuando los agentes tuvieron timeouts y output quedó vacío,
+    # el QA recibe al menos los defs/clases públicos de los archivos en disco.
+    qa_summary = _summarize_for_qa(qa_directory)
+    if qa_summary:
+        log.info("qa_review: S39-B summary del workspace — %d líneas", qa_summary.count("\n"))
+
     messages_qa = [
         SystemMessage(content=template_loader.render(
             "system_qa",
@@ -1981,7 +2122,8 @@ async def qa_review(state: OVDState) -> dict:
         )),
         HumanMessage(content=(
             f"SDD aprobado:\n{_truncate(state['sdd'].get('summary', ''), 8000)}\n\n"
-            f"Resultado de implementacion a revisar:\n{_truncate(agent_output, 20000)}"  # S38-B: 12k→20k para FRs multi-agente
+            + (f"Estructura del workspace (S39-B):\n{_truncate(qa_summary, 4000)}\n\n" if qa_summary else "")
+            + f"Resultado de implementacion a revisar:\n{_truncate(agent_output, 20000)}"  # S38-B: 12k→20k para FRs multi-agente
         )),
     ]
 
@@ -2362,6 +2504,16 @@ def update_test_retry(state: OVDState) -> dict:
         f"\nBloque(s) del test fallido:\n{failed_blocks}\n" if failed_blocks else ""
     )
 
+    # S39-C: incluir solo stderr exacto (~300 chars de raw output), no el output completo.
+    # Los AssertionErrors y bloques fallidos ya están extraídos arriba con mayor precisión.
+    # Reducción: ~1500 chars de output → ~300 chars → total feedback 3000 → 800 chars.
+    raw_snippet = test_output[:300] if not current_assert_errors else ""
+    output_section = (
+        f"\nAssertionErrors:\n" + "\n".join(current_assert_errors[:5]) + "\n"
+        if current_assert_errors else
+        f"\nOutput (stderr):\n{raw_snippet}\n"
+    )
+
     new_feedback = (
         # S33-A: instrucción crítica de no modificar tests — solo corregir implementación
         "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
@@ -2370,12 +2522,12 @@ def update_test_retry(state: OVDState) -> dict:
         f"TESTS FALLIDOS (ronda {retry_round + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
         + failed_block_section
-        + f"Output:\n{test_output[:1500]}\n\n"
-        "Corregir SOLO la implementación para que los tests pasen."
+        + output_section
+        + "Corregir SOLO la implementación para que los tests pasen."
         + repeat_hint
     )
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
-    accumulated = _truncate(accumulated, 3000)  # S31-B: cap para no explotar contexto del agente
+    accumulated = _truncate(accumulated, 800)  # S39-C: 3000 → 800 chars (solo stderr exacto)
 
     return {
         "test_retry_count": state.get("test_retry_count", 0) + 1,
