@@ -240,10 +240,10 @@ export default function FrLauncher() {
         break
       }
       case 'done': {
-        const status = ev.data.status as string
-        setFinalStatus(status || 'done')
+        const summary = ev.data.summary as string | undefined
+        setFinalStatus(summary || 'completado')
         setPhase('done')
-        pushLog(`■ Ciclo finalizado — ${status}`)
+        pushLog(`■ Ciclo finalizado — ${summary || 'completado'}`)
         setNodes(prev => prev.map(n =>
           n.status === 'waiting' || n.status === 'running' ? { ...n, status: 'done' } : n
         ))

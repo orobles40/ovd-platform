@@ -1451,7 +1451,7 @@ async def _run_agent_with_tools(
 
     # Si no se escribió nada via tools, intentar parsear del output del LLM
     if not artifacts and final_output:
-        artifacts = _write_artifacts(final_output, directory)
+        artifacts = _write_artifacts(final_output, directory, agent_name)
 
     uncertainties = _extract_uncertainties(final_output, agent_name)
 

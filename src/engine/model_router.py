@@ -31,6 +31,7 @@ from dataclasses import dataclass
 import httpx
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger("ovd-model-router")
@@ -46,6 +47,15 @@ _BRIDGE_SECRET = os.environ.get("OVD_ENGINE_SECRET", "")
 _DEFAULT_PROVIDER = "ollama"
 _DEFAULT_MODEL    = os.environ.get("OVD_MODEL", "qwen2.5-coder:7b")
 _DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# OVD_AGENT_PROVIDER / OVD_AGENT_MODEL — provider y modelo para agentes de implementación
+# (backend, frontend, database, devops, security). Permite usar Claude para los agentes
+# mientras se mantiene Ollama para los roles de análisis (analyzer, sdd, qa).
+_AGENT_PROVIDER = os.environ.get("OVD_AGENT_PROVIDER", _DEFAULT_PROVIDER)
+_AGENT_MODEL    = os.environ.get("OVD_AGENT_MODEL",    _DEFAULT_MODEL)
+
+# Roles que usan el provider/modelo de agente (no el de análisis)
+_AGENT_ROLES = {"backend", "frontend", "database", "devops", "security_exec"}
 
 # P2.A — Timeout configurable para evitar que Ollama bloquee el ciclo indefinidamente
 _LLM_TIMEOUT = float(os.environ.get("OVD_LLM_TIMEOUT_SECS", "300"))
@@ -272,10 +282,15 @@ async def resolve(
         config = await _fetch_resolved(org_id, project_id, agent_role, jwt_token)
 
     if config is None:
-        # Para roles de análisis usar el modelo específico configurado (puede diferir del default)
-        model = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
+        # Agentes de implementación usan OVD_AGENT_PROVIDER/OVD_AGENT_MODEL si están configurados
+        if agent_role in _AGENT_ROLES:
+            provider = _AGENT_PROVIDER
+            model    = _AGENT_MODEL
+        else:
+            provider = _DEFAULT_PROVIDER
+            model    = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
         config = ResolvedConfig(
-            provider=_DEFAULT_PROVIDER,
+            provider=provider,
             model=model,
             base_url=_DEFAULT_OLLAMA_URL,
             api_key_env=None,
@@ -283,7 +298,7 @@ async def resolve(
             constraints=None,
             code_style=None,
             resolved_from="default",
-            temperature=_resolve_temperature(agent_role, _DEFAULT_PROVIDER),
+            temperature=_resolve_temperature(agent_role, provider),
         )
     else:
         # Config desde Bridge — calcular temperature si no viene explícita
@@ -342,16 +357,29 @@ def build_llm(config: ResolvedConfig) -> Any:
             request_timeout=_LLM_TIMEOUT,
         )
 
-    if config.provider in ("ollama", "custom"):
-        # Ollama expone una API compatible con OpenAI en /v1
-        base_url = config.base_url or _DEFAULT_OLLAMA_URL
-        if config.provider == "ollama" and not base_url.endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
+    if config.provider == "ollama":
+        # ChatOllama usa la API nativa /api/chat donde think=False funciona nativamente (ADR-002 Fix 3-B)
+        base_url = (config.base_url or _DEFAULT_OLLAMA_URL).rstrip("/")
+        # Remover /v1 si viene en la base_url (ChatOllama usa /api/chat, no /v1)
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+        return ChatOllama(
+            model=config.model,
+            base_url=base_url,
+            num_predict=8192,
+            temperature=config.temperature,
+            think=False,  # Deshabilita thinking mode Qwen3+ via API nativa (ver ADR-002)
+        )
 
+    if config.provider == "custom":
+        # Provider custom usa ChatOpenAI con base_url arbitraria (Kimi, Groq, etc.)
+        base_url = config.base_url or _DEFAULT_OLLAMA_URL
+        if not base_url.endswith("/v1"):
+            base_url = base_url.rstrip("/") + "/v1"
         return ChatOpenAI(
             model=config.model,
             base_url=base_url,
-            api_key=api_key or "ollama",   # Ollama acepta cualquier valor
+            api_key=api_key or "ollama",
             max_tokens=8192,
             temperature=config.temperature,
             request_timeout=_LLM_TIMEOUT,
@@ -366,6 +394,7 @@ def build_llm(config: ResolvedConfig) -> Any:
         max_tokens=8192,
         temperature=0.0,
         request_timeout=_LLM_TIMEOUT,
+        extra_body={"think": False},   # Deshabilita thinking mode en modelos Qwen3+
     )
 
 
