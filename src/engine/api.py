@@ -310,8 +310,8 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
                         """,
                         (
                             str(uuid.uuid4()),
-                            config["configurable"].get("org_id", ""),
-                            config["configurable"].get("project_id", ""),
+                            last_done_event.get("org_id", ""),
+                            last_done_event.get("project_id") or None,
                             thread_id, thread_id,
                             last_done_event.get("feature_request", ""),
                             json.dumps(fr_analysis),
