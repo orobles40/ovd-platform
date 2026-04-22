@@ -64,20 +64,25 @@ const NODE_ALIAS: Record<string, string> = {
   agents:           'agents',
   security_audit:   'security_audit',
   qa_review:        'qa_review',
+  run_tests:        'run_tests',    // S22 — ejecución real de tests
+  test_retry:       'run_tests',    // S22 — retry de tests se muestra como run_tests
   request_approval: 'request_approval',
+  generate_docs:    'generate_docs', // S22 — documentación automática
   deliver:          'deliver',
   create_pr:        'deliver',
 }
 
 const GRAPH_NODES: GraphNode[] = [
-  { name: 'analyze_fr',       label: 'Analizar FR',        status: 'waiting' },
-  { name: 'generate_sdd',     label: 'Generar SDD',        status: 'waiting' },
-  { name: 'route_agents',     label: 'Asignar agentes',    status: 'waiting' },
-  { name: 'agents',           label: 'Ejecutar agentes',   status: 'waiting' },
-  { name: 'security_audit',   label: 'Auditoría seguridad',status: 'waiting' },
-  { name: 'qa_review',        label: 'QA Review',          status: 'waiting' },
-  { name: 'request_approval', label: 'Aprobación',         status: 'waiting' },
-  { name: 'deliver',          label: 'Entregar',           status: 'waiting' },
+  { name: 'analyze_fr',       label: 'Analizar FR',          status: 'waiting' },
+  { name: 'generate_sdd',     label: 'Generar SDD',          status: 'waiting' },
+  { name: 'route_agents',     label: 'Asignar agentes',      status: 'waiting' },
+  { name: 'agents',           label: 'Ejecutar agentes',     status: 'waiting' },
+  { name: 'security_audit',   label: 'Auditoría seguridad',  status: 'waiting' },
+  { name: 'qa_review',        label: 'QA Review',            status: 'waiting' },
+  { name: 'run_tests',        label: 'Ejecutar tests',       status: 'waiting' },
+  { name: 'request_approval', label: 'Aprobación',           status: 'waiting' },
+  { name: 'generate_docs',    label: 'Generar docs',         status: 'waiting' },
+  { name: 'deliver',          label: 'Entregar',             status: 'waiting' },
 ]
 
 // Rutas/nombres de archivo bloqueados por seguridad (igual que el TUI)
