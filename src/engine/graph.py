@@ -1442,8 +1442,15 @@ async def _run_agent_with_tools(
                     tool_result = f"ERROR: herramienta '{tool_name}' no encontrada."
                 else:
                     try:
-                        # Las tools de LangChain se invocan con .invoke()
-                        tool_result = tool_fn.invoke(tool_args)
+                        # S38-A: usar ainvoke async si la tool lo soporta (ej: context7 StructuredTool)
+                        # Fallback a invoke() síncrono para tools que no soporten async
+                        if hasattr(tool_fn, "ainvoke"):
+                            try:
+                                tool_result = await tool_fn.ainvoke(tool_args)
+                            except NotImplementedError:
+                                tool_result = tool_fn.invoke(tool_args)
+                        else:
+                            tool_result = tool_fn.invoke(tool_args)
                         # Registrar archivos escritos (write_file y edit_file)
                         if tool_name in ("write_file", "edit_file") and isinstance(tool_result, str):
                             if not tool_result.startswith("ERROR"):
@@ -1974,7 +1981,7 @@ async def qa_review(state: OVDState) -> dict:
         )),
         HumanMessage(content=(
             f"SDD aprobado:\n{_truncate(state['sdd'].get('summary', ''), 8000)}\n\n"
-            f"Resultado de implementacion a revisar:\n{_truncate(agent_output, 12000)}"
+            f"Resultado de implementacion a revisar:\n{_truncate(agent_output, 20000)}"  # S38-B: 12k→20k para FRs multi-agente
         )),
     ]
 
