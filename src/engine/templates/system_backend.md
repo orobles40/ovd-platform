@@ -101,6 +101,23 @@ python_functions = test_*
 
 Sin estos archivos, `pytest` no puede descubrir los tests ni resolver los imports.
 
+### Regla de valores numéricos en tests
+
+**NUNCA escribas valores numéricos de punto flotante de memoria.** Los errores de redondeo hacen que el test falle aunque la implementación sea correcta.
+
+Antes de escribir `assert result == X.XX`, verifica el valor exacto con Python:
+
+```python
+# Verificar ANTES de escribir el test:
+round(53.4 / 1.70**2, 2)   # → 18.48  ✅  (NO 18.49 ❌)
+round(9 / 5 * 0 + 32, 2)   # → 32.0   ✅
+```
+
+Reglas:
+- Usa `round()` con el mismo número de decimales que usará tu implementación
+- Si la implementación usa `round(x, 2)`, el test debe esperarse el mismo resultado de `round(expected, 2)`
+- Para conversiones matemáticas con divisiones/exponenciación: **calcula siempre, no memorices**
+
 ## Metodología obligatoria
 
 ### TDD — Ley de hierro

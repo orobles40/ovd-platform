@@ -54,7 +54,7 @@ from typing_extensions import Annotated, TypedDict
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI   # S21: usado en describe_image (visión)
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import interrupt, Send
@@ -259,6 +259,22 @@ class QAReviewOutput(BaseModel):
     summary: str = Field(
         description="Veredicto de calidad en 1-2 oraciones",
     )
+
+    @classmethod
+    def _coerce_str_list(cls, v: object) -> list[str]:
+        """S36-A: si el LLM retorna un str en vez de list[str], lo convierte sin iterar chars."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            lines = [ln.strip().lstrip("-•* ") for ln in stripped.splitlines() if ln.strip()]
+            return lines if lines else [stripped]
+        return v
+
+    @field_validator("issues", "missing_requirements", "code_quality_issues", mode="before")
+    @classmethod
+    def _coerce_list_fields(cls, v: object) -> list[str]:
+        return cls._coerce_str_list(v)
 
 
 # ---------------------------------------------------------------------------

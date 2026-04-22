@@ -44,12 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S35 (dashboard persiste proyecto seleccionado + warning directory vacío)
-- **Tests:** Python unit ~734 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~813
-- **Rama activa:** `dev` (commits S22→S35 sin mergear a `main`)
+- **Sprints completados:** S3 → S36 (QA issues parsing fix + float test values)
+- **Tests:** Python unit ~747 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~826
+- **Rama activa:** `dev` (commits S22→S36 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S36 (2026-04-22) — rama `dev`
+- **QA Issues: 1548 fix (S36-A):** `QAReviewOutput` ahora tiene `@field_validator("issues", "missing_requirements", "code_quality_issues", mode="before")` que convierte un `str` en `list[str]` partiendo por líneas, sin iterar caracteres. Causa raíz: Pydantic v2 coerciona `str` → `list[str]` iterando char a char cuando el LLM retorna el campo como texto libre.
+- **Float test values fix (S36-B):** `system_backend.md` ahora incluye sección "Regla de valores numéricos en tests" con instrucción explícita: NUNCA escribir valores float de memoria, verificar con `round()` antes de escribir el test. Ejemplo: `round(53.4 / 1.70**2, 2)` = `18.48` (no `18.49`). Evita el loop infinito donde tests siempre fallan por valores incorrectos.
+- **13 tests nuevos** en `test_s36.py`. **747 tests pasan** (0 fallos).
 
 ### Novedades S35 (2026-04-22) — rama `dev`
 - **Dashboard persiste proyecto seleccionado (S35):** `FrLauncher.tsx` ahora inicializa `selectedProject` desde `localStorage('ovd_last_project')`. Si no hay valor guardado o el proyecto ya no existe, auto-selecciona el primer proyecto de la lista. Cada cambio de proyecto actualiza localStorage. Evita lanzar ciclos sin `project_id` (lo que causaba `directory=""` y `run_tests` usando tmpdir en vez del workspace real).
