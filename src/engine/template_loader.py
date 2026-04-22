@@ -139,6 +139,13 @@ _FALLBACK_PROMPTS: dict[str, str] = {
         "  devops    — Docker, CI/CD, scripts de infraestructura\n"
         "Incluye SOLO los agentes que tienen trabajo real segun el SDD."
     ),
+    "system_docs": (
+        "Eres un documentador tecnico senior. Genera documentacion tecnica concisa y util "
+        "basada en el codigo implementado y el SDD. "
+        "Cada documento en bloque de codigo con ruta (```lang:path). "
+        "Solo los documentos solicitados, sin texto adicional fuera de los bloques."
+        "{project_context}"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -232,6 +239,13 @@ _FALLBACK_PROMPTS_EN: dict[str, str] = {
         "  devops    — Docker, CI/CD, infrastructure scripts\n"
         "Include ONLY agents that have real work based on the SDD."
     ),
+    "system_docs": (
+        "You are a senior technical writer. Generate concise and useful technical documentation "
+        "based on the implemented code and SDD. "
+        "Each document in a code block with path (```lang:path). "
+        "Only the requested documents, no additional text outside the blocks."
+        "{project_context}"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -324,6 +338,13 @@ _FALLBACK_PROMPTS_PT: dict[str, str] = {
         "  database  — migrações SQL, queries, Drizzle ORM, Oracle\n"
         "  devops    — Docker, CI/CD, scripts de infraestrutura\n"
         "Inclua APENAS os agentes que têm trabalho real conforme o SDD."
+    ),
+    "system_docs": (
+        "Você é um documentador técnico sênior. Gere documentação técnica concisa e útil "
+        "com base no código implementado e no SDD. "
+        "Cada documento em bloco de código com caminho (```lang:path). "
+        "Apenas os documentos solicitados, sem texto adicional fora dos blocos."
+        "{project_context}"
     ),
 }
 
