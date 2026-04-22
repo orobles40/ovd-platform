@@ -44,12 +44,19 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-22)
 
-- **Sprints completados:** S3 → S25 (run_tests usa sys.executable para pytest)
-- **Tests:** Python unit ~640 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~719
+- **Sprints completados:** S3 → S26 (fix __init__.py raíz + security_audit filesystem-first)
+- **Tests:** Python unit ~648 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~727
 - **Rama activa:** `dev` (commits S22+S23+S24+S25 sin mergear a `main`)
 - **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S26 (2026-04-22) — rama `dev`
+- **`system_backend.md` fix (S26-A):** Prohibición explícita de `__init__.py` en la raíz del workspace. Estructura correcta: `src/<paquete>/` + `conftest.py` con `sys.path.insert(0, "src")`. Ejemplo visual de ✅ vs ❌ estructura.
+- **`run_tests` cwd + flags (S26-B):** `cwd=work_dir` para todos los runners (antes solo vitest/cargo). Nuevos flags: `--rootdir={work_dir}` y `--import-mode=importlib` → resuelve `ImportError: attempted relative import with no known parent package`.
+- **`security_audit` filesystem-first (S26-C):** Mismo patrón S24-C de qa_review — lee archivos del workspace en vez de depender de `output`. Elimina el problema de "No se proporcionó código" en el flujo tool-calling.
+- **9 tests nuevos** en `test_s26.py` — template, run_tests flags/cwd, security_audit filesystem.
+- **648 tests pasan** (0 fallos).
 
 ### Novedades S25 (2026-04-22) — rama `dev`
 - **`run_tests` usa `sys.executable` (S25-A):** en vez de `"python"` (no en PATH en macOS), usa el intérprete del venv del engine → pytest 9.0.3 disponible. Validado: 10 tests recolectados y ejecutados, loop de retry 3 rondas funcional.

@@ -42,12 +42,51 @@ Devuelve SOLO código de implementación con comentarios claros.
 
 Cuando generes código Python, SIEMPRE incluye estos archivos de infraestructura si no existen:
 
-1. **`src/__init__.py`** y **`src/<paquete>/__init__.py`** — paquetes vacíos para que los imports funcionen
+1. **`src/<paquete>/__init__.py`** — paquete del código fuente (puede estar vacío)
 2. **`tests/__init__.py`** — paquete de tests
-3. **`conftest.py`** (raíz del proyecto) — fixtures globales y configuración de pytest
+3. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path para que los tests importen correctamente
 4. **`pytest.ini`** o **`pyproject.toml`** — configuración de pytest con `testpaths = tests`
 
-Ejemplo mínimo de `pytest.ini`:
+**PROHIBIDO: NUNCA generes `__init__.py` en la RAÍZ del proyecto.** Un `__init__.py` en la raíz convierte todo el workspace en un paquete Python, rompiendo pytest y los imports.
+
+### Estructura válida vs inválida
+
+✅ **CORRECTO:**
+```
+proyecto/
+├── conftest.py          ← sys.path.insert(0, "src")
+├── pytest.ini           ← testpaths = tests
+├── src/
+│   └── calculator/
+│       ├── __init__.py
+│       └── average.py
+└── tests/
+    ├── __init__.py
+    └── test_average.py  ← from calculator.average import calculate_average
+```
+
+❌ **INCORRECTO (rompe pytest):**
+```
+proyecto/
+├── __init__.py          ← NUNCA crear esto en la raíz
+├── average.py           ← código suelto en raíz
+└── tests/
+    └── test_average.py
+```
+
+### conftest.py obligatorio
+
+```python:conftest.py
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+```
+
+Este `conftest.py` permite que los tests importen directamente desde el paquete:
+- `from calculator.average import calculate_average` ✅
+- NUNCA usar `from .module import ...` (import relativo) en la raíz
+
+### pytest.ini mínimo
+
 ```ini:pytest.ini
 [pytest]
 testpaths = tests
@@ -56,12 +95,7 @@ python_classes = Test*
 python_functions = test_*
 ```
 
-Ejemplo mínimo de `conftest.py`:
-```python:conftest.py
-# Fixtures globales del proyecto
-```
-
-Sin estos archivos, `pytest` no puede descubrir los tests ni resolver los imports relativos.
+Sin estos archivos, `pytest` no puede descubrir los tests ni resolver los imports.
 
 ## Metodología obligatoria
 

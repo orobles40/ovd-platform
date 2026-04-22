@@ -1743,7 +1743,36 @@ async def security_audit(state: OVDState) -> dict:
         except Exception as scan_exc:
             log.warning("security_audit: error en CLI scanning (%s), continuando sin scan", scan_exc)
 
-    agent_code = _truncate('\n\n'.join(r.get('output', '') for r in state.get('agent_results', [])), 16000)
+    # S26-C: filesystem-first — leer código del workspace (mismo patrón que qa_review S24-C)
+    sec_directory = state.get("directory", "")
+    agent_code_parts: list[str] = []
+    if sec_directory:
+        base = pathlib.Path(sec_directory).expanduser().resolve()
+        _CODE_EXTS_SEC = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
+        _SKIP_SEC = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+        if base.exists():
+            for fp in sorted(base.rglob("*")):
+                if not fp.is_file():
+                    continue
+                if any(part in _SKIP_SEC or part.startswith(".") for part in fp.relative_to(base).parts):
+                    continue
+                if fp.suffix.lower() not in _CODE_EXTS_SEC:
+                    continue
+                if fp.name.startswith("ovd-delivery-"):
+                    continue
+                try:
+                    rel = str(fp.relative_to(base))
+                    ext = fp.suffix.lstrip(".")
+                    content = fp.read_text(encoding="utf-8", errors="replace")
+                    agent_code_parts.append(f"```{ext}:{rel}\n{content}\n```")
+                except (OSError, ValueError):
+                    pass
+            if agent_code_parts:
+                log.info("security_audit: S26-C leyó %d archivo(s) del workspace", len(agent_code_parts))
+    if not agent_code_parts:
+        agent_code_parts = [r.get("output", "") for r in state.get("agent_results", [])]
+    agent_code = _truncate("\n\n".join(agent_code_parts), 16000)
+
     messages = [
         SystemMessage(content=template_loader.render(
             "system_security",
@@ -2054,7 +2083,8 @@ async def run_tests(state: OVDState) -> dict:
     output = ""
     try:
         if runner == "pytest":
-            cmd = [sys.executable, "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q"]
+            cmd = [sys.executable, "-m", "pytest", work_dir, "-v", "--tb=short", "--no-header", "-q",
+                   f"--rootdir={work_dir}", "--import-mode=importlib"]
         elif runner == "vitest":
             cmd = ["npx", "vitest", "run", "--reporter=verbose"]
         elif runner == "cargo":
@@ -2067,7 +2097,7 @@ async def run_tests(state: OVDState) -> dict:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=work_dir if runner in ("vitest", "cargo") else None,
+                cwd=work_dir,
             )
             try:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
