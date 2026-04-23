@@ -42,14 +42,41 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-22)
+## Estado actual (2026-04-23)
 
-- **Sprints completados:** S3 → S38 (async tool invocation + QA truncation multi-agent)
+- **Sprints completados:** S3 → S40 (template improvements + security bypass fix)
 - **Tests:** Python unit ~764 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~843
-- **Rama activa:** `dev` (commits S22→S38 sin mergear a `main`)
-- **Próximo foco:** Mergear `dev` → `main` + contratar VPS (C01.A) + configurar dominio (C01.B) + TLS Caddy (C01.C)
+- **Rama activa:** `dev` (commits S22→S40 sin mergear a `main`, pendiente de commit S40)
+- **Próximo foco:** Validar ciclo completo con S40-templates + Mergear `dev` → `main` + VPS (C01)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+
+### Novedades S40 (2026-04-23) — rama `dev` (pendiente de commit)
+
+#### S40-templates — Mejoras de calidad en 3 templates
+- **S40-A `system_sdd.md`:** Regla explícita: máx 6-7 tareas por agente, prohibición de tareas scaffold-only (con ejemplos ❌/✅), tarea de tests unitarios obligatoria por agente, hooks deben quedar integrados en el SDD
+- **S40-B `system_backend.md`:** Nueva sección "Validación de RUT chileno" con implementación de referencia completa (`validate_rut`, `clean_rut`, `format_rut`, `require_valid_rut`), reglas de almacenamiento (sin puntos ni guión), UNIQUE constraint por org_id, casos de test obligatorios
+- **S40-C `system_frontend.md`:** Nueva sección "Tests Vitest obligatorios" (estructura `.test.tsx`, mínimo 2 tests por componente) + regla "Hooks — integración obligatoria" (hook sin usar = bug) + nota RUT en UI
+- **Documentado en:** `docs/TEMPLATE_IMPROVEMENTS_S40.md`
+- **Impacto esperado:** QA score ≥80/100 (era 62), SDD compliance True (era False), test files ≥1 por agente (era 0)
+
+#### Nivel1-E — Fix security bypass (`graph.py`)
+- **Bug:** `OVD_SECURITY_MIN_SCORE=0` nunca activaba el bypass porque el código chequeaba `_SECURITY_MIN_SCORE > 0` (0 > 0 = False) → security retry loop siempre se ejecutaba en dev
+- **Fix:** Cambiado a `if _SECURITY_MIN_SCORE == 0: passed = True` en `route_after_security_audit`
+- **Efecto:** Con `OVD_SECURITY_MIN_SCORE=0` en `.env`, la auditoría de seguridad ya no bloquea ni genera retry loops en dev
+
+#### Ajustes `.env` (dev)
+- `OVD_MODEL=qwen3-coder:30b` — tag explícito requerido (bare name `qwen3-coder` no resuelto por Ollama)
+- `OVD_SSE_STREAM_TIMEOUT_SECS=3600` — aumentado desde 900s → 1800s → 3600s (ciclos con retry loops duraban >30 min)
+- `OVD_NODE_TIMEOUT_SECS=1200` — 1200s por nodo (Nivel1-B)
+- `OVD_LLM_TIMEOUT_SECS=1200` — 1200s LLM (Nivel1-B)
+
+#### Ciclos de validación S40 (resultados)
+- `a2c87c99` — pre-fix: QA 62/100, SDD compliance False, 0 test files, hooks sin integrar
+- `974da8c2` — timeout SSE 900s durante agents
+- `d6bac9e5` — timeout SSE 1800s por security retry (Nivel1-E no aplicado aún)
+- `128b19c9` — cancelado heartbeat 30min (agente backend colgado en nodo agents)
+- **Pendiente:** relanzar ciclo con todos los fixes activos (Nivel1-E + SSE 3600s + S40-templates)
 
 ### Novedades S38 (2026-04-22) — rama `dev`
 - **async tool invocation (S38-A):** `_run_agent_with_tools` ahora usa `await tool_fn.ainvoke(args)` con fallback a `tool_fn.invoke(args)` cuando lanza `NotImplementedError`. Fix para context7 `StructuredTool` que fallaba con "does not support sync invocation" en ciclos con research web.

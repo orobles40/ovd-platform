@@ -118,6 +118,69 @@ Reglas:
 - Si la implementación usa `round(x, 2)`, el test debe esperarse el mismo resultado de `round(expected, 2)`
 - Para conversiones matemáticas con divisiones/exponenciación: **calcula siempre, no memorices**
 
+## Validación de RUT chileno (S40-templates)
+
+Cuando el FR involucre RUT chileno como identificador, implementa la validación **en el backend**, no solo en el frontend.
+
+### Algoritmo de validación obligatorio
+
+```python:src/<paquete>/utils/rut.py
+import re
+
+def clean_rut(rut: str) -> str:
+    """Elimina puntos y guión, retorna solo dígitos + dígito verificador."""
+    return re.sub(r"[.\-]", "", rut.strip().upper())
+
+def validate_rut(rut: str) -> bool:
+    """
+    Valida RUT chileno. Acepta formatos: 12345678-9, 12.345.678-9, 123456789.
+    Retorna True si el dígito verificador es correcto.
+    """
+    cleaned = clean_rut(rut)
+    if not re.match(r"^\d{7,8}[0-9K]$", cleaned):
+        return False
+    body, dv = cleaned[:-1], cleaned[-1]
+    total, factor = 0, 2
+    for digit in reversed(body):
+        total += int(digit) * factor
+        factor = 2 if factor == 7 else factor + 1
+    remainder = 11 - (total % 11)
+    expected = {10: "K", 11: "0"}.get(remainder, str(remainder))
+    return dv == expected
+
+def format_rut(rut: str) -> str:
+    """Formatea RUT como XX.XXX.XXX-X."""
+    cleaned = clean_rut(rut)
+    body, dv = cleaned[:-1], cleaned[-1]
+    formatted_body = ""
+    for i, digit in enumerate(reversed(body)):
+        if i > 0 and i % 3 == 0:
+            formatted_body = "." + formatted_body
+        formatted_body = digit + formatted_body
+    return f"{formatted_body}-{dv}"
+```
+
+### Reglas de uso en APIs
+
+- **Almacenamiento:** guardar siempre en formato limpio `12345678K` (sin puntos ni guión) — normalizar al recibir
+- **Validación en endpoint:** validar antes de cualquier operación de escritura:
+
+```python
+from fastapi import HTTPException, status
+
+def require_valid_rut(rut: str) -> str:
+    cleaned = clean_rut(rut)
+    if not validate_rut(cleaned):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"RUT inválido: {rut}"
+        )
+    return cleaned
+```
+
+- **Unicidad:** el campo RUT en la BD debe tener constraint UNIQUE dentro del scope de org_id
+- **Tests obligatorios:** incluir casos: RUT válido, RUT con dígito K, RUT con puntos/guión, RUT inválido (dv incorrecto), RUT con letras
+
 ## Metodología obligatoria
 
 ### TDD — Ley de hierro

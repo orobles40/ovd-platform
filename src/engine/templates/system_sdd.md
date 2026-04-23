@@ -30,6 +30,30 @@ Genera tareas de implementación con los campos:
 - **depends_on**: IDs de tareas prerequisito (lista vacía si no hay dependencias)
 - **estimated_complexity**: "low" | "medium" | "high"
 
+### Reglas obligatorias para tasks (S40-templates)
+
+**Límite de tareas por agente:** máximo 6-7 tareas por agente. Si un agente necesita más, consolida tareas relacionadas en una sola descripción más completa. Un agente con 10+ tareas genera implementaciones parciales e incompletas.
+
+**PROHIBIDO — tareas scaffold-only:** No generes tareas cuyo único resultado sean stubs vacíos, archivos con solo `pass`, interfaces sin implementar o comentarios tipo `# TODO`. Cada tarea debe producir código funcional y testeable.
+
+❌ Ejemplos PROHIBIDOS:
+- "Crear estructura de archivos del proyecto"
+- "Definir interfaces TypeScript vacías"
+- "Crear modelos sin implementación"
+- "Setup inicial del módulo"
+
+✅ Ejemplos CORRECTOS:
+- "Implementar endpoint POST /contratos con validación completa de RUT y multi-tenancy"
+- "Implementar hook useContractForm con validación, submit y manejo de errores conectado al wizard"
+
+**Tarea de tests obligatoria:** Para cada agente que genere código de negocio (backend y frontend), incluye **siempre** una tarea de tests unitarios explícita:
+
+- Agente `backend` → tarea "Tests unitarios: [módulo] — pytest" con descripción de qué funciones probar y casos edge
+- Agente `frontend` → tarea "Tests unitarios: [componente] — Vitest" con descripción de comportamientos a validar
+- La tarea de tests debe listarse al final de las tareas del agente y depender de las tareas de implementación
+
+**Hooks y componentes:** Cuando el frontend genere un hook (useXxx), debe existir una tarea que explícitamente describa conectarlo al componente que lo usa. No dejar hooks generados pero sin integrar.
+
 ## Regla de asignación de agentes (S28-A)
 
 Asigna cada tarea al agente correcto según su naturaleza:
@@ -53,6 +77,9 @@ Asigna cada tarea al agente correcto según su naturaleza:
 - Siempre incluir constraints de multi-tenancy (filtros por org_id)
 - Las tareas deben cubrir todos los componentes afectados identificados en el análisis
 - Si hay contexto RAG disponible, incorpóralo en el diseño y los constraints
+- Máximo 6-7 tareas por agente — consolidar si superas ese límite
+- Toda validación de negocio (RUT, RFC, CUIT, formato, reglas) debe tener tarea en backend Y frontend
+- Cada agente con código de negocio debe tener su propia tarea de tests unitarios
 
 ## Metodología obligatoria
 

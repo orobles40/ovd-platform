@@ -3608,8 +3608,13 @@ def route_after_security(state: OVDState) -> str:
     security = state.get("security_result", {})
     passed = security.get("passed", True)
     # P5.B: también pasar si el score supera el umbral configurable
-    if not passed and _SECURITY_MIN_SCORE > 0:
-        passed = security.get("score", 0) >= _SECURITY_MIN_SCORE
+    # Nivel1-E: OVD_SECURITY_MIN_SCORE=0 significa "bypass security retry en dev"
+    #           (antes: > 0 nunca se cumplía con valor 0, causando retry infinito en dev)
+    if not passed:
+        if _SECURITY_MIN_SCORE == 0:
+            passed = True  # dev: no bloquear por security
+        elif security.get("score", 0) >= _SECURITY_MIN_SCORE:
+            passed = True
     if passed:
         return "qa_review"
 
