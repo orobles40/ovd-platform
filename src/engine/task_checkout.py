@@ -37,8 +37,11 @@ log = logging.getLogger("ovd.checkout")
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# Umbral de sesión colgada (minutos). Configurable via env var.
-_STALE_THRESHOLD_MINUTES = int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30"))
+# S41P.B — Umbral de sesión colgada configurable.
+# OVD_HEARTBEAT_TIMEOUT_SECS (segundos) tiene prioridad sobre OVD_STALE_SESSION_MINUTES (minutos).
+# Default: 1800s (30 min). En .env de dev se recomienda 3600s para ciclos largos.
+_hb_secs = int(os.environ.get("OVD_HEARTBEAT_TIMEOUT_SECS", "0"))
+_STALE_THRESHOLD_MINUTES = (_hb_secs // 60) if _hb_secs > 0 else int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30"))
 
 # ---------------------------------------------------------------------------
 # PP-05 — Registro en memoria de sesiones activas

@@ -81,6 +81,14 @@ _CYCLE_BUDGET_TOKENS: int = int(os.getenv("OVD_CYCLE_TOKEN_BUDGET", "0"))
 # sin matar el ciclo completo. Configurable via OVD_NODE_TIMEOUT_SECS.
 _NODE_TIMEOUT: float = float(os.getenv("OVD_NODE_TIMEOUT_SECS", "120"))
 
+# S41P.A — Timeouts diferenciados por nodo. Sobrescriben _NODE_TIMEOUT cuando están definidos.
+# Cada nodo tiene su propio peso: security_audit y agents son los más pesados (LLM 80B).
+_AGENTS_TIMEOUT: float   = float(os.getenv("OVD_AGENTS_TIMEOUT_SECS",   str(_NODE_TIMEOUT)))
+_SECURITY_TIMEOUT: float = float(os.getenv("OVD_SECURITY_TIMEOUT_SECS", "1800"))
+_QA_TIMEOUT: float       = float(os.getenv("OVD_QA_TIMEOUT_SECS",       "1200"))
+_TESTS_TIMEOUT: float    = float(os.getenv("OVD_TESTS_TIMEOUT_SECS",    "300"))
+_DOCS_TIMEOUT: float     = float(os.getenv("OVD_DOCS_TIMEOUT_SECS",     "600"))
+
 # ---------------------------------------------------------------------------
 # Schemas de structured output
 # ---------------------------------------------------------------------------
@@ -1357,12 +1365,12 @@ async def agent_executor(state: OVDState) -> dict:
                             agent_name, task_sdd_content, comment, llm,
                             task_project_ctx, retry_feedback, language, tools, directory, rag_context,
                         ),
-                        timeout=_NODE_TIMEOUT,
+                        timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
                 else:
                     task_result = await asyncio.wait_for(
                         runner(task_sdd_content, comment, llm, task_project_ctx, retry_feedback, language, rag_context),
-                        timeout=_NODE_TIMEOUT,
+                        timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
             except asyncio.TimeoutError:
                 log.error(
@@ -1407,17 +1415,17 @@ async def agent_executor(state: OVDState) -> dict:
                 )
             return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
 
-        # S20 — GAP-R1: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
+        # S20 — GAP-R1 / S41P.A: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
         try:
-            result = await asyncio.wait_for(_invoke_agent_logic(), timeout=_NODE_TIMEOUT)
+            result = await asyncio.wait_for(_invoke_agent_logic(), timeout=_AGENTS_TIMEOUT)
         except asyncio.TimeoutError:
             log.error(
                 "agent_executor: TIMEOUT en nodo '%s' tras %.0fs — retornando resultado de error",
-                agent_name, _NODE_TIMEOUT,
+                agent_name, _AGENTS_TIMEOUT,
             )
             result = {
                 "agent": agent_name,
-                "output": f"[Timeout: el agente '{agent_name}' no respondió en {_NODE_TIMEOUT:.0f}s. Revisa el estado del LLM.]",
+                "output": f"[Timeout: el agente '{agent_name}' no respondió en {_AGENTS_TIMEOUT:.0f}s. Revisa el estado del LLM.]",
                 "artifacts": [],
                 "uncertainties": [],
                 "tokens": {"input": 0, "output": 0},
@@ -1924,33 +1932,47 @@ async def security_audit(state: OVDState) -> dict:
         )),
     ]
 
+    # S41P.A — Timeout diferenciado para security_audit (LLM pesado, puede tardar mucho)
+    async def _invoke_security_llm() -> SecurityAuditOutput:
+        try:
+            res = await invoke_structured(llm, messages, SecurityAuditOutput)
+            # BUG-04: detectar resultado inválido (score=0 con severity=high y sin vulnerabilidades
+            # es señal de que el modelo no siguió el schema — ocurre con qwen2.5-coder:7b)
+            if res.score == 0 and not res.vulnerabilities and not res.secrets_found:
+                log.warning(
+                    "security_audit: score=0 sin vulnerabilidades — probable fallo de parsing, "
+                    "intentando fallback"
+                )
+                raw_resp = await llm.ainvoke(messages)
+                raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                res = _parse_security_fallback(raw_text)
+        except Exception as exc:
+            log.warning("security_audit: invoke_structured falló (%s) — usando fallback", exc)
+            try:
+                raw_resp = await llm.ainvoke(messages)
+                raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                res = _parse_security_fallback(raw_text)
+            except Exception as exc2:
+                log.error("security_audit: fallback también falló (%s) — resultado neutro", exc2)
+                res = SecurityAuditOutput(
+                    passed=True, score=75, severity="none",
+                    vulnerabilities=[], secrets_found=[], insecure_patterns=[],
+                    rls_compliant=True, remediation=[],
+                    summary="Auditoría de seguridad no disponible (error de modelo).",
+                )
+        return res
+
     result: SecurityAuditOutput
     try:
-        result = await invoke_structured(llm, messages, SecurityAuditOutput)
-        # BUG-04: detectar resultado inválido (score=0 con severity=high y sin vulnerabilidades
-        # es señal de que el modelo no siguió el schema — ocurre con qwen2.5-coder:7b)
-        if result.score == 0 and not result.vulnerabilities and not result.secrets_found:
-            log.warning(
-                "security_audit: score=0 sin vulnerabilidades — probable fallo de parsing, "
-                "intentando fallback"
-            )
-            raw_resp = await llm.ainvoke(messages)
-            raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
-            result = _parse_security_fallback(raw_text)
-    except Exception as exc:
-        log.warning("security_audit: invoke_structured falló (%s) — usando fallback", exc)
-        try:
-            raw_resp = await llm.ainvoke(messages)
-            raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
-            result = _parse_security_fallback(raw_text)
-        except Exception as exc2:
-            log.error("security_audit: fallback también falló (%s) — resultado neutro", exc2)
-            result = SecurityAuditOutput(
-                passed=True, score=75, severity="none",
-                vulnerabilities=[], secrets_found=[], insecure_patterns=[],
-                rls_compliant=True, remediation=[],
-                summary="Auditoría de seguridad no disponible (error de modelo).",
-            )
+        result = await asyncio.wait_for(_invoke_security_llm(), timeout=_SECURITY_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.error("security_audit: TIMEOUT tras %.0fs — resultado neutro", _SECURITY_TIMEOUT)
+        result = SecurityAuditOutput(
+            passed=True, score=75, severity="none",
+            vulnerabilities=[], secrets_found=[], insecure_patterns=[],
+            rls_compliant=True, remediation=[],
+            summary=f"Auditoría de seguridad no disponible (timeout tras {_SECURITY_TIMEOUT:.0f}s).",
+        )
 
     security = {
         "passed": result.passed,
@@ -2127,30 +2149,46 @@ async def qa_review(state: OVDState) -> dict:
         )),
     ]
 
-    # S20 — GAP-R5: fallback robusto igual que security_audit
+    # S20 — GAP-R5 / S41P.A: fallback robusto con timeout diferenciado
+    async def _invoke_qa_llm() -> QAReviewOutput:
+        try:
+            res = await invoke_structured(llm, messages_qa, QAReviewOutput)
+            # Detectar parsing fallido: score=0 sin issues = modelo no siguió el schema
+            if res.score == 0 and not res.issues:
+                raw_resp = await llm.ainvoke(messages_qa)
+                res = _parse_qa_fallback(raw_resp.content)
+        except Exception as exc:
+            log.warning("qa_review: invoke_structured falló (%s: %s) — usando fallback", type(exc).__name__, str(exc)[:120])
+            try:
+                raw_resp = await llm.ainvoke(messages_qa)
+                res = _parse_qa_fallback(raw_resp.content)
+            except Exception as exc2:
+                log.error("qa_review: fallback también falló (%s) — resultado neutro", exc2)
+                res = QAReviewOutput(
+                    passed=True,
+                    score=70,
+                    issues=[],
+                    sdd_compliance=True,
+                    missing_requirements=[],
+                    code_quality_issues=[],
+                    summary="QA completado (modo fallback — resultado neutro).",
+                )
+        return res
+
     result: QAReviewOutput
     try:
-        result = await invoke_structured(llm, messages_qa, QAReviewOutput)
-        # Detectar parsing fallido: score=0 sin issues = modelo no siguió el schema
-        if result.score == 0 and not result.issues:
-            raw_resp = await llm.ainvoke(messages_qa)
-            result = _parse_qa_fallback(raw_resp.content)
-    except Exception as exc:
-        log.warning("qa_review: invoke_structured falló (%s: %s) — usando fallback", type(exc).__name__, str(exc)[:120])
-        try:
-            raw_resp = await llm.ainvoke(messages_qa)
-            result = _parse_qa_fallback(raw_resp.content)
-        except Exception as exc2:
-            log.error("qa_review: fallback también falló (%s) — resultado neutro", exc2)
-            result = QAReviewOutput(
-                passed=True,
-                score=70,
-                issues=[],
-                sdd_compliance=True,
-                missing_requirements=[],
-                code_quality_issues=[],
-                summary="QA completado (modo fallback — resultado neutro).",
-            )
+        result = await asyncio.wait_for(_invoke_qa_llm(), timeout=_QA_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.error("qa_review: TIMEOUT tras %.0fs — resultado neutro", _QA_TIMEOUT)
+        result = QAReviewOutput(
+            passed=True,
+            score=70,
+            issues=[],
+            sdd_compliance=True,
+            missing_requirements=[],
+            code_quality_issues=[],
+            summary=f"QA no disponible (timeout tras {_QA_TIMEOUT:.0f}s).",
+        )
 
     qa = {
         "passed": result.passed,
@@ -2608,7 +2646,7 @@ async def generate_docs(state: OVDState) -> dict:
             SystemMessage(content=system_prompt),
             HumanMessage(content=prompt_content),
         ]
-        response = await llm.ainvoke(messages)
+        response = await asyncio.wait_for(llm.ainvoke(messages), timeout=_DOCS_TIMEOUT)  # S41P.A
         raw = response.content if hasattr(response, "content") else str(response)
 
         # Parsear bloques de documentación (mismo patrón que _write_artifacts)
