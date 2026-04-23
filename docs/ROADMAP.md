@@ -534,6 +534,83 @@ START → describe_image → analyze_fr → generate_sdd → route_agents
 
 ---
 
+### Sprint 41.PRE — Fix timeout security_audit + timeouts diferenciados por nodo ⬜
+
+**Identificado:** 2026-04-23
+**Problema:** El nodo `security_audit` usa `OVD_MODEL_QA=qwen3-coder-next` (modelo 80B MoE, ~20 t/s). En ciclos donde los agentes generan mucho código, el LLM de auditoría tarda >30 min y el heartbeat lo cancela antes de terminar. El nodo `run_tests` y `qa_review` tienen el mismo riesgo.
+
+**Síntoma observado:**
+- Ciclo `71a68ecd`: cancelado por heartbeat a los 30 min en nodo `security_audit`
+- El grafo mostraba Ejecutar agentes ✅ pero Auditoría seguridad nunca completó
+- `OVD_NODE_TIMEOUT_SECS=1200` aplica igual a todos los nodos — no diferencia por peso
+
+**Fix propuesto (S39-A revisado):**
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S41P.A | Timeouts diferenciados por nodo | `asyncio.wait_for` con timeout específico: `security_audit=1800s`, `qa_review=1200s`, `agents=1800s`, `run_tests=300s`, `generate_docs=600s` | `src/engine/graph.py` | ⬜ |
+| S41P.B | Heartbeat threshold configurable | `OVD_HEARTBEAT_TIMEOUT_SECS=3600` (default 1800) para proyectos con ciclos largos. Actualmente hardcodeado en 30 min | `src/engine/graph.py` | ⬜ |
+| S41P.C | Modelo más liviano para security_audit | Evaluar usar `qwen3-coder:30b` en vez de `qwen3-coder-next` para `security_audit` — misma calidad, 3× más rápido | `src/engine/.env` | ⬜ |
+
+**Orden sugerido:** implementar S41P.C primero (cambio de una línea en .env, sin código), luego S41P.A y S41P.B si persiste el problema.
+
+---
+
+### Sprint 41 — RAG Learning: Aprendizaje automático desde ciclos ⬜
+
+**Identificado:** 2026-04-23
+**Motivación:** Actualmente el RAG solo indexa el informe de entrega final (`ovd-delivery-*.md`). Los errores intermedios — QA failures, fallos de tests, vulnerabilidades de seguridad, causas de ciclos colgados — se "aprenden" de forma manual editando templates. S41 hace ese aprendizaje automático y acumulativo por proyecto.
+
+**Contexto del problema:**
+- RAG actual indexa: qué se construyó (resultado final)
+- RAG actual NO indexa: qué falló, por qué, cómo se resolvió
+- Hoy se corrigen errores recurrentes editando `system_*.md` manualmente (S26 → S40)
+- Con S41, el agente recibe lecciones pasadas del mismo proyecto antes de escribir código
+
+#### Parte A — Indexación de errores intermedios (engine)
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S41.A1 | `lessons.py` — módulo de indexación | Nuevo módulo con funciones: `index_qa_finding()`, `index_security_finding()`, `index_test_failure()`, `index_cycle_postmortem()`. Cada función escribe un chunk en pgvector con metadata: `chunk_type`, `project_id`, `cycle_id`, `severity`, `resolved` | `src/engine/knowledge/lessons.py` | ⬜ |
+| S41.A2 | Hook en `qa_review` | Al terminar `qa_review`, si hay issues, llamar `index_qa_finding(project_id, issues, score, cycle_id)` | `src/engine/graph.py` | ⬜ |
+| S41.A3 | Hook en `security_audit` | Al terminar `security_audit`, si hay findings, llamar `index_security_finding(project_id, findings, score, cycle_id)` | `src/engine/graph.py` | ⬜ |
+| S41.A4 | Hook en `run_tests` (fallos) | Si tests fallan, indexar `retry_feedback` con `index_test_failure(project_id, error_text, cycle_id)`. No indexar en runs exitosos | `src/engine/graph.py` | ⬜ |
+| S41.A5 | Hook en `deliver` (post-mortem) | Generar y indexar resumen del ciclo: qué agentes fallaron, cuántos retries, qué se resolvió y cómo | `src/engine/graph.py` | ⬜ |
+| S41.A6 | Schema metadata en pgvector | Agregar columnas `chunk_type`, `severity`, `resolved` a la tabla de chunks RAG, o usar JSONB metadata existente | `migration-ovd/` | ⬜ |
+
+#### Parte B — Inyección de lecciones en agentes
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S41.B1 | `query_lessons_context()` en template_loader | Consulta pgvector filtrado por `project_id` + `chunk_type IN (qa_finding, test_failure, security_finding)`. Devuelve top-5 más similares al FR actual | `src/engine/template_loader.py` | ⬜ |
+| S41.B2 | Placeholder `{lessons_context}` en templates | Agregar bloque "Lecciones de ciclos anteriores" en `system_backend.md`, `system_frontend.md`, `system_sdd.md` | `src/engine/templates/` | ⬜ |
+| S41.B3 | Formato de lección en prompt | Ejemplo: `[QA finding — cycle a2c87c99] hook useContractValidation generado pero no importado → bug crítico (-15 pts). Asegúrate de importar todos los hooks generados.` | `src/engine/knowledge/lessons.py` | ⬜ |
+| S41.B4 | Scope por proyecto | Las lecciones son exclusivas por `project_id` — no se cruzan entre proyectos distintos | `src/engine/template_loader.py` | ⬜ |
+
+#### Parte C — Vista "Memoria del equipo" en dashboard
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S41.C1 | Endpoint `GET /api/v1/orgs/{org}/projects/{id}/lessons` | Devuelve lecciones indexadas para un proyecto: tipo, severidad, texto, ciclo de origen, fecha | `src/engine/api.py` | ⬜ |
+| S41.C2 | Página `/projects/{id}/lessons` en dashboard | Lista de lecciones activas por proyecto. Filtros por tipo (QA / Security / Tests). Badge de severidad (crítica / alta / media) | `src/dashboard/src/pages/ProjectLessons.tsx` | ⬜ |
+| S41.C3 | Enlace desde sidebar por proyecto | Acceso directo a "Memoria del equipo" desde la vista de proyecto | `src/dashboard/src/components/Sidebar.tsx` | ⬜ |
+| S41.C4 | Acción "Marcar como resuelta" | El arquitecto puede archivar una lección si ya fue corregida en un template o ya no aplica | `src/dashboard/src/pages/ProjectLessons.tsx` | ⬜ |
+| S41.C5 | Lecciones visibles en panel del ciclo | Durante la ejecución del ciclo, mostrar las lecciones que recibieron los agentes como contexto | `src/dashboard/src/pages/FrLauncher.tsx` | ⬜ |
+
+#### Tests
+
+| # | Test | Valida |
+|---|------|--------|
+| S41.T1 | `test_index_qa_finding` | Chunk insertado en pgvector con metadata correcta |
+| S41.T2 | `test_index_test_failure_solo_en_fallos` | No indexa si tests pasaron |
+| S41.T3 | `test_query_lessons_scope_por_proyecto` | Lecciones de proyecto A no aparecen en proyecto B |
+| S41.T4 | `test_lessons_en_prompt_de_agente` | `{lessons_context}` poblado cuando hay lecciones; vacío si no hay |
+| S41.T5 | `test_endpoint_lessons` | GET devuelve lista paginada con filtros por tipo |
+
+**Impacto esperado:** reducción progresiva de errores recurrentes sin tocar templates. Los agentes "recuerdan" qué falló antes en el mismo proyecto y ajustan su implementación.
+
+---
+
 ## FASE F — Migración Flutter (cliente unificado web + desktop)
 
 **Objetivo:** reemplazar el TUI Rust y el Dashboard React por una sola aplicación Flutter que compila a web, macOS, Linux y Windows desde el mismo codebase Dart. El engine Python no cambia.
