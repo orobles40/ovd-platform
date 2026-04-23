@@ -385,19 +385,34 @@ def query_ui_context(fr_text: str, max_results: int = 3) -> str:
 # API publica
 # ---------------------------------------------------------------------------
 
-def load(name: str, language: str = "es") -> str:
+def load(name: str, language: str = "es", stack_language: str = "") -> str:
     """
-    Carga el template por nombre e idioma.
-    Orden de búsqueda:
+    Carga el template por nombre, idioma y stack tecnológico.
+
+    Orden de búsqueda (S42-E — stack-aware template selection):
       1. Cache en memoria
-      2. templates/{language}/{name}.md  (si language != "es")
-      3. templates/{name}.md             (español / default)
-      4. Fallbacks inline por idioma
+      2. templates/{name}_{stack_language}.md  (si stack_language != "")
+      3. templates/{language}/{name}.md        (si language != "es")
+      4. templates/{name}.md                   (español / default)
+      5. Fallbacks inline por idioma
+
+    stack_language: lenguaje del stack del proyecto ("python", "typescript", "java", etc.)
+    Permite cargar system_backend_python.md en vez de system_backend.md cuando el
+    proyecto es Python, sin afectar proyectos sin perfil configurado.
     """
     lang = language if language in SUPPORTED_LANGUAGES else "es"
-    cache_key = f"{lang}:{name}"
+    sl = stack_language.lower().strip() if stack_language else ""
+    cache_key = f"{lang}:{sl}:{name}" if sl else f"{lang}:{name}"
     if cache_key in _cache:
         return _cache[cache_key]
+
+    # S42-E: Buscar template específico del stack tecnológico
+    if sl:
+        stack_file = _TEMPLATES_DIR / f"{name}_{sl}.md"
+        if stack_file.exists():
+            content = stack_file.read_text(encoding="utf-8").strip()
+            _cache[cache_key] = content
+            return content
 
     # Buscar template específico del idioma
     if lang != "es":
@@ -422,9 +437,9 @@ def load(name: str, language: str = "es") -> str:
     return fallback
 
 
-def render(name: str, language: str = "es", **variables: str) -> str:
+def render(name: str, language: str = "es", stack_language: str = "", **variables: str) -> str:
     """
-    Carga el template (en el idioma indicado) y sustituye las variables.
+    Carga el template (en el idioma y stack indicados) y sustituye las variables.
 
     Variables disponibles:
       project_context — bloque Markdown del Project Profile
@@ -434,13 +449,17 @@ def render(name: str, language: str = "es", **variables: str) -> str:
     Variables no proporcionadas se reemplazan con string vacio.
     Los bloques de variables vacias se omiten limpiamente.
 
+    stack_language (S42-E): si se provee ("python", "typescript", etc.),
+    intenta cargar {name}_{stack_language}.md antes que {name}.md.
+
     Uso:
       prompt = template_loader.render("system_backend",
           language=state.get("language", "es"),
+          stack_language=state.get("stack_language", ""),
           project_context=state.get("project_context", ""),
           retry_feedback=state.get("retry_feedback", ""))
     """
-    template = load(name, language=language)
+    template = load(name, language=language, stack_language=stack_language)
 
     # Preparar valores — los vacios generan string vacio
     defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": ""}
@@ -473,16 +492,20 @@ def invalidate(name: Optional[str] = None, language: Optional[str] = None) -> No
     """
     Invalida el cache de templates.
     Sin argumentos: invalida todo el cache.
-    Con name: invalida ese template en todos los idiomas (o en el idioma dado).
+    Con name: invalida ese template en todos los idiomas y stacks.
     """
     global _cache
     if name is None:
         _cache = {}
     elif language is not None:
-        _cache.pop(f"{language}:{name}", None)
+        # Eliminar todas las entradas que contengan este idioma y nombre
+        keys_to_del = [k for k in _cache if k.endswith(f":{name}") and k.startswith(f"{language}:")]
+        for k in keys_to_del:
+            del _cache[k]
     else:
-        for lang in SUPPORTED_LANGUAGES:
-            _cache.pop(f"{lang}:{name}", None)
+        keys_to_del = [k for k in _cache if k.endswith(f":{name}")]
+        for k in keys_to_del:
+            del _cache[k]
 
 
 def list_available() -> list[str]:

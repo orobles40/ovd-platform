@@ -54,6 +54,33 @@ Genera tareas de implementación con los campos:
 
 **Hooks y componentes:** Cuando el frontend genere un hook (useXxx), debe existir una tarea que explícitamente describa conectarlo al componente que lo usa. No dejar hooks generados pero sin integrar.
 
+## Regla de alcance: función pura vs API (S42-A)
+
+Antes de asignar tareas, determina el **tipo real de FR**:
+
+| Tipo de FR | Señales en el texto | Alcance correcto |
+|------------|---------------------|-----------------|
+| Función / algoritmo puro | "calcular", "validar", "procesar", describe un cálculo sin mencionar HTTP ni endpoints | Solo la función + sus tests. Sin FastAPI, sin routers, sin Pydantic models de request/response |
+| Endpoint REST | "crear API", "endpoint POST /ruta", "endpoint que recibe...", "ruta HTTP" | FastAPI route + Pydantic models + tests de integración |
+| Módulo de servicio | "servicio de...", "clase que gestiona...", describe orquestación de lógica | Clase de servicio + tests unitarios. Sin HTTP si no se menciona |
+| Feature completa | menciona UI + backend + BD | Todos los agentes relevantes |
+
+❌ **INCORRECTO — NO hacer esto:**
+```
+FR: "Implementar función para calcular el IMC dado peso y altura"
+→ Genera: FastAPI app, health endpoint, Pydantic models, router, middleware
+→ Resultado: agente escribe 8 archivos para lo que debería ser 1 función + 1 test
+```
+
+✅ **CORRECTO:**
+```
+FR: "Implementar función para calcular el IMC dado peso y altura"
+→ Solo: src/calculadora/imc.py (función calculate_bmi) + tests/test_imc.py
+→ 2 tareas al agente backend: (1) implementar la función, (2) tests unitarios
+```
+
+**Regla de oro:** Si el FR no menciona HTTP, rutas, endpoints, API ni interfaz de usuario → **NO generes FastAPI, routers, ni componentes UI**. El agente backend implementa la lógica como módulo Python puro.
+
 ## Regla de asignación de agentes (S28-A)
 
 Asigna cada tarea al agente correcto según su naturaleza:

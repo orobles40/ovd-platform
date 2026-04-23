@@ -412,6 +412,27 @@ async def start_session(
             "Seleccionar proyecto en el dashboard o pasar directory en el body."
         )
 
+    # S42-E: Resolver stack_language desde ovd_stack_profiles por project_id
+    resolved_stack_language = ""
+    if body.project_id:
+        _db_url = os.environ.get("DATABASE_URL", "")
+        if _db_url:
+            try:
+                async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
+                    _row = await _conn.execute(
+                        "SELECT language FROM ovd_stack_profiles WHERE project_id = %s AND active = true LIMIT 1",
+                        (body.project_id,),
+                    )
+                    _r = await _row.fetchone()
+                    if _r and _r[0]:
+                        resolved_stack_language = _r[0].lower().strip()
+                        logging.getLogger("ovd.api").info(
+                            "session_create: S42-E stack_language='%s' para project_id=%s",
+                            resolved_stack_language, body.project_id,
+                        )
+            except Exception as _e:
+                logging.getLogger("ovd.api").warning("session_create: S42-E no se pudo resolver stack_language — %s", _e)
+
     # Nueva sesion: inicializar el estado del grafo
     initial_state: OVDState = {
         "session_id": session_id,
@@ -421,6 +442,7 @@ async def start_session(
         "feature_request": body.feature_request,
         "project_context": resolved_project_context,  # S8: bloque tipado con restricciones incluidas
         "stack_routing": agent_ctx.model_routing,      # S8: routing efectivo para model_router
+        "stack_language": resolved_stack_language,     # S42-E: lenguaje del stack ("python", "typescript", ...)
         "jwt_token": body.jwt_token,
         "rag_context": rag_ctx,
         "language": lang,

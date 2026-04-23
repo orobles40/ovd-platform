@@ -534,6 +534,65 @@ START → describe_image → analyze_fr → generate_sdd → route_agents
 
 ---
 
+### Sprint 42 — Stack-aware templates + calidad de generación ✅
+
+**Identificado:** 2026-04-23
+**Motivación:** Ciclo de validación S40 (`22d68d30`) reveló 4 problemas independientes:
+1. SDD genera FastAPI completo para un FR de función pura (IMC) → over-engineering
+2. Agente backend genera `calculate_bmi` en 4 archivos diferentes → duplicados, tests fallan
+3. Valores float de memoria en tests (`23.02 == 22.94`) → fallos de precisión numérica
+4. Templates genéricos no tienen reglas específicas de stack → mismo template para Python, TypeScript, Oracle
+
+**Problema raíz:** OVD sirve múltiples stacks tecnológicos pero usa los mismos templates para todos.
+
+#### Items implementados
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S42-A | `system_sdd.md` — scope control | Regla explícita: si el FR describe una función/algoritmo sin mencionar HTTP, NO generar FastAPI ni routers. Ejemplo visual ❌/✅ para FRs de función pura | `src/engine/templates/system_sdd.md` | ✅ |
+| S42-B | `run_tests` workspace isolation | Al iniciar un retry round (>0), elimina archivos de implementación Python del ciclo actual (mtime >= cycle_start_ts) para que el agente empiece sin residuos del round anterior. No toca test_*.py ni archivos de infraestructura | `src/engine/graph.py` (`_cleanup_impl_files_from_prev_retry`) | ✅ |
+| S42-C | Float precision en template Python | Regla reforzada en `system_backend_python.md`: proceso obligatorio de 3 pasos para calcular valores float antes de escribir el assert. Prohíbe explícitamente valores de memoria | `src/engine/templates/system_backend_python.md` | ✅ |
+| S42-D | Detección de duplicados en retry | `_detect_duplicate_functions(work_dir)` escanea archivos Python del workspace y detecta funciones definidas en más de un archivo. El diagnóstico se incluye en `retry_feedback` | `src/engine/graph.py` (`_detect_duplicate_functions`, `update_test_retry`) | ✅ |
+| S42-E | Template selection por stack | `template_loader.load(name, stack_language="python")` busca `{name}_{stack_language}.md` antes que `{name}.md`. `api.py` lee `ovd_stack_profiles.language` y lo pasa como `stack_language` en `OVDState`. Los runners de agentes reciben y propagan el parámetro | `src/engine/template_loader.py`, `src/engine/graph.py`, `src/engine/api.py` | ✅ |
+| S42-F | Templates por stack (nuevos archivos) | Creados 5 templates específicos. Cada uno tiene reglas y ejemplos del stack correcto sin mezclar Python con TypeScript ni PostgreSQL con Oracle | `src/engine/templates/system_backend_python.md`, `system_backend_typescript.md`, `system_frontend_react.md`, `system_database_postgresql.md`, `system_database_oracle.md` | ✅ |
+
+#### Templates por stack — mapa completo
+
+| Template genérico | Stack `python` | Stack `typescript` | Stack `oracle` | Stack `postgresql` |
+|-------------------|---------------|-------------------|----------------|-------------------|
+| `system_backend.md` | `system_backend_python.md` ✅ | `system_backend_typescript.md` ✅ | — (usar genérico) | — (usar genérico) |
+| `system_frontend.md` | — (usar genérico) | `system_frontend_react.md` ✅ | — | — |
+| `system_database.md` | — | — | `system_database_oracle.md` ✅ | `system_database_postgresql.md` ✅ |
+
+**Flujo de selección en `template_loader.load()`:**
+```
+stack_language="python" + name="system_backend"
+  1. ¿existe system_backend_python.md?  → ✅ carga ese
+  2. ¿existe {language}/system_backend.md? → fallback idioma
+  3. ¿existe system_backend.md? → fallback genérico
+  4. Fallback inline hardcodeado
+```
+
+#### Stacks futuros (pendiente)
+
+Los siguientes stacks están documentados en el mapa pero aún no tienen templates:
+
+| Stack | `stack_language` | Templates pendientes |
+|-------|-----------------|---------------------|
+| Java | `java` | `system_backend_java.md` — Spring Boot, Maven/Gradle, JUnit 5 |
+| Go | `go` | `system_backend_go.md` — net/http, go test, módulos |
+| Vue 3 | `vue` | `system_frontend_vue.md` — Vue 3 Composition API, Vitest |
+| Angular | `angular` | `system_frontend_angular.md` — Angular 17+, Jasmine/Karma |
+
+Para agregar un nuevo stack: crear el template en `src/engine/templates/` con nombre `system_{agente}_{stack}.md`, configurar el stack en el proyecto desde el dashboard (ProjectModal → Lenguaje), y el sistema lo usará automáticamente.
+
+#### Tests
+
+- `src/engine/tests/test_s42.py` — 35 tests nuevos
+- Cobertura: S42-A (template SDD), S42-B (cleanup), S42-C (float rule), S42-D (duplicados), S42-E (template loader), S42-F (templates por stack)
+
+---
+
 ### Sprint 41.PRE — Fix timeout security_audit + timeouts diferenciados por nodo ⬜
 
 **Identificado:** 2026-04-23

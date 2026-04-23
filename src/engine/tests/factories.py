@@ -27,6 +27,8 @@ _STATE_DEFAULTS: dict[str, Any] = {
     "stack_db_engine":   "postgresql",
     "stack_db_version":  "16",
     "stack_restrictions": [],
+    # S42-E: stack language para selección de template
+    "stack_language":    "",
     # GitHub (S6)
     "github_token":  "",
     "github_repo":   "",

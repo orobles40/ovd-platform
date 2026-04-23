@@ -342,6 +342,13 @@ class OVDState(TypedDict):
     stack_db_version: str       # versión del motor de BD (para logging)
     stack_restrictions: list    # restricciones activas inyectadas en project_context (para debug)
 
+    # S42-E — Stack-aware template selection
+    # Lenguaje del stack tecnológico del proyecto: "python", "typescript", "java", "go", etc.
+    # Leído desde ovd_stack_profiles.language en api.py.
+    # Usado por template_loader.render() para cargar system_backend_python.md en vez de system_backend.md.
+    # Vacío ("") = sin perfil configurado → usa template genérico.
+    stack_language: str
+
     # Sprint 10 — OTEL trace_id (GAP-A6)
     # Propagado desde api.py para correlacionar spans de todos los nodos del ciclo
     trace_id: str               # trace_id hexadecimal (32 chars) del span raíz del ciclo
@@ -1014,13 +1021,14 @@ async def request_approval(state: OVDState) -> dict:
 
 
 async def _run_frontend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
 ) -> dict:
     """Agente especializado en frontend: segun el stack del proyecto."""
     response = await llm.ainvoke([
         SystemMessage(content=template_loader.render(
             "system_frontend",
             language=language,
+            stack_language=stack_language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
             rag_context=rag_context,
@@ -1036,13 +1044,14 @@ async def _run_frontend_agent(
 
 
 async def _run_backend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
 ) -> dict:
     """Agente especializado en backend: segun el stack del proyecto."""
     response = await llm.ainvoke([
         SystemMessage(content=template_loader.render(
             "system_backend",
             language=language,
+            stack_language=stack_language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
             rag_context=rag_context,
@@ -1058,13 +1067,14 @@ async def _run_backend_agent(
 
 
 async def _run_database_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
 ) -> dict:
     """Agente especializado en base de datos: segun el motor del proyecto."""
     response = await llm.ainvoke([
         SystemMessage(content=template_loader.render(
             "system_database",
             language=language,
+            stack_language=stack_language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
             rag_context=rag_context,
@@ -1080,13 +1090,14 @@ async def _run_database_agent(
 
 
 async def _run_devops_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = ""
+    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
 ) -> dict:
     """Agente especializado en DevOps: segun el CI/CD del proyecto."""
     response = await llm.ainvoke([
         SystemMessage(content=template_loader.render(
             "system_devops",
             language=language,
+            stack_language=stack_language,
             project_context=project_ctx,
             retry_feedback=retry_feedback,
             rag_context=rag_context,
@@ -1243,6 +1254,7 @@ def _dispatch_agents(state: OVDState) -> list[Send]:
         "retry_feedback":  state.get("retry_feedback", ""),
         "approval_comment": state.get("approval_comment", ""),
         "language":        state.get("language", "es"),
+        "stack_language":  state.get("stack_language", ""),  # S42-E
         "directory":       state.get("directory", ""),
         "session_id":      state.get("session_id", ""),
     }
@@ -1265,6 +1277,7 @@ async def agent_executor(state: OVDState) -> dict:
     jwt_token = state.get("jwt_token", "")
     retry_feedback = state.get("retry_feedback", "")
     language = state.get("language", "es")
+    stack_language = state.get("stack_language", "")  # S42-E: lenguaje del stack del proyecto
     rag_context = state.get("rag_context", "")  # RAG-03: contexto de entregas previas
 
     # PP-01: verificar presupuesto de tokens del ciclo antes de invocar el agente
@@ -1364,12 +1377,13 @@ async def agent_executor(state: OVDState) -> dict:
                         _run_agent_with_tools(
                             agent_name, task_sdd_content, comment, llm,
                             task_project_ctx, retry_feedback, language, tools, directory, rag_context,
+                            stack_language=stack_language,  # S42-E
                         ),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
                 else:
                     task_result = await asyncio.wait_for(
-                        runner(task_sdd_content, comment, llm, task_project_ctx, retry_feedback, language, rag_context),
+                        runner(task_sdd_content, comment, llm, task_project_ctx, retry_feedback, language, rag_context, stack_language=stack_language),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
             except asyncio.TimeoutError:
@@ -1411,9 +1425,10 @@ async def agent_executor(state: OVDState) -> dict:
             if tools:
                 return await _run_agent_with_tools(
                     agent_name, agent_sdd_content, comment, llm,
-                    project_ctx, retry_feedback, language, tools, directory, rag_context
+                    project_ctx, retry_feedback, language, tools, directory, rag_context,
+                    stack_language=stack_language,  # S42-E
                 )
-            return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
+            return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context, stack_language=stack_language)
 
         # S20 — GAP-R1 / S41P.A: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
         try:
@@ -1462,6 +1477,8 @@ async def _run_agent_with_tools(
     tools: list,
     directory: str,
     rag_context: str = "",
+    *,
+    stack_language: str = "",  # S42-E: lenguaje del stack para selección de template
 ) -> dict:
     """
     S17T.B — Bucle agentico con tool calling.
@@ -1492,6 +1509,7 @@ async def _run_agent_with_tools(
     system_prompt = template_loader.render(
         f"system_{agent_name}",
         language=language,
+        stack_language=stack_language,  # S42-E
         project_context=project_ctx,
         retry_feedback=retry_feedback,
         rag_context=rag_context,
@@ -2312,6 +2330,12 @@ async def run_tests(state: OVDState) -> dict:
     # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
     work_dir = directory or tempfile.mkdtemp(prefix="ovd_tests_")
 
+    # S42-B: en rounds de retry, limpiar archivos de implementación del round anterior
+    # para que el agente empiece desde cero y no mezcle implementaciones parciales.
+    if retry_round > 0 and directory:
+        cycle_ts = state.get("cycle_start_ts", 0)
+        _cleanup_impl_files_from_prev_retry(work_dir, cycle_ts)
+
     # S27-A: inyectar conftest.py si está vacío o no existe en la raíz del workspace.
     # Garantiza que pytest resuelva imports desde src/ independientemente de lo que generó el agente.
     if work_dir:
@@ -2481,6 +2505,96 @@ def _route_after_tests(state: OVDState) -> str:
     return "generate_docs"
 
 
+def _detect_duplicate_functions(work_dir: str) -> str:
+    """S42-D: Escanea archivos Python del workspace y detecta funciones definidas más de una vez.
+
+    Retorna un string con el diagnóstico listo para incluir en retry_feedback.
+    Vacío si no hay duplicados.
+
+    Busca patrones `def nombre_funcion(` en archivos .py (excluye tests, __pycache__, .venv).
+    Si el mismo nombre aparece en 2+ archivos distintos → duplicado.
+    """
+    import re as _re
+    base = pathlib.Path(work_dir)
+    if not base.exists():
+        return ""
+
+    _SKIP_S42 = {"__pycache__", ".venv", "venv", "node_modules", ".git", ".mypy_cache"}
+    fn_map: dict[str, list[str]] = {}  # nombre_funcion → [rutas donde aparece]
+
+    for fp in sorted(base.rglob("*.py")):
+        parts = fp.relative_to(base).parts
+        if any(p in _SKIP_S42 or p.startswith(".") for p in parts):
+            continue
+        if fp.name.startswith("test_") or fp.name == "conftest.py":
+            continue
+        try:
+            src = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(fp.relative_to(base))
+        for match in _re.finditer(r"^def\s+(\w+)\s*\(", src, _re.MULTILINE):
+            fn_name = match.group(1)
+            fn_map.setdefault(fn_name, [])
+            if rel not in fn_map[fn_name]:
+                fn_map[fn_name].append(rel)
+
+    duplicates = {fn: paths for fn, paths in fn_map.items() if len(paths) > 1}
+    if not duplicates:
+        return ""
+
+    lines = ["⚠️ FUNCIONES DUPLICADAS DETECTADAS (S42-D) — hay implementaciones conflictivas:"]
+    for fn, paths in list(duplicates.items())[:5]:  # máx 5 para no inflar feedback
+        lines.append(f"  - `{fn}` definida en: {', '.join(paths)}")
+    lines.append(
+        "\nElige UNA sola ubicación para cada función y ELIMINA las demás definiciones. "
+        "Los tests importan desde una ruta específica — asegúrate de que coincida."
+    )
+    return "\n".join(lines)
+
+
+def _cleanup_impl_files_from_prev_retry(work_dir: str, cycle_start_ts: float) -> None:
+    """S42-B: Elimina archivos de implementación Python del ciclo actual (escritos después de cycle_start_ts)
+    que NO son tests. Se llama al inicio de cada retry round para que el agente empiece sin
+    archivos de implementación parciales o con duplicados del round anterior.
+
+    Solo elimina archivos Python con mtime > cycle_start_ts (del ciclo actual, no pre-existentes).
+    No toca archivos de test (test_*.py) ni archivos de infraestructura (conftest.py, pytest.ini).
+    """
+    if not work_dir or cycle_start_ts <= 0:
+        return
+    base = pathlib.Path(work_dir)
+    if not base.exists():
+        return
+
+    _SKIP_B = {"__pycache__", ".venv", "venv", "node_modules", ".git"}
+    _SAFE_NAMES = {"conftest.py", "pytest.ini", "setup.py", "pyproject.toml"}
+    removed = []
+
+    for fp in sorted(base.rglob("*.py")):
+        parts = fp.relative_to(base).parts
+        if any(p in _SKIP_B or p.startswith(".") for p in parts):
+            continue
+        if fp.name.startswith("test_") or fp.name in _SAFE_NAMES:
+            continue
+        try:
+            mtime = fp.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= cycle_start_ts - 5:
+            try:
+                fp.unlink()
+                removed.append(str(fp.relative_to(base)))
+            except OSError:
+                pass
+
+    if removed:
+        log.info(
+            "run_tests: S42-B cleanup previo a retry — eliminados %d archivo(s): %s",
+            len(removed), removed[:10],
+        )
+
+
 def _extract_assert_errors(output: str) -> list[str]:
     """S34: Extrae líneas de AssertionError / assert X == Y del output de pytest."""
     return [
@@ -2552,6 +2666,14 @@ def update_test_retry(state: OVDState) -> dict:
         f"\nOutput (stderr):\n{raw_snippet}\n"
     )
 
+    # S42-D: detectar funciones duplicadas en el workspace
+    work_dir_for_dup = state.get("directory", "")
+    duplicate_hint = ""
+    if work_dir_for_dup:
+        duplicate_hint = _detect_duplicate_functions(work_dir_for_dup)
+        if duplicate_hint:
+            log.warning("update_test_retry: S42-D duplicados detectados en %s", work_dir_for_dup)
+
     new_feedback = (
         # S33-A: instrucción crítica de no modificar tests — solo corregir implementación
         "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
@@ -2559,6 +2681,7 @@ def update_test_retry(state: OVDState) -> dict:
         "NUNCA modifiques, elimines ni agregues tests.\n\n"
         f"TESTS FALLIDOS (ronda {retry_round + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
+        + (f"\n{duplicate_hint}\n" if duplicate_hint else "")  # S42-D
         + failed_block_section
         + output_section
         + "Corregir SOLO la implementación para que los tests pasen."
