@@ -62,12 +62,14 @@ class TestSecurityAudit:
         """LLM retorna passed=True, score=92 → security_result y status correctos."""
         llm = make_llm_mock(_make_security_output(passed=True, score=92, severity="none"))
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
-            state = make_state(
-                agent_results=[make_agent_result("backend")],
-                sdd={},
-            )
-            result = await security_audit(state)
+        # S48-A: usar score>0 para evitar el bypass dev y probar el flujo real del LLM
+        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}):
+            with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+                state = make_state(
+                    agent_results=[make_agent_result("backend")],
+                    sdd={},
+                )
+                result = await security_audit(state)
 
         assert result["security_result"]["passed"] is True
         assert result["security_result"]["score"] == 92
@@ -81,11 +83,13 @@ class TestSecurityAudit:
             _make_security_output(passed=False, score=40, severity="high", vulnerabilities=vulns)
         )
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
-            state = make_state(
-                agent_results=[make_agent_result("backend", passed=False)],
-            )
-            result = await security_audit(state)
+        # S48-A: usar score>0 para evitar el bypass dev y probar el flujo real del LLM
+        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}):
+            with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+                state = make_state(
+                    agent_results=[make_agent_result("backend", passed=False)],
+                )
+                result = await security_audit(state)
 
         assert result["security_result"]["passed"] is False
         assert "A01-Broken Access Control" in result["security_result"]["vulnerabilities"]

@@ -1644,7 +1644,7 @@ async def _run_agent_with_tools(
     final_output = ""
 
     try:
-        for _ in range(_MAX_TOOL_ITERS):
+        for _iter in range(_MAX_TOOL_ITERS):
             response = await bound_llm.ainvoke(messages)
 
             # Acumular tokens
@@ -1656,6 +1656,19 @@ async def _run_agent_with_tools(
             tool_calls = getattr(response, "tool_calls", []) or []
             if not tool_calls:
                 final_output = response.content or ""
+                # S48-C: diagnóstico — ¿el modelo nunca intentó llamar tools?
+                if _iter == 0:
+                    log.warning(
+                        "S48-C: agente '%s' — iteración 0 sin tool_calls. "
+                        "El modelo no intentó usar herramientas. content=%d chars",
+                        agent_name, len(final_output),
+                    )
+                else:
+                    log.info(
+                        "S48-C: agente '%s' — terminó tool loop en iteración %d (sin más tool_calls). "
+                        "written_files=%d",
+                        agent_name, _iter, len(written_files),
+                    )
                 break
 
             # Agregar el mensaje del asistente con las tool calls
@@ -1716,9 +1729,13 @@ async def _run_agent_with_tools(
                 final_output = response.content or ""
 
     except Exception as e:
-        log.warning(f"S17T tool calling falló para {agent_name}: {e} — usando fallback")
+        log.warning("S17T tool calling falló para %s: %s — usando fallback sin tools", agent_name, e)
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
-        return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language)
+        return await runner(  # S46-B: pasar rag_context y stack_language que faltaban
+            sdd_content, comment, llm, project_ctx,
+            retry_feedback, language, rag_context,
+            stack_language=stack_language,
+        )
 
     # S24-D / S30-B: logging de tracking post-ejecución
     log.info(
@@ -1980,6 +1997,28 @@ async def security_audit(state: OVDState) -> dict:
     BUG-04: Incluye fallback robusto para modelos OSS pequeños (qwen2.5-coder:7b)
     que no siguen el schema de structured output correctamente.
     """
+    # S48-A: bypass completo cuando OVD_SECURITY_MIN_SCORE=0 — no invocar el LLM.
+    # Antes (Nivel1-E) el bypass era solo en el router (post-ejecución). El nodo
+    # seguía llamando al LLM y podía tardar 20+ min antes de hacer timeout.
+    if int(os.environ.get("OVD_SECURITY_MIN_SCORE", "0")) == 0:
+        log.info("S48-A: OVD_SECURITY_MIN_SCORE=0 — security_audit bypaseado en dev (sin LLM)")
+        return {
+            "security_result": {
+                "passed": True,
+                "score": 100,
+                "severity": "none",
+                "vulnerabilities": [],
+                "recommendations": [],
+                "summary": "Auditoría omitida en dev (OVD_SECURITY_MIN_SCORE=0)",
+            },
+            "security_scan_results": {},
+            "status": "security_reviewed",
+            "messages": state.get("messages", []) + [{
+                "role": "agent",
+                "content": "Security Audit — Score: 100/100, Severity: none, Passed: True (bypass dev S48-A)",
+            }],
+        }
+
     project_ctx = state.get("project_context", "")
     org_id = state.get("org_id", "")
     project_id = state.get("project_id", "")
@@ -3784,9 +3823,22 @@ async def deliver(state: OVDState) -> dict:
                        fr_text, fr_analysis, sdd, agent_results, qa_result,
                        qa_score, complexity, fr_type, auto_approved,
                        tokens_input, tokens_output, tokens_total,
-                       tokens_by_agent, cost_usd)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (id) DO NOTHING
+                       tokens_by_agent, cost_usd, status)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'completed')
+                    ON CONFLICT (thread_id) DO UPDATE SET
+                      fr_analysis    = EXCLUDED.fr_analysis,
+                      sdd            = EXCLUDED.sdd,
+                      agent_results  = EXCLUDED.agent_results,
+                      qa_result      = EXCLUDED.qa_result,
+                      qa_score       = EXCLUDED.qa_score,
+                      complexity     = EXCLUDED.complexity,
+                      fr_type        = EXCLUDED.fr_type,
+                      tokens_input   = EXCLUDED.tokens_input,
+                      tokens_output  = EXCLUDED.tokens_output,
+                      tokens_total   = EXCLUDED.tokens_total,
+                      tokens_by_agent = EXCLUDED.tokens_by_agent,
+                      cost_usd       = EXCLUDED.cost_usd,
+                      status         = 'completed'
                     """,
                     (
                         str(uuid.uuid4()),

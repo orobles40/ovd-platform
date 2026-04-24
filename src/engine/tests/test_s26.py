@@ -192,7 +192,9 @@ class TestSecurityAuditFilesystemFirst:
             )
 
         mock_llm = MagicMock()
-        with patch("graph.model_router") as mock_router, \
+        # S48-A: OVD_SECURITY_MIN_SCORE=70 para evitar el bypass dev y probar el LLM
+        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}), \
+             patch("graph.model_router") as mock_router, \
              patch("graph.invoke_structured", side_effect=mock_invoke_structured):
             mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)
             await __import__("graph").security_audit(state)
@@ -227,7 +229,9 @@ class TestSecurityAuditFilesystemFirst:
             )
 
         mock_llm = MagicMock()
-        with patch("graph.model_router") as mock_router, \
+        # S48-A: OVD_SECURITY_MIN_SCORE=70 para evitar el bypass dev y probar el LLM
+        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}), \
+             patch("graph.model_router") as mock_router, \
              patch("graph.invoke_structured", side_effect=mock_invoke_structured):
             mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)
             await __import__("graph").security_audit(state)

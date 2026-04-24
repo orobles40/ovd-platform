@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 import psycopg
 from contextlib import asynccontextmanager
@@ -69,12 +70,20 @@ import mcp_client
 # Estado global del engine
 # ---------------------------------------------------------------------------
 
+log = logging.getLogger("ovd.api")
+
 _graph = None
 _checkpointer = None
 
 # S20 — GAP-R1: timeout global del stream SSE. Si el grafo no termina en este tiempo,
 # el stream se cierra con un evento de error. Configurable via OVD_SSE_STREAM_TIMEOUT_SECS.
 _SSE_STREAM_TIMEOUT: float = float(os.environ.get("OVD_SSE_STREAM_TIMEOUT_SECS", "900"))
+
+# S47-A: Background graph execution — el grafo corre en tasks separadas del SSE
+# Al desconectarse el cliente, la ejecución del grafo NO se cancela.
+_graph_tasks: dict[str, asyncio.Task] = {}           # thread_id → background task del grafo
+_event_queues: dict[str, asyncio.Queue] = {}          # thread_id → queue de eventos SSE
+_stream_done: dict[str, asyncio.Event] = {}           # thread_id → señal de fin de stream
 
 
 @asynccontextmanager
@@ -332,8 +341,16 @@ async def _stream_graph_events(thread_id: str, config: dict) -> AsyncIterator[di
             except Exception:
                 pass  # no propagar errores de detección de interrupt
 
-    except Exception as e:
-        yield _make_sse_event("error", {"message": str(e), "recoverable": False})
+    except BaseException as e:  # S46-A: captura CancelledError (BaseException) además de Exception
+        error_msg = str(e) if str(e) else type(e).__name__
+        log.error("_stream_graph_events: excepción fatal — %s: %s", type(e).__name__, error_msg, exc_info=True)
+        yield _make_sse_event("error", {
+            "message": error_msg,
+            "error_type": type(e).__name__,
+            "recoverable": False,
+        })
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise  # no silenciar señales del sistema operativo
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +582,33 @@ async def start_session(
             keys_count=len(agent_ctx.workspace_credentials),
         )
 
+    # S47-B: registrar ciclo como 'started' al crear sesión — visible en telemetría
+    # aunque el ciclo no llegue a deliver. ON CONFLICT DO NOTHING: si ya existe (reanudación), no pisar.
+    try:
+        _db_url_for_cycle = os.environ.get("DATABASE_URL", "")
+        if _db_url_for_cycle:
+            import psycopg as _psycopg47
+            async with await _psycopg47.AsyncConnection.connect(_db_url_for_cycle) as _c47:
+                await _c47.execute(
+                    """INSERT INTO ovd_cycles
+                         (id, org_id, project_id, session_id, thread_id,
+                          fr_text, auto_approved, status)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,'started')
+                       ON CONFLICT (thread_id) DO NOTHING""",
+                    (
+                        str(uuid.uuid4()),
+                        body.org_id,
+                        body.project_id or None,
+                        session_id,
+                        thread_id,
+                        body.feature_request,
+                        body.auto_approve,
+                    ),
+                )
+                await _c47.commit()
+    except Exception as _db47_err:
+        log.warning("S47-B: error registrando ciclo 'started' — %s", _db47_err)
+
     return JSONResponse({
         "thread_id": thread_id,
         "session_id": session_id,
@@ -572,22 +616,22 @@ async def start_session(
     }, status_code=201)
 
 
-@app.get("/session/{thread_id}/stream")
-async def stream_session(
-    thread_id: str,
-    request: Request,
-    x_ovd_secret: str | None = Header(default=None),
-):
-    verify_secret(x_ovd_secret)
-    config = {"configurable": {"thread_id": thread_id}}
+async def _run_graph_background(thread_id: str, config: dict) -> None:
+    """
+    S47-A: ejecuta el grafo LangGraph en una task asyncio separada del SSE.
 
-    async def event_generator():
-        # PP-03 — adquirir lock exclusivo para el thread antes de ejecutar el grafo
-        try:
-            async with SessionLock(thread_id):
-                # PP-05 — registrar sesión activa para el Org Chart
-                session_meta: dict = {"org_id": "", "project_id": "", "feature_request": ""}
-                if _graph:
+    Ventaja clave: si el cliente SSE se desconecta, esta task NO se cancela.
+    El grafo completa su ejecución y los eventos se acumulan en _event_queues[thread_id]
+    para que el cliente pueda reconectar y recibir el estado actualizado.
+    """
+    queue = _event_queues[thread_id]
+    done_ev = _stream_done[thread_id]
+    try:
+        async with SessionLock(thread_id):
+            # PP-05 — registrar sesión activa para el Org Chart
+            session_meta: dict = {"org_id": "", "project_id": "", "feature_request": "", "session_id": ""}
+            if _graph:
+                try:
                     snap = await _graph.aget_state(config)
                     if snap and snap.values:
                         v = snap.values
@@ -597,39 +641,175 @@ async def stream_session(
                             "feature_request": v.get("feature_request", ""),
                             "session_id":      v.get("session_id", ""),
                         }
-                from task_checkout import register_session, unregister_session
-                register_session(thread_id, session_meta)
-                # S20 — GAP-R3: registrar la task actual para poder cancelarla si queda stale
-                current_task = asyncio.current_task()
-                if current_task is not None:
-                    register_task(thread_id, current_task)
-
-                # Heartbeat cada 15s para mantener conexion
-                heartbeat_task = asyncio.create_task(_heartbeat(request))
-                try:
-                    # S20 — GAP-R1: timeout global del stream — evita streams infinitos
-                    async with asyncio.timeout(_SSE_STREAM_TIMEOUT):
-                        async for event in _stream_graph_events(thread_id, config):
-                            if await request.is_disconnected():
-                                break
-                            yield event
-                            await asyncio.sleep(0)
-                except asyncio.TimeoutError:
-                    import logging as _log
-                    _log.getLogger("ovd.api").error(
-                        "SSE stream timeout para thread_id=%s tras %.0fs",
-                        thread_id, _SSE_STREAM_TIMEOUT,
+                except Exception:
+                    pass
+            from task_checkout import register_session, unregister_session
+            register_session(thread_id, session_meta)
+            # S20-GAP-R3: registrar task para poder cancelarla si queda stale
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                register_task(thread_id, current_task)
+            try:
+                # S20-GAP-R1: timeout global — el grafo no puede correr eternamente
+                async with asyncio.timeout(_SSE_STREAM_TIMEOUT):
+                    async for event in _stream_graph_events(thread_id, config):
+                        await queue.put(event)
+            except asyncio.TimeoutError:
+                log.error("S47-A: timeout global para thread=%s tras %.0fs", thread_id, _SSE_STREAM_TIMEOUT)
+                await queue.put(_make_sse_event("error", {
+                    "message": f"Timeout global del grafo ({_SSE_STREAM_TIMEOUT:.0f}s). Consulta /session/{thread_id}/state",
+                    "recoverable": False,
+                }))
+            finally:
+                unregister_session(thread_id)
+    except AlreadyRunningError:
+        await queue.put(_make_sse_event("error", {
+            "message": "Ciclo ya en ejecución — espera a que termine o usa /session/{thread_id}/state",
+            "recoverable": False,
+        }))
+    except Exception as exc:
+        log.error("S47-A: error fatal en background task thread=%s: %s", thread_id, exc, exc_info=True)
+        await queue.put(_make_sse_event("error", {
+            "message": str(exc) or type(exc).__name__,
+            "recoverable": False,
+        }))
+    finally:
+        done_ev.set()
+        _graph_tasks.pop(thread_id, None)
+        # S48-D: loguear el nodo donde quedó el grafo (diagnóstico de fallos)
+        if _graph:
+            try:
+                snap = await _graph.aget_state(config)
+                if snap:
+                    last_node = snap.metadata.get("source", "?") if snap.metadata else "?"
+                    next_nodes = list(snap.next) if snap.next else []
+                    log.info(
+                        "S48-D: thread=%s terminó en source='%s', next=%s, values_keys=%s",
+                        thread_id[:8], last_node, next_nodes,
+                        list(snap.values.keys()) if snap.values else [],
                     )
-                    yield {"data": json.dumps({
-                        "type": "error",
-                        "message": f"Timeout global del stream ({_SSE_STREAM_TIMEOUT:.0f}s). El ciclo puede seguir activo — consulta /session/{thread_id}/state",
-                        "recoverable": False,
-                    })}
-                finally:
-                    heartbeat_task.cancel()
-                    unregister_session(thread_id)
-        except AlreadyRunningError:
-            yield {"data": '{"type":"error","message":"Ciclo ya en ejecución — espera a que termine o usa /session/{thread_id}/state para ver el estado actual"}'}
+            except Exception as _snap_err:
+                log.debug("S48-D: no se pudo obtener snapshot — %s", _snap_err)
+        # S47-B: garantizar registro en ovd_cycles aunque deliver no haya corrido
+        await _ensure_cycle_registered(thread_id, config)
+        # Limpiar queue y done_event después de 10 min (evitar memory leak)
+        asyncio.create_task(_deferred_cleanup(thread_id, 600))
+
+
+async def _deferred_cleanup(thread_id: str, delay: float) -> None:
+    """S47-A: limpia queue y done_event un tiempo después de que el grafo termine."""
+    await asyncio.sleep(delay)
+    _event_queues.pop(thread_id, None)
+    _stream_done.pop(thread_id, None)
+
+
+async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
+    """
+    S47-B: si deliver no escribió en ovd_cycles, marcar el ciclo como 'failed'
+    con los datos parciales disponibles en el checkpoint LangGraph.
+    """
+    try:
+        _db_url = os.environ.get("DATABASE_URL", "")
+        if not _db_url:
+            return
+        import psycopg as _psycopg47b
+        async with await _psycopg47b.AsyncConnection.connect(_db_url) as _conn:
+            cur = await _conn.execute(
+                "SELECT status FROM ovd_cycles WHERE thread_id = %s", (thread_id,)
+            )
+            row = await cur.fetchone()
+            if not row:
+                log.warning("S47-B: ciclo %s no registrado en BD (session_create falló?)", thread_id[:8])
+                return
+            if row[0] == "completed":
+                return  # deliver ya lo actualizó correctamente
+            # Ciclo terminó sin llegar a deliver — actualizar con datos del checkpoint
+            if _graph:
+                try:
+                    snap = await _graph.aget_state(config)
+                    if snap and snap.values:
+                        v = snap.values
+                        qa = v.get("qa_result", {})
+                        fr_a = v.get("fr_analysis", {})
+                        await _conn.execute(
+                            """UPDATE ovd_cycles SET
+                                status      = 'failed',
+                                fr_analysis = %s,
+                                sdd         = %s,
+                                qa_score    = %s,
+                                complexity  = %s,
+                                fr_type     = %s
+                            WHERE thread_id = %s AND status != 'completed'""",
+                            (
+                                json.dumps(fr_a),
+                                json.dumps(v.get("sdd", {})),
+                                qa.get("score", 0) if isinstance(qa, dict) else 0,
+                                fr_a.get("complexity", ""),
+                                fr_a.get("type", ""),
+                                thread_id,
+                            ),
+                        )
+                        await _conn.commit()
+                        log.info("S47-B: ciclo %s marcado 'failed' con datos parciales", thread_id[:8])
+                except Exception as _snap_err:
+                    log.warning("S47-B: error leyendo checkpoint para %s — %s", thread_id[:8], _snap_err)
+    except Exception as _e:
+        log.warning("S47-B: _ensure_cycle_registered error — %s", _e)
+
+
+@app.get("/session/{thread_id}/stream")
+async def stream_session(
+    thread_id: str,
+    request: Request,
+    x_ovd_secret: str | None = Header(default=None),
+):
+    """
+    S47-A: SSE que lee de una queue. El grafo corre en background.
+
+    Si el cliente desconecta, el grafo CONTINÚA ejecutándose.
+    Si el cliente reconecta, consume los eventos acumulados en la queue.
+    """
+    verify_secret(x_ovd_secret)
+    config = {"configurable": {"thread_id": thread_id}}
+
+    # Inicializar queue y done_event para este thread si no existen
+    if thread_id not in _event_queues:
+        _event_queues[thread_id] = asyncio.Queue(maxsize=2000)
+        _stream_done[thread_id] = asyncio.Event()
+    queue   = _event_queues[thread_id]
+    done_ev = _stream_done[thread_id]
+
+    # Lanzar background task si no está corriendo (o si el anterior ya terminó)
+    existing = _graph_tasks.get(thread_id)
+    if existing is None or existing.done():
+        done_ev.clear()
+        task = asyncio.create_task(
+            _run_graph_background(thread_id, config),
+            name=f"ovd_graph_{thread_id[:8]}",
+        )
+        _graph_tasks[thread_id] = task
+        log.info("S47-A: background task lanzada para thread=%s", thread_id[:8])
+
+    async def event_generator():
+        """
+        Lee eventos de la queue y los emite como SSE.
+        Si no hay eventos en 30s, emite heartbeat para mantener la conexión viva.
+        Si el cliente desconecta, el generador termina pero el grafo continúa.
+        """
+        while not (done_ev.is_set() and queue.empty()):
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                yield event
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    log.info("S47-A: cliente SSE desconectado para %s — grafo continúa en background", thread_id[:8])
+                    break
+                # Heartbeat — mantiene la conexión SSE viva durante ciclos largos
+                yield _make_sse_event("heartbeat", {"ts": time.time()})
+            except asyncio.CancelledError:
+                # El task externo fue cancelado (SSE cerrando) — terminar limpiamente
+                log.info("S47-A: event_generator cancelado para %s — grafo continúa", thread_id[:8])
+                break
 
     return EventSourceResponse(event_generator())
 

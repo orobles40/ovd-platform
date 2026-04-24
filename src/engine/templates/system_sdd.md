@@ -14,6 +14,27 @@ Genera una lista de requisitos con los campos exactos:
 - **design_overview**: Visión arquitectónica en Markdown. Incluir: componentes involucrados, flujo de datos principal, patrones de diseño elegidos, APIs a crear o modificar
 - **design_diagrams**: Lista de diagramas en texto libre o pseudomermaid (flujo de secuencia, diagrama de componentes, etc.)
 
+### Contrato de interfaces compartidas (S48-B)
+
+**OBLIGATORIO cuando hay más de un agente:** Define en `design_overview` un **contrato de interfaces** explícito que TODOS los agentes deben respetar. Incluye:
+
+1. **Modelos de datos canónicos** — nombres exactos de clases/interfaces que los agentes de backend, tests y frontend deben importar. Ejemplo:
+   ```
+   src/auth/models.py:
+     - class User(BaseModel): id, rut, email, role, org_id
+     - class UserCreate(BaseModel): rut, email, password, role
+     - class LoginRequest(BaseModel): rut, password
+   ```
+2. **Rutas de importación exactas** — qué importa cada agente de quién. Ejemplo:
+   ```
+   tests/ importa de: src.auth.models.User, src.auth.service.verify_password
+   frontend importa de: src.auth.models (mismas clases)
+   ```
+3. **Regla:** Si el agente de tests espera `User`, el agente de backend DEBE crear `class User`. No puede haber nombres distintos para el mismo concepto.
+
+❌ **Causa de fallo:** tests importan `User` pero backend define `LoginRequest` como único modelo → ImportError en runtime.
+✅ **Correcto:** SDD define `User` en el contrato, todos los agentes usan ese nombre.
+
 ## Artefacto 3 — Constraints
 Genera restricciones técnicas con los campos:
 - **id**: Formato "CON-NNN"
@@ -109,6 +130,13 @@ Asigna cada tarea al agente correcto según su naturaleza:
 | CI/CD pipeline + tests | `devops` | ✅ único caso donde devops escribe shell/yaml |
 
 **Regla de oro:** si la tarea produce un archivo `.py`, `.ts`, `.tsx`, `.sql` → es `backend`, `frontend` o `database`. Si produce `.yml`, `Dockerfile`, `.sh` → es `devops`.
+
+**Artefactos PROHIBIDOS para devops (S47-C):**
+- `scripts/validate-*.sh` con lógica de negocio (validación RUT, primos, cálculos, reglas de dominio)
+- `Dockerfile.oracle` o `Dockerfile.db` — la BD es externa, no se containeriza
+- Cualquier archivo en `src/` — eso es territorio de `backend` o `frontend`
+- `requirements.txt` o `package.json` — los genera el agente del stack correspondiente
+- Archivos `.py`, `.ts`, `.tsx`, `.sql`, `.rs` — asignarlos al agente correcto, no a devops
 
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
