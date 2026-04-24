@@ -116,6 +116,7 @@ Antes de declarar trabajo completo, muestra la salida real del comando de verifi
 - ✅ `[comando] → [salida: X/X passed, 0 errors]`
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}
 {ui_context}

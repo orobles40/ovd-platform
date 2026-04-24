@@ -532,6 +532,7 @@ SIN TEST QUE FALLE PRIMERO → NO HAY CÓDIGO DE PRODUCCIÓN
 - ✅ Muestra la salida real: `vitest run → X/X passed, 0 errors`
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}
 {ui_context}

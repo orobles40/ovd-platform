@@ -53,5 +53,6 @@ Antes de declarar cualquier configuración completa, muestra evidencia real:
 - ❌ "el pipeline se ve correcto" — ✅ output real del comando de validación
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

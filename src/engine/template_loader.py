@@ -21,6 +21,7 @@ Variables de sustitución disponibles en los templates:
   {project_context}   — bloque Markdown del Project Profile (puede ser "")
   {rag_context}       — contexto recuperado del RAG (puede ser "")
   {retry_feedback}    — feedback acumulado de reintentos (puede ser "")
+  {lessons_context}   — lecciones de ciclos anteriores del mismo proyecto (S41, puede ser "")
 
 Si el archivo de template no existe, se usa el prompt fallback hardcodeado.
 """
@@ -93,6 +94,7 @@ _FALLBACK_PROMPTS: dict[str, str] = {
         "Si hay incertidumbre, incluye comentario '// UNCERTAINTY: <descripcion>'. "
         "Devuelve SOLO codigo de implementacion con comentarios claros."
         "{project_context}"
+        "{lessons_context}"
         "{retry_feedback}"
     ),
     "system_backend": (
@@ -104,6 +106,7 @@ _FALLBACK_PROMPTS: dict[str, str] = {
         "Si hay incertidumbre, incluye comentario '// UNCERTAINTY: <descripcion>'. "
         "Devuelve SOLO codigo de implementacion con comentarios claros."
         "{project_context}"
+        "{lessons_context}"
         "{retry_feedback}"
     ),
     "system_database": (
@@ -116,6 +119,7 @@ _FALLBACK_PROMPTS: dict[str, str] = {
         "Si hay incertidumbre, incluye comentario '-- UNCERTAINTY: <descripcion>'. "
         "Devuelve SOLO codigo SQL con comentarios claros."
         "{project_context}"
+        "{lessons_context}"
         "{retry_feedback}"
     ),
     "system_devops": (
@@ -127,6 +131,7 @@ _FALLBACK_PROMPTS: dict[str, str] = {
         "Si hay incertidumbre, incluye comentario '# UNCERTAINTY: <descripcion>'. "
         "Devuelve SOLO configuraciones y scripts con comentarios claros."
         "{project_context}"
+        "{lessons_context}"
         "{retry_feedback}"
     ),
     "system_router": (
@@ -462,7 +467,7 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
     template = load(name, language=language, stack_language=stack_language)
 
     # Preparar valores — los vacios generan string vacio
-    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": ""}
+    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": "", "lessons_context": ""}
     defaults.update(variables)
 
     # Transformar variables de bloque: si el valor no es vacio, agregar prefijo de seccion
@@ -470,6 +475,8 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
     rag = defaults.get("rag_context", "")
     fb  = defaults.get("retry_feedback", "")
     ui  = defaults.get("ui_context", "")
+
+    lessons = defaults.get("lessons_context", "")
 
     rendered = template.replace(
         "{project_context}",
@@ -483,6 +490,9 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
     ).replace(
         "{ui_context}",
         f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
+    ).replace(
+        "{lessons_context}",
+        f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}" if lessons else "",
     )
 
     return rendered.strip()

@@ -124,5 +124,6 @@ END pkg_contratos;
 - ✅ Muestra la salida de `sqlcl @script.sql` o el resultado del test de integración
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

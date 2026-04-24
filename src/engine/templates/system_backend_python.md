@@ -217,5 +217,6 @@ SIN TEST QUE FALLE PRIMERO → NO HAY CÓDIGO DE PRODUCCIÓN
 - ✅ Muestra la salida real: `pytest tests/ → 5/5 passed`
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

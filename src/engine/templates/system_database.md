@@ -48,5 +48,6 @@ Antes de declarar trabajo completo, muestra el resultado real de aplicar la migr
 - ✅ `[alembic upgrade head] → [1 migration applied OK]`
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

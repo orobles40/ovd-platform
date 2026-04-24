@@ -215,5 +215,6 @@ Antes de declarar cualquier trabajo completo, ejecuta el comando de verificació
 - ✅ `[comando ejecutado] → [salida: X/X tests passed]`
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

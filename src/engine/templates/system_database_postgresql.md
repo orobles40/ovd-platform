@@ -83,5 +83,6 @@ WHERE org_id = $1 AND id = $2;
 - ✅ Muestra `psql -f migration.sql` o el resultado del ORM que aplica la migración
 
 {project_context}
+{lessons_context}
 {retry_feedback}
 {rag_context}

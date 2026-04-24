@@ -1,6 +1,6 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-23
-**Versión actual:** v0.9.1-agent-routing
+**Última actualización:** 2026-04-24
+**Versión actual:** v0.9.2-sequential-agents
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
 > Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
@@ -824,7 +824,7 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S41.A1 | `lessons.py` — módulo de indexación | Nuevo módulo con funciones: `index_qa_finding()`, `index_security_finding()`, `index_test_failure()`, `index_cycle_postmortem()`. Cada función escribe un chunk en pgvector con metadata: `chunk_type`, `project_id`, `cycle_id`, `severity`, `resolved` | `src/engine/knowledge/lessons.py` | ⬜ |
+| S41.A1 | `lessons.py` — módulo de indexación | Nuevo módulo con funciones: `index_qa_finding()`, `index_security_finding()`, `index_test_failure()`, `index_cycle_postmortem()`. Cada función escribe un chunk en pgvector con metadata: `chunk_type`, `project_id`, `cycle_id`, `severity`, `resolved`, `agent_name` (backend/frontend/database/devops — qué agente originó el error) | `src/engine/knowledge/lessons.py` | ⬜ |
 | S41.A2 | Hook en `qa_review` | Al terminar `qa_review`, si hay issues, llamar `index_qa_finding(project_id, issues, score, cycle_id)` | `src/engine/graph.py` | ⬜ |
 | S41.A3 | Hook en `security_audit` | Al terminar `security_audit`, si hay findings, llamar `index_security_finding(project_id, findings, score, cycle_id)` | `src/engine/graph.py` | ⬜ |
 | S41.A4 | Hook en `run_tests` (fallos) | Si tests fallan, indexar `retry_feedback` con `index_test_failure(project_id, error_text, cycle_id)`. No indexar en runs exitosos | `src/engine/graph.py` | ⬜ |
@@ -835,10 +835,10 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 | # | Item | Descripción | Archivo(s) | Estado |
 |---|------|-------------|-----------|--------|
-| S41.B1 | `query_lessons_context()` en template_loader | Consulta pgvector filtrado por `project_id` + `chunk_type IN (qa_finding, test_failure, security_finding)`. Devuelve top-5 más similares al FR actual | `src/engine/template_loader.py` | ⬜ |
+| S41.B1 | `query_lessons_context()` en template_loader | Consulta pgvector filtrado por `project_id` + `agent_name` + `chunk_type IN (qa_finding, test_failure, security_finding)`. Devuelve top-5 más similares al FR actual. Cada agente recibe solo sus propias lecciones pasadas | `src/engine/template_loader.py` | ⬜ |
 | S41.B2 | Placeholder `{lessons_context}` en templates | Agregar bloque "Lecciones de ciclos anteriores" en `system_backend.md`, `system_frontend.md`, `system_sdd.md` | `src/engine/templates/` | ⬜ |
 | S41.B3 | Formato de lección en prompt | Ejemplo: `[QA finding — cycle a2c87c99] hook useContractValidation generado pero no importado → bug crítico (-15 pts). Asegúrate de importar todos los hooks generados.` | `src/engine/knowledge/lessons.py` | ⬜ |
-| S41.B4 | Scope por proyecto | Las lecciones son exclusivas por `project_id` — no se cruzan entre proyectos distintos | `src/engine/template_loader.py` | ⬜ |
+| S41.B4 | Scope por proyecto y agente | Las lecciones son exclusivas por `project_id` + `agent_name`. El agente frontend solo recibe lecciones de frontend; el backend solo las suyas. No se cruzan entre proyectos ni entre agentes | `src/engine/template_loader.py` | ⬜ |
 
 #### Parte C — Vista "Memoria del equipo" en dashboard
 
@@ -927,15 +927,94 @@ Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumul
 |-----------|--------|-------------|-------------------|
 | 1 | ~~**S45**~~ — Fix gaps | ✅ Completado 2026-04-24 | — |
 | 2 | ~~**S46**~~ — Design Quality System | ✅ Completado 2026-04-24 | — |
-| 3 | **S47** — Ejecución secuencial server→client | Frontend inventa API de backend → tipos incorrectos → retries innecesarios | Bajo (~2h) |
-| 4 | **S41.PRE** — Timeouts diferenciados | Ciclos largos se cancelan por heartbeat; nodos pesados sin margen de tiempo propio | Bajo (~1h) |
-| 5 | **S41** — RAG Learning | Los errores recurrentes se corrigen manualmente en templates en vez de aprenderse automáticamente | Alto (~1 día) |
-| 6 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
+| 3 | ~~**S47**~~ — Ejecución secuencial server→client | ✅ Completado 2026-04-24 | — |
+| 4 | ~~**S41.PRE**~~ — Timeouts diferenciados | ✅ Completado 2026-04-24 | — |
+| 5 | ~~**S41**~~ — RAG Learning | ✅ Completado 2026-04-24 | — |
+| 6 | **S48** — Web Research Intelligence | Proveedor único sin fallback, cache muerta, activación <10% de ciclos, sin gestión de proveedores ni cuotas | Medio (~1 día) |
+| 7 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
 
 **Razonamiento del orden:**
-- S47 antes de S41.PRE porque reduce retries que son la causa principal de ciclos largos
-- S41.PRE es un fix operativo de baja fricción, complementa S47
-- S41 y S44 son features de plataforma, van después de resolver la calidad del output
+- S47 y S41.PRE completados — reducen retries y protegen nodos contra timeouts
+- S41 (RAG Learning) tiene el mayor impacto en calidad acumulativa del ciclo
+- S48 (Web Research) mejora el contexto que reciben los agentes antes de escribir código
+- S44 es plataforma pura, va después de resolver calidad del output
+
+---
+
+## S48 — Web Research Intelligence (2026-04-24, pendiente)
+
+**Motivación:** `web_research_node` activa en <10% de los ciclos, usa un único proveedor sin fallback, la cache está definida pero nunca se consulta (código muerto), y el indexado RAG depende del Bridge (si está caído, los findings se pierden). S48 convierte el nodo en una fuente real de contexto técnico para los agentes.
+
+### S48-A — Multi-proveedor con failover automático
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-A1 | Integración Tavily | Proveedor primario — indexación semántica, mejor calidad. Activado si `TAVILY_API_KEY` presente | `src/engine/tools/search_providers.py` | ⬜ |
+| S48-A2 | Integración Brave Search | Proveedor secundario — independiente de Google. Activado si `BRAVE_API_KEY` presente | `src/engine/tools/search_providers.py` | ⬜ |
+| S48-A3 | Integración SearXNG | Proveedor self-hosted. Activado si `OVD_SEARXNG_URL` configurado | `src/engine/tools/search_providers.py` | ⬜ |
+| S48-A4 | Failover automático | Orden: Tavily → Brave → SearXNG → DuckDuckGo. Si un proveedor falla o agota cuota, pasa al siguiente automáticamente | `src/engine/tools/web_researcher.py` | ⬜ |
+
+### S48-B — Gestión de proveedores desde Dashboard
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-B1 | Tabla `ovd_search_providers` | `id, name, type, enabled, priority, api_key, base_url, max_results, timeout_secs, last_success_at, last_error, error_count` | `migrations/` | ⬜ |
+| S48-B2 | `GET /api/v1/search-providers` | Lista proveedores con estado actual (último éxito, error_count, cuota) | `src/engine/routers/api_v1.py` | ⬜ |
+| S48-B3 | `POST /api/v1/search-providers` | Agregar proveedor (name, type, api_key, base_url) | `src/engine/routers/api_v1.py` | ⬜ |
+| S48-B4 | `PUT /api/v1/search-providers/{id}` | Actualizar: habilitar/deshabilitar, cambiar prioridad, rotar API key | `src/engine/routers/api_v1.py` | ⬜ |
+| S48-B5 | `DELETE /api/v1/search-providers/{id}` | Eliminar proveedor | `src/engine/routers/api_v1.py` | ⬜ |
+| S48-B6 | `POST /api/v1/search-providers/{id}/test` | Probar conectividad — ejecuta búsqueda de prueba, retorna latencia y N resultados | `src/engine/routers/api_v1.py` | ⬜ |
+| S48-B7 | Página `/admin/search-providers` en dashboard | Lista con toggle, drag-and-drop prioridad, estado de salud (verde/amarillo/rojo), botón "Probar" | `src/dashboard/src/pages/SearchProviders.tsx` | ⬜ |
+
+### S48-C — Control de cuota y gasto
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-C1 | Campos de cuota en `ovd_search_providers` | `monthly_query_limit, daily_query_limit, queries_this_month, queries_today, cost_per_query_usd, monthly_budget_usd` | `migrations/` | ⬜ |
+| S48-C2 | Contador de uso por proveedor | Incrementar `queries_today` y `queries_this_month` en cada búsqueda exitosa. Reset diario automático (cron o check lazy) | `src/engine/tools/search_providers.py` | ⬜ |
+| S48-C3 | Skip por cuota agotada | Si `queries_today >= daily_query_limit` o gasto estimado >= `monthly_budget_usd`, el proveedor se salta en el failover | `src/engine/tools/web_researcher.py` | ⬜ |
+| S48-C4 | Visualización de cuota en dashboard | Barra de progreso `queries_this_month / monthly_query_limit`, gasto estimado `queries × cost_per_query`, proyección fin de mes | `src/dashboard/src/pages/SearchProviders.tsx` | ⬜ |
+| S48-C5 | Alerta de cuota al 80% y 100% | Log warning en engine + badge visual en dashboard cuando proveedor supera umbral | `src/engine/tools/search_providers.py` | ⬜ |
+
+### S48-D — Cache funcional + síntesis contextualizada
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-D1 | Cache en pgvector (fix código muerto) | Consulta pgvector antes de buscar (similitud >= 0.92, max_age=7 días). Si hit, retorna sin consumir cuota del proveedor | `src/engine/tools/web_researcher.py` | ⬜ |
+| S48-D2 | Indexar resultados en cache | Después de búsqueda exitosa, indexar query + results en pgvector con metadata `{type: "web_cache", project_id}` | `src/engine/tools/web_researcher.py` | ⬜ |
+| S48-D3 | Síntesis contextualizada por tipo de FR | El prompt de síntesis varía según tipo: migración → riesgos y pasos; integración → endpoints y rate limits; feature → mejores prácticas y antipatrones | `src/engine/tools/web_researcher.py` | ⬜ |
+
+### S48-E — Fix RAG indexing sin Bridge
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-E1 | Indexar findings directamente en pgvector | Reemplaza `POST Bridge/ovd/rag/index` por `rag.index_document()` directo. Mismo patrón que S27-C para informes de entrega | `src/engine/tools/web_researcher.py` | ⬜ |
+| S48-E2 | Metadata de findings indexados | `{type: "web_research", project_id, fr_summary, queries_used, providers_used, indexed_at}` — recuperable en ciclos futuros del mismo proyecto | `src/engine/tools/web_researcher.py` | ⬜ |
+
+### S48-F — Activación inteligente por tipo de FR (feature flag)
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S48-F1 | `_classify_research_depth()` | Clasifica FR como `none` / `light` / `full` según tipo, librerías externas mencionadas, integraciones API, tipo de agente | `src/engine/graph.py` | ⬜ |
+| S48-F2 | Triggers automáticos | FR con integración API externa → `light`. FR con `performance`/`bottleneck` → `light`. FR con agente frontend → `light` (patrones UI). FR de seguridad → `full`. Explícito `[research]` → `full` | `src/engine/graph.py` | ⬜ |
+| S48-F3 | Feature flag `OVD_RESEARCH_AUTO` | `true/false` (default: false en dev, true en prod). Permite validar en producción antes de activar globalmente | `src/engine/.env` | ⬜ |
+
+### S48-T — Tests
+
+| Test | Qué valida |
+|------|-----------|
+| `test_provider_failover` | Si Tavily falla, cae a Brave; si Brave falla, cae a DuckDuckGo |
+| `test_provider_quota_skip` | Proveedor con `queries_today >= limit` se salta en failover |
+| `test_cache_hit` | Query ya en pgvector no llama al proveedor externo |
+| `test_cache_miss_indexes` | Query nueva se indexa en pgvector después de búsqueda |
+| `test_synthesis_by_fr_type` | Prompt de síntesis cambia según tipo de FR |
+| `test_rag_indexing_without_bridge` | `index_document` directo funciona con Bridge caído |
+| `test_providers_crud_endpoints` | CRUD de proveedores persiste en BD |
+| `test_quota_counter_increment` | `queries_today` y `queries_this_month` se incrementan |
+| `test_research_auto_flag` | Con `OVD_RESEARCH_AUTO=false`, no se activa sin `[research]` explícito |
+| `test_classify_integration_fr` | FR con "Stripe API" → `light` research |
+
+**Orden de implementación:** S48-E (fix Bridge) → S48-D1 (cache) → S48-A (multi-proveedor) → S48-B/C (dashboard + cuotas) → S48-F (activación inteligente) → S48-T (tests)
 
 ---
 

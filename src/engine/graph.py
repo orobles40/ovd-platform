@@ -66,6 +66,7 @@ import telemetry  # Sprint 10 — GAP-A6
 import web_researcher  # Sprint 11 — S11.B
 from tools import make_file_tools, read_project_context  # S17T
 import mcp_client  # Fase A — MCP tools (context7)
+import lessons     # S41 — lecciones aprendidas por proyecto y agente
 
 # ---------------------------------------------------------------------------
 # Configuración operacional
@@ -1423,6 +1424,16 @@ async def agent_executor(state: OVDState) -> dict:
         if existing_ctx:
             project_ctx = (project_ctx + "\n\n" + existing_ctx).strip() if project_ctx else existing_ctx
 
+    # S41.B1: consultar lecciones de ciclos anteriores para este agente y proyecto
+    fr_text = state.get("feature_request", "") or state.get("fr_analysis", {}).get("raw", "")
+    lessons_context = await lessons.query_lessons_context(
+        project_id=project_id,
+        agent_name=agent_name,
+        fr_text=fr_text,
+    )
+    if lessons_context:
+        log.info("agent_executor[%s]: S41 — %d chars de lecciones recuperadas", agent_name, len(lessons_context))
+
     # Ejecutar el agente especializado
     runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
 
@@ -1475,6 +1486,7 @@ async def agent_executor(state: OVDState) -> dict:
                             agent_name, task_sdd_content, comment, llm,
                             task_project_ctx, retry_feedback, language, tools, directory, rag_context,
                             stack_language=stack_language,  # S42-E
+                            lessons_context=lessons_context,  # S41
                         ),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
@@ -1523,7 +1535,8 @@ async def agent_executor(state: OVDState) -> dict:
                 return await _run_agent_with_tools(
                     agent_name, agent_sdd_content, comment, llm,
                     project_ctx, retry_feedback, language, tools, directory, rag_context,
-                    stack_language=stack_language,  # S42-E
+                    stack_language=stack_language,   # S42-E
+                    lessons_context=lessons_context,  # S41
                 )
             return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context, stack_language=stack_language)
 
@@ -1575,7 +1588,8 @@ async def _run_agent_with_tools(
     directory: str,
     rag_context: str = "",
     *,
-    stack_language: str = "",  # S42-E: lenguaje del stack para selección de template
+    stack_language: str = "",     # S42-E: lenguaje del stack para selección de template
+    lessons_context: str = "",    # S41: lecciones de ciclos anteriores del mismo proyecto
 ) -> dict:
     """
     S17T.B — Bucle agentico con tool calling.
@@ -1610,6 +1624,7 @@ async def _run_agent_with_tools(
         project_context=project_ctx,
         retry_feedback=retry_feedback,
         rag_context=rag_context,
+        lessons_context=lessons_context,  # S41
     )
     human_content = (
         f"SDD Aprobado:\n{sdd_content}\n\n"
@@ -2110,6 +2125,19 @@ async def security_audit(state: OVDState) -> dict:
             f"| Scan findings: {len(scan_results.get('findings', []))}"
         )
 
+    # S41.A3: indexar findings de seguridad como lecciones (fire-and-forget)
+    if security.get("vulnerabilities"):
+        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
+        asyncio.create_task(lessons.index_security_finding(
+            project_id=state.get("project_id", ""),
+            org_id=state.get("org_id", ""),
+            vulnerabilities=security.get("vulnerabilities", []),
+            severity=security.get("severity", "none"),
+            score=security.get("score", 0),
+            cycle_id=state.get("session_id", ""),
+            agent_names=agent_names,
+        ))
+
     return {
         "security_result": security,
         "security_scan_results": scan_results,
@@ -2314,6 +2342,19 @@ async def qa_review(state: OVDState) -> dict:
         "code_quality_issues": result.code_quality_issues,
         "summary": result.summary,
     }
+
+    # S41.A2: indexar issues de QA como lecciones (fire-and-forget)
+    all_issues = result.issues + result.missing_requirements + result.code_quality_issues
+    if all_issues:
+        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
+        asyncio.create_task(lessons.index_qa_finding(
+            project_id=state.get("project_id", ""),
+            org_id=state.get("org_id", ""),
+            issues=all_issues,
+            score=result.score,
+            cycle_id=state.get("session_id", ""),
+            agent_names=agent_names,
+        ))
 
     return {
         "qa_result": qa,
@@ -2572,6 +2613,18 @@ async def run_tests(state: OVDState) -> dict:
         log.warning("run_tests: error inesperado: %s", exc)
 
     log.info("run_tests: runner=%s passed=%s retry_round=%d", runner, passed, retry_round)
+
+    # S41.A4: indexar fallos de tests como lecciones (fire-and-forget, solo cuando falla)
+    if not passed and output:
+        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
+        asyncio.create_task(lessons.index_test_failure(
+            project_id=state.get("project_id", ""),
+            org_id=state.get("org_id", ""),
+            error_text=output,
+            runner=runner,
+            cycle_id=state.get("session_id", ""),
+            agent_names=agent_names,
+        ))
 
     status_msg = f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
     return {
@@ -3669,6 +3722,23 @@ async def deliver(state: OVDState) -> dict:
     # RAG-02 — Indexar informe de entrega en RAG (fire-and-forget)
     if report_file:
         asyncio.create_task(_index_delivery_report(state, report_file))
+
+    # S41.A5 — Indexar post-mortem del ciclo como lección (fire-and-forget)
+    _agent_names_deliver = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
+    asyncio.create_task(lessons.index_cycle_postmortem(
+        project_id=state.get("project_id", ""),
+        org_id=state.get("org_id", ""),
+        cycle_id=state.get("session_id", ""),
+        agent_names=_agent_names_deliver,
+        qa_score=qa_result.get("score", 0),
+        security_score=security_result.get("score", 0),
+        tests_passed=state.get("test_results", {}).get("passed", False),
+        retry_counts={
+            "security": state.get("security_retry_count", 0),
+            "qa": state.get("qa_retry_count", 0),
+            "tests": state.get("test_retry_count", 0),
+        },
+    ))
 
     # N1.B — publicar evento done con artefactos completos para RAG
     await nats_client.publish_done(state, elapsed_secs, cost_usd)
