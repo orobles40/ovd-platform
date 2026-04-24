@@ -34,14 +34,22 @@ Devuelve SOLO código de implementación con comentarios claros.
 
 ## Infraestructura obligatoria para proyectos Python
 
-**ORDEN DE ESCRITURA OBLIGATORIO — escribe estos archivos PRIMERO:**
+**ORDEN DE ESCRITURA OBLIGATORIO — escribe estos archivos PRIMERO, en este orden exacto:**
 
-1. **`src/<paquete>/__init__.py`** — paquete del código fuente (puede estar vacío) ← PRIMERO
-2. **`tests/__init__.py`** — paquete de tests ← SEGUNDO
-3. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path ← TERCERO
-4. **`pytest.ini`** — configuración de pytest con `testpaths = tests` ← CUARTO
+1. **`requirements.txt`** — dependencias del proyecto con versiones fijas ← PRIMERO SIEMPRE
+2. **`src/<paquete>/__init__.py`** — paquete del código fuente (puede estar vacío) ← SEGUNDO
+3. **`tests/__init__.py`** — paquete de tests ← TERCERO
+4. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path ← CUARTO
+5. **`pytest.ini`** — configuración de pytest con `testpaths = tests` ← QUINTO
+6. **Todos los módulos que importas** — si `auth_service.py` importa `schemas.py`, escribe `schemas.py` ANTES ← SEXTO
 
-Solo después escribe el código de negocio.
+**CHECKLIST antes de entregar — verifica que existen:**
+- [ ] `requirements.txt` con todas las dependencias usadas en el código
+- [ ] Cada módulo importado por otros módulos fue generado en esta entrega
+- [ ] No hay `from x import y` donde `x` es un archivo que no creaste
+- [ ] `conftest.py` con `sys.path.insert(0, "src")`
+
+Solo después de estos archivos escribe el código de negocio.
 
 **PROHIBIDO: NUNCA generes `__init__.py` en la RAÍZ del proyecto.** Rompe pytest y los imports.
 
@@ -153,9 +161,13 @@ def validate_rut(rut: str) -> bool:
     return dv == expected
 ```
 
-### RUTs válidos para tests (S43-F)
+### RUTs válidos para tests (S43-F / S45-B)
 
 **NUNCA inventes RUTs en tests.** El dígito verificador se calcula con módulo 11 — un RUT inventado casi siempre tiene DV incorrecto y el test falla aunque la implementación sea correcta.
+
+**Regla de prioridad (S45-B):**
+1. Si el `{project_context}` contiene RUTs de prueba → úsalos EXACTAMENTE, son los validados para este proyecto
+2. Si no hay RUTs en el project_context → usa ÚNICAMENTE los de la tabla inferior
 
 Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribir el assert:
 
@@ -168,6 +180,25 @@ Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribi
 | `12.345.678-4` | 12345678 | 4 | ❌ RUT inválido (DV incorrecto — caso negativo) |
 
 **Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
+
+### Conexión a base de datos externa (S45-E)
+
+Si el proyecto usa una BD externa (Oracle, PostgreSQL, MySQL), la URL de conexión **DEBE** tomarse de variables de entorno o del `{project_context}`. **NUNCA hardcodear** host, puerto, usuario ni contraseña.
+
+```python
+# ✅ CORRECTO — desde variable de entorno
+import os
+DATABASE_URL = os.environ.get("DATABASE_URL", "oracle://user:pass@host:1521/XE")
+
+# ✅ CORRECTO — docker-compose con variable
+environment:
+  - DATABASE_URL=oracle://user:password@host.docker.internal:1521/XEPDB1
+
+# ❌ INCORRECTO — hardcodeado
+DATABASE_URL = "oracle://user:password@oracle:1521/XE"
+```
+
+Si el `{project_context}` menciona `host.docker.internal` como host de la BD, úsalo en el `docker-compose.yml`. Nunca uses el nombre de un servicio Docker (`oracle`, `db`) para conectarse a una BD que corre fuera de Docker.
 
 ---
 

@@ -1,5 +1,5 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-22
+**Última actualización:** 2026-04-23
 **Versión actual:** v0.9.1-agent-routing
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
@@ -8,6 +8,13 @@
 >
 > **Sesión 2026-04-16:** Sprint 18 completado — Skills externos (ui-ux-pro-max + superpowers integrados en templates + panel web de actualización), MCP Client Pool con context7 (docs de librerías en tiempo real para agentes implementadores), TUI --from-file + Ctrl+O.
 > Tests: 471/471 pasando.
+>
+> **Sesión 2026-04-23 — S43 completado + Prueba end-to-end + S45 planificado:**
+> - **Prueba S43+:** Ciclo completo "Sistema Contratos y Beneficios" — 4 agentes, qwen3-coder:30b, ~80 min, QA=65/100, 16/22 tests passed.
+> - **6 gaps identificados** (GAP-T1 a GAP-T6): RUT incorrecto en tests, React en vez de Angular, devops en código Python, Oracle mal configurado, import chain roto, sin requirements.txt.
+> - **S45 planificado:** Fix `session_create` (cargar `constraints` de BD), refuerzo RUT enforcement, checklist archivos requeridos en template backend.
+> - **S44 planificado:** MCP Server Manager — administración dinámica de servidores MCP y credenciales desde dashboard.
+> - Tests: 847 (S43 completado, S45 pendiente).
 >
 > **Sesión 2026-04-22 — S27 + S28 — fixes de calidad y routing de agentes:**
 > - **S27-A:** `run_tests` inyecta `conftest.py` con `sys.path.insert` si está vacío o no existe.
@@ -593,6 +600,193 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 ---
 
+### Sprint 43 — Externalización de instrucciones stack-aware ✅ (2026-04-23)
+
+**Motivación:** Instrucciones hardcodeadas en Python (`graph.py`) para lenguajes específicos rompían la separación de responsabilidades y dificultaban ajustes sin tocar código.
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S43-A | `doc_instructions` → `system_docs.md` | Tabla de documentos requeridos por tipo de FR movida al template | `src/engine/templates/system_docs.md` | ✅ |
+| S43-B | `conftest.py` condicional por runner | Inyección de conftest solo cuando `runner == "pytest"`, no para vitest ni cargo | `src/engine/graph.py` | ✅ |
+| S43-C | `_get_import_error_diagnosis(runner)` | Diagnóstico de ImportError stack-aware: pytest → `__init__.py`/conftest, vitest → tsconfig, cargo → `mod` | `src/engine/graph.py` | ✅ |
+| S43-D | `_RUNNER_FLAGS` dict centralizado | Flags por runner a nivel módulo en vez de hardcodeados en el comando pytest | `src/engine/graph.py` | ✅ |
+| S43-E | `_get_retry_no_modify_instruction(runner)` | Feedback de retry stack-aware: `src/` para pytest, `__tests__` para vitest, `#[cfg(test)]` para cargo | `src/engine/graph.py` | ✅ |
+| S43-F | RUTs válidos en templates | Tabla de RUTs matemáticamente verificados en `system_backend_python.md` y `system_backend.md` | `src/engine/templates/system_backend_python.md`, `system_backend.md` | ✅ |
+
+**Tests:** 31 tests nuevos en `test_s43.py`. **847 tests totales** pasan (0 fallos).
+
+---
+
+### Prueba end-to-end S43+ — Sistema Contratos y Beneficios (2026-04-23)
+
+**Objetivo:** Validar capacidades OVD con un FR de alta complejidad real: RUT módulo 11, Oracle XE, FastAPI + React, Docker, números primos, roles, valor_total automático.
+
+**Ciclo ejecutado:** `441dbe04-b185-483a-a9bd-8b2e3285f95c`
+**Modelo:** `qwen3-coder:30b` + `deepseek-r1:14b` (analyzer)
+**Duración estimada:** ~80 minutos (4 agentes, 2 rondas de retry)
+**QA Score:** 65/100 | **Tests:** 16/22 passed (6 fallos RUT, 1 import error)
+**Archivos generados:** 106
+
+#### Capacidades validadas ✅
+
+| Capacidad | Resultado |
+|-----------|-----------|
+| Lógica de negocio pura (primos, tipos contrato) | ✅ `is_prime()` correcto, `VALID_CONTRACT_TYPES=[1,2,3,4,10,15]` |
+| Validación RUT módulo 11 (implementación) | ✅ Algoritmo módulo 11 correcto en `validate_rut()` y `validateRut()` (TS) |
+| Trigger Oracle valor_total | ✅ Script SQL generado en `migrations/` |
+| JWT con rol embebido | ✅ Estructura básica generada |
+| Componentes frontend con validación en tiempo real | ✅ `LoginForm.tsx` con feedback de RUT al blur |
+| `rutValidator.ts` TypeScript | ✅ Implementación correcta e independiente |
+
+#### Gaps identificados 💡
+
+| ID | Descripción | Severidad | Sprint propuesto |
+|----|-------------|-----------|-----------------|
+| **GAP-T1** | **RUT incorrecto en tests** — S43-F insuficiente. El agente usa `12.345.678-9` (DV=9, correcto es DV=5) en todos los tests. La tabla en `system_backend.md` existe pero el agente la ignora. Fix: inyectar la tabla RUT directamente vía `project_context` desde BD, no solo en template. | Alta | S45 |
+| **GAP-T2** | **Frontend React en vez de Angular** — `project_context` de `ovd_project_profiles.constraints` no se carga al iniciar ciclo. `session_create` en `api.py` no hace JOIN con esa tabla. El stack `language='python'` no informa el frontend stack. Fix: cargar `constraints` en `session_create`. | Alta | S45 |
+| **GAP-T3** | **devops asignado a código de aplicación** — 4 agentes asignados incluyendo devops para código Python. S28-A mejoró pero no eliminó el problema. Devops generó código que duplicó responsabilidades del agente backend. | Media | S45 |
+| **GAP-T4** | **Oracle con servicio interno en vez de `host.docker.internal`** — docker-compose usa `oracle://user:password@oracle:1521/XE` (servicio Docker interno) en vez de `host.docker.internal:1521/XEPDB1`. La URL de conexión debe estar como variable explícita en `project_context`. | Alta | S45 |
+| **GAP-T5** | **Import chain roto — módulos referenciados pero no creados** — `auth_service.py` importa `schemas.py` y `jwt.py` que el agente nunca generó. La app no arranca sin parchear. | Alta | S45 |
+| **GAP-T6** | **Sin `requirements.txt` ni `package.json`** — El agente no generó los archivos de dependencias. El `docker compose up` no puede funcionar sin ellos. | Alta | S45 |
+
+#### Aprendizajes para templates y engine
+
+1. **S43-F necesita refuerzo (GAP-T1):** Tabla de RUTs en template no es suficiente. El agente necesita el RUT correcto como dato inmutable en el prompt de cada agente, no como referencia en un documento de sistema. Solución: incluir los RUTs de prueba en `project_context` como campo estructurado cargado desde `ovd_project_profiles`.
+
+2. **`session_create` no carga `constraints` (GAP-T2):** Fix de ~10 líneas en `api.py`. Actualmente solo lee `ovd_projects` pero no hace JOIN con `ovd_project_profiles`. Este es el bloqueante principal para que el `project_context` llegue a los agentes.
+
+3. **Broken import chain (GAP-T5/T6):** El agente debe generar los archivos en orden: `schemas.py` → `models.py` → `routers.py`. El template debería exigir una lista de archivos requeridos antes de empezar la implementación.
+
+4. **Tiempo de ciclo con `qwen3-coder:30b`:** ~80 min para FR de alta complejidad con 4 agentes y 2 retry rounds. Con S41.PRE (timeouts diferenciados) y S41 (RAG learning) se podría reducir significativamente en ciclos posteriores del mismo proyecto.
+
+---
+
+### Sprint 45 — Fix gaps de generación: project_context + RUT enforcement + import chain ⬜
+
+**Identificado:** 2026-04-23
+**Motivación:** La prueba end-to-end S43+ reveló 6 gaps que impiden que el entregable sea ejecutable. Los 3 más críticos (GAP-T1, GAP-T2, GAP-T5) tienen fixes concretos de alcance reducido.
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S45-A | Cargar `constraints` desde BD en `session_create` | `api.py → session_create`: JOIN con `ovd_project_profiles` para leer `constraints` y agregarlo a `project_context`. Resuelve GAP-T2 (stack frontend no llega a agentes) | `src/engine/api.py` | ⬜ |
+| S45-B | RUTs de prueba en `project_context` | En `system_backend_python.md` y `system_sdd.md`, instrucción explícita: "Si el proyecto usa RUT chileno, los RUTs de prueba DEBEN venir del `project_context`. NUNCA inventes RUTs." Resuelve GAP-T1 | `src/engine/templates/` | ⬜ |
+| S45-C | Checklist de archivos requeridos en template backend | `system_backend_python.md`: el agente debe listar y crear explícitamente `requirements.txt`, `schemas.py`, todos los módulos referenciados antes de implementarlos. Resuelve GAP-T5/T6 | `src/engine/templates/system_backend_python.md` | ⬜ |
+| S45-D | Refuerzo regla devops en `system_sdd.md` | Agregar ejemplos concretos: "FR con Oracle + FastAPI → agentes: database + backend. devops SOLO si el FR menciona explícitamente CI/CD, Kubernetes o pipeline de despliegue." Resuelve GAP-T3 | `src/engine/templates/system_sdd.md` | ⬜ |
+| S45-E | URL de conexión BD como variable en `project_context` | Instrucción en template: la URL de conexión a BD externa debe tomarse de `{db_connection_url}` del `project_context`, nunca hardcodeada. Resuelve GAP-T4 | `src/engine/templates/system_backend_python.md` | ⬜ |
+
+**Tests S45:**
+- `test_session_create_loads_constraints` — `project_context` contiene constraints de `ovd_project_profiles`
+- `test_rut_table_not_in_project_context_fallback` — sin constraints, usa tabla estática del template
+- `test_requirements_txt_in_template` — template menciona `requirements.txt` como obligatorio
+
+**Orden:** S45-A (fix api.py) → S45-B/C/D/E (templates) → tests → relanzar ciclo contratos-beneficios
+
+---
+
+### Sprint 46 — Design Quality System: UI profesional en código generado ⬜
+
+**Identificado:** 2026-04-23
+**Motivación:** La prueba end-to-end S43+ demostró que el frontend generado es funcional pero visualmente básico: CSS raw sin sistema de diseño, sin layout de aplicación (sidebar/topbar), sin estados de UI consistentes (loading, empty, error), sin biblioteca de componentes. El cliente no puede presentar un entregable así. OVD necesita que el agente frontend produzca UIs de nivel producción por defecto.
+
+**Problema raíz:** `system_frontend_react.md` y `system_frontend.md` definen arquitectura y patrones de código, pero no imponen ningún sistema de diseño. El agente elige libremente entre CSS raw, Tailwind ad-hoc o clases inventadas.
+
+#### S46-A — Design system obligatorio en templates
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S46-A1 | Tailwind CSS como default | Agregar a `system_frontend_react.md`: instrucción explícita de usar Tailwind para todo el CSS. Prohibir CSS-in-JS ad-hoc y clases inventadas sin definición | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-A2 | shadcn/ui como biblioteca de componentes | Instrucción de usar componentes shadcn/ui (Button, Input, Card, Table, Dialog, Badge, Toast) en vez de construir primitivos desde cero. Con ejemplos de import y uso | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-A3 | App shell obligatorio | Para apps multi-página: generar siempre un layout con sidebar + topbar + área de contenido. Incluir ejemplo estructural en el template | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-A4 | Paleta de colores y tipografía | Definir tokens de diseño base en `tailwind.config.ts` generado: primary, secondary, destructive, muted, foreground, background. Tipografía: Inter como font por defecto | `src/engine/templates/system_frontend_react.md` | ⬜ |
+
+#### S46-B — Estados de UI requeridos
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S46-B1 | Estados de formulario completos | Todo `<form>` debe tener: estado normal, focus visible, error con mensaje, disabled, loading (spinner en botón submit). Prohibido botón sin feedback visual | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-B2 | Estados de lista obligatorios | Todo componente de lista debe tener: skeleton de carga, estado vacío con ilustración/icono y mensaje, estado de error con retry | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-B3 | Feedback de acciones | Toda acción destructiva: confirmation dialog. Toda acción async exitosa: toast de éxito. Todo error de API: toast de error con mensaje legible (no stack trace) | `src/engine/templates/system_frontend_react.md` | ⬜ |
+
+#### S46-C — Biblioteca de patrones UI en knowledge base
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S46-C1 | Patrones de formulario profesionales | Agregar a `src/knowledge/ui-ux/`: guías de floating labels, validación inline, campos con iconos, grupos de campos relacionados | `src/knowledge/ui-ux/` | ⬜ |
+| S46-C2 | Patrones de tablas de datos | Data table con sort, filtro, paginación, selección de filas, acciones por fila. Ejemplo completo con shadcn/ui Table | `src/knowledge/ui-ux/` | ⬜ |
+| S46-C3 | Patrones de dashboard | Layout de métricas (stat cards), gráficos placeholder, actividad reciente, navegación lateral con items activos | `src/knowledge/ui-ux/` | ⬜ |
+| S46-C4 | Patrones de auth | Login card centrado, validación en tiempo real, forgot password flow, indicador de fortaleza de contraseña | `src/knowledge/ui-ux/` | ⬜ |
+
+#### S46-D — Responsive y accesibilidad
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S46-D1 | Breakpoints obligatorios | Toda página debe funcionar en mobile (≥375px), tablet (≥768px) y desktop (≥1280px). Sidebar colapsa a drawer en mobile | `src/engine/templates/system_frontend_react.md` | ⬜ |
+| S46-D2 | Accesibilidad mínima | `aria-label` en iconos sin texto, `role` en elementos interactivos custom, contraste AA mínimo, navegación por teclado en modales | `src/engine/templates/system_frontend_react.md` | ⬜ |
+
+**Resultado esperado:** Un ciclo OVD con FR de frontend produce una app con: layout completo, componentes shadcn/ui, Tailwind consistente, estados loading/empty/error, toasts, y responsive básico — sin que el usuario tenga que especificarlo en el FR.
+
+---
+
+### Sprint 44 — MCP Server Manager: administración dinámica + credenciales ⬜
+
+**Identificado:** 2026-04-23
+**Motivación:** El `MCPClientPool` actual tiene `context7` hardcodeado en `mcp_client.py`. No hay forma de agregar otros servidores MCP desde el dashboard, ni de manejar credenciales para servers que requieren autenticación (API keys, tokens). El usuario necesita poder registrar servidores MCP como context7, Brave Search, GitHub MCP, etc., y administrar sus credenciales de forma segura desde OVD.
+
+**Estado actual:** `MCPClientPool` singleton con `_connect_context7()` fijo. Sin tabla BD, sin API CRUD, sin UI.
+
+#### S44-A — Modelo de datos
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S44-A | Tabla `ovd_mcp_servers` | `id, org_id, name, transport (stdio/sse/http), command, args (jsonb), env_vars (jsonb), url, enabled, scope (global/project), created_at`. Row-level security por org_id | `migrations/` | ⬜ |
+| S44-B | Tabla `ovd_mcp_credentials` | `id, mcp_server_id, key_name, encrypted_value, created_at`. Credenciales cifradas en BD o referencia a Infisical | `migrations/` | ⬜ |
+| S44-C | Tabla `ovd_project_mcp_servers` | Asociación M:N entre proyectos y servidores MCP. Permite habilitar/deshabilitar servers por proyecto | `migrations/` | ⬜ |
+
+#### S44-B — API Engine
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S44-D | `GET /api/v1/orgs/{org_id}/mcp-servers` | Listar servidores MCP de la org (globales + del proyecto) | `src/engine/routers/api_v1.py` | ⬜ |
+| S44-E | `POST /api/v1/orgs/{org_id}/mcp-servers` | Registrar nuevo servidor MCP (name, transport, command/url, args) | `src/engine/routers/api_v1.py` | ⬜ |
+| S44-F | `PUT /api/v1/orgs/{org_id}/mcp-servers/{id}` | Actualizar configuración del servidor | `src/engine/routers/api_v1.py` | ⬜ |
+| S44-G | `DELETE /api/v1/orgs/{org_id}/mcp-servers/{id}` | Eliminar servidor MCP | `src/engine/routers/api_v1.py` | ⬜ |
+| S44-H | `POST /api/v1/orgs/{org_id}/mcp-servers/{id}/credentials` | Agregar/actualizar credencial (key_name + value cifrado) | `src/engine/routers/api_v1.py` | ⬜ |
+| S44-I | `POST /api/v1/orgs/{org_id}/mcp-servers/{id}/test` | Probar conexión al servidor MCP (lanza el proceso, verifica tools disponibles, retorna lista) | `src/engine/routers/api_v1.py` | ⬜ |
+
+#### S44-C — MCPClientPool dinámico
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S44-J | `MCPClientPool.load_from_db()` | Al iniciar el engine, lee `ovd_mcp_servers` (enabled=true) y lanza cada servidor según su transport. Reemplaza el `_connect_context7()` hardcodeado. context7 migrado a un registro en BD | `src/engine/mcp_client.py` | ⬜ |
+| S44-K | Soporte transport stdio/sse/http | stdio: lanza subproceso con `command` + `args`. sse: conecta a URL vía SSE. http: conecta a URL HTTP. Actualmente solo existe stdio para context7 | `src/engine/mcp_client.py` | ⬜ |
+| S44-L | Credenciales en env del subproceso | Para servers stdio, las credenciales se inyectan como variables de entorno del subproceso (no aparecen en logs ni en el estado del grafo) | `src/engine/mcp_client.py` | ⬜ |
+| S44-M | Reload sin restart | `POST /api/v1/orgs/{org_id}/mcp-servers/reload` — cierra y reconecta todos los servers sin reiniciar el engine | `src/engine/mcp_client.py`, `src/engine/routers/api_v1.py` | ⬜ |
+| S44-N | Asignación por agente configurable | Cada servidor MCP tiene `agent_scope: list[str]` (e.g. `["backend", "frontend"]`). Por defecto: todos los agentes implementadores | `src/engine/mcp_client.py` | ⬜ |
+
+#### S44-D — Dashboard MCP Manager
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S44-O | Página `/admin/mcp` | Lista de servidores MCP: nombre, transport, estado (conectado/desconectado), tools disponibles, scope. Botones: agregar, editar, eliminar, test | `src/dashboard/src/pages/McpManager.tsx` | ⬜ |
+| S44-P | Modal de registro de servidor | Formulario: nombre, transport (stdio/sse/http), command o URL, args (editor JSON), habilitado, scope (global/proyecto) | `src/dashboard/src/pages/McpManager.tsx` | ⬜ |
+| S44-Q | Panel de credenciales | Por cada servidor: lista de keys configuradas (nombre visible, valor oculto), agregar/eliminar. Sin mostrar valores en claro | `src/dashboard/src/pages/McpManager.tsx` | ⬜ |
+| S44-R | Test de conexión en UI | Botón "Probar conexión" — llama al endpoint S44-I y muestra: tools disponibles, latencia, error si falla | `src/dashboard/src/pages/McpManager.tsx` | ⬜ |
+| S44-S | Asignación por proyecto | En la página de configuración del proyecto, selector multi-check de servidores MCP disponibles | `src/dashboard/src/pages/Projects.tsx` | ⬜ |
+
+#### Servidores MCP a soportar (ejemplos)
+
+| Servidor | Transport | Credencial | Uso en OVD |
+|----------|-----------|------------|------------|
+| `@upstash/context7-mcp` | stdio | ninguna | Docs de librerías para agentes (ya existe) |
+| `@modelcontextprotocol/server-brave-search` | stdio | `BRAVE_API_KEY` | Web research para `analyze_fr` |
+| `@modelcontextprotocol/server-github` | stdio | `GITHUB_TOKEN` | Leer repos del cliente, crear PRs |
+| `@modelcontextprotocol/server-postgres` | stdio | `DATABASE_URL` | Introspección de BD del cliente |
+| Servidor MCP custom del cliente | http/sse | token | Integración con sistemas propios |
+
+**Orden de implementación:** S44-A → S44-B/C/D → S44-J/K/L (pool dinámico) → S44-O/P/Q (dashboard) → S44-M/N/R/S
+
+---
+
 ### Sprint 41.PRE — Fix timeout security_audit + timeouts diferenciados por nodo ⬜
 
 **Identificado:** 2026-04-23
@@ -670,6 +864,26 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 ---
 
+## Orden de trabajo — Próximos sprints (2026-04-23)
+
+Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumulada:
+
+| Prioridad | Sprint | Qué resuelve | Esfuerzo estimado |
+|-----------|--------|-------------|-------------------|
+| 1 | **S45** — Fix gaps de generación | El entregable no arranca: `project_context` no llega a agentes, RUT incorrecto en tests, import chain roto, sin `requirements.txt` | Bajo (~2h) |
+| 2 | **S46** — Design Quality System | UI generada es básica y no presentable: sin design system, sin layout profesional, sin estados de UI | Medio (~1 día) |
+| 3 | **S41.PRE** — Timeouts diferenciados | Ciclos largos se cancelan por heartbeat; nodos pesados sin margen de tiempo propio | Bajo (~1h) |
+| 4 | **S41** — RAG Learning | Los errores recurrentes se corrigen manualmente en templates en vez de aprenderse automáticamente | Alto (~1 día) |
+| 5 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
+
+**Razonamiento del orden:**
+- S45 primero porque sin código que arranque, el diseño no importa
+- S46 segundo porque la calidad visual es la queja principal post-prueba
+- S41.PRE es un fix operativo de baja fricción, se puede hacer en paralelo
+- S41 y S44 son features de plataforma, van después de resolver la calidad del output
+
+---
+
 ## FASE F — Migración Flutter (cliente unificado web + desktop)
 
 **Objetivo:** reemplazar el TUI Rust y el Dashboard React por una sola aplicación Flutter que compila a web, macOS, Linux y Windows desde el mismo codebase Dart. El engine Python no cambia.
@@ -732,162 +946,166 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 ## FASE M — Modelo Propio (transversal a todas las fases)
 
-**Objetivo estratégico:** construir el modelo de IA propio de Omar Robles, especializado en desarrollo de software, entrenado sobre ciclos reales aprobados por el equipo.
+**Objetivo estratégico:** construir modelos de IA propios especializados por rol, entrenados sobre ciclos reales aprobados por el equipo. Cada modelo corre 100% local en Ollama — sin dependencia de API cloud.
 
 Ver estrategia completa en `docs/MODEL_STRATEGY.md`.
 
+### Modelos en uso y estrategia de fine-tuning por rol
+
+| Modelo Ollama | Rol en OVD | Variable `.env` | Fine-tuning viable | Dataset requerido |
+|---|---|---|---|---|
+| `deepseek-r1:14b` | Análisis de FR (`analyze_fr`) | `OVD_MODEL_ANALYZER` | Sí — dataset actual aplica directo | `data/merged.jsonl` (312 ejemplos) |
+| `qwen2.5-coder:7b` | Arquitecto base | — | Ya fine-tuneado → `ovd-arch-assistant` | — |
+| `qwen3-coder:30b` | Agentes de implementación (backend/frontend/DB) | `OVD_MODEL` | Sí — requiere dataset de implementación | Construir con ciclos exitosos via S41 |
+| `qwen3-coder-next` (80B MoE) | QA review + security audit | `OVD_MODEL_QA` | Factible pero bajo ROI — el modelo ya es muy bueno en esas tareas | — |
+| `qwen2.5vl:7b` | Visión (`describe_image`) | `OVD_MODEL_VISION` | No aplica — dataset incompatible (texto puro) | — |
+
+### Hitos
+
 | Hito | Descripción | Condición | Estado |
 |---|---|---|---|
-| M0 | `qwen2.5-coder:7b` ejecutando ciclos en producción | Estado actual | ✅ |
+| M0 | Modelos base ejecutando ciclos en producción | Estado actual | ✅ |
 | SM1 | **Aceleración con datos sintéticos** — `generate_synthetic.py` (42 escenarios, 3 tipos), `export_cycles.py` con filtros de calidad, `pipeline.sh` orchestrator. **Pipeline ejecutado 2026-03-31: 200 sintéticos generados + 112 de batch1 = 312 ejemplos en `data/merged.jsonl`, 0 duplicados, 0 errores, ~840 tokens/ejemplo.** | Sprint 9–10 | ✅ |
 | M1 | 300+ ejemplos de calidad (reales + sintéticos validados) en JSONL listo para fine-tuning | Completado 2026-03-31 | ✅ |
-| M2.A | **Fine-tuning Claude Haiku via Anthropic API** — upload `data/merged.jsonl` (312 ejemplos) a `claude-haiku-4-5-20251001`. Dataset listo. Pendiente: ejecutar `upload_finetune.py`. | Después de M1 | ⬜ |
-| M2.B | **Fine-tuning local via MLX (Apple Silicon)** — ver plan detallado abajo. Alternativa para modelo Ollama sin dependencia de API cloud. | Después de M1 | ⬜ |
-| M3 | Adapter activo — supera al base en benchmark propio | Después de M2.A o M2.B | ⬜ |
-| M4 | El modelo genera stacks complejos correctamente sin restricciones explícitas en prompt | Stack Registry + M3 | ⬜ |
+| M1.5 | **Evaluar y enriquecer dataset** — exportar ciclos S36-S42 (QA mejoró de 62 a 95) con `export_cycles.py --min-qa-score 0.80` y hacer merge. Los ciclos recientes tienen mejor calidad de SDD y análisis de FR. | Antes de M2 | ⬜ |
+| M2.arch | **Fine-tuning `ovd-arch-assistant`** (Qwen2.5-Coder-7B) — GGUF ya generado (`qwen-arch-ovd-Q4_K_M.gguf`, 4.4 GB), registrado en Ollama. Pendiente: validar con benchmark. | Completado técnicamente | 🔨 |
+| M2.analyzer | **Fine-tuning `deepseek-r1:14b`** para `analyze_fr` — dataset actual aplica directo (análisis de FR + generación de SDD). Produce `ovd-analyzer` en Ollama. | Después de M1.5 | ⬜ |
+| M3 | Modelos fine-tuneados activos — superan a sus bases en benchmark propio por rol | Después de M2.arch + M2.analyzer | ⬜ |
+| M4 | **Fine-tuning `qwen3-coder:30b`** para agentes de implementación — requiere dataset de código generado + aprobado (construido con S41 RAG Learning) | S41 maduro + M3 | ⬜ |
 | M5 | Adapter LoRA por workspace — cada workspace tiene su propio modelo especializado | Fase B madura | ⬜ |
 | M6 | Modelo como diferenciador del SaaS — cada org cliente tiene el suyo | Fase C | 💡 |
 
-> **Infraestructura ya implementada:** `ovd_fine_tuned_models`, Model Registry API, JSONL export diario, pipeline Unsloth/LlamaFactory, activación via Ollama. Ver detalle en `docs/MODEL_STRATEGY.md` sección 8.
+> **Infraestructura ya implementada:** `ovd_fine_tuned_models`, Model Registry API, JSONL export diario, pipeline MLX + llama.cpp, activación via Ollama. Ver detalle en `docs/MODEL_STRATEGY.md` sección 8.
 
 ---
 
-### Plan M2.B — Fine-tuning Local con MLX en Apple Silicon
+### Plan M2.arch — Fine-tuning Arquitecto (ya ejecutado, pendiente validación)
 
-**Hardware:** MacBook Pro M1 Pro 16 GB — factible con QLoRA 4-bit, en el límite de RAM.
-**Modelo base recomendado:** `Qwen2.5-Coder-7B-Instruct-4bit` (primera iteración); `Qwen3-8B-4bit` (segunda iteración si calidad insuficiente).
+**Estado:** GGUF generado y registrado en Ollama como `ovd-arch-assistant:latest` (4.7 GB).
+**Pendiente (M3):** benchmark comparativo contra `qwen2.5-coder:7b` base en tareas de `analyze_fr` y `generate_sdd`.
 
-> **Decisión registrada 2026-04-01:** Se prioriza Qwen2.5-Coder-7B sobre Qwen3-8B para el agente Arquitecto (punto de entrada del pipeline OVD). Razón: el Arquitecto es quien analiza el FR y da el puntapié inicial al resto de los agentes — necesita especialización en código y arquitectura técnica más que razonamiento general. Qwen2.5-Coder cubre ese perfil con menor riesgo en MLX. **Evaluar Qwen3-8B en M2.B iteración 2** si la calidad del SDD generado es insuficiente, o cuando el soporte MLX de Qwen3 esté más maduro.
-**Dataset:** `data/merged.jsonl` (312 ejemplos, formato Anthropic messages — compatible directo con mlx-lm sin conversión).
+**Archivos generados:**
+- `src/finetune/models/qwen2.5-coder-7b-4bit/` — modelo base descargado
+- `src/finetune/adapters/` — adapter LoRA entrenado
+- `src/finetune/models/fused/` — adapter fusionado con base
+- `src/finetune/models/qwen-arch-ovd.f16.gguf` — GGUF full precision (14.2 GB)
+- `src/finetune/models/qwen-arch-ovd-Q4_K_M.gguf` — cuantizado producción (4.4 GB)
 
-#### Fase 0 — Preparación (~30 min)
+---
+
+### Plan M2.analyzer — Fine-tuning DeepSeek-R1:14B para analyze_fr
+
+**Modelo base:** `deepseek-r1:14b` (modelo local, rol `OVD_MODEL_ANALYZER`)
+**Dataset:** `data/merged.jsonl` — aplica directo (ejemplos de análisis de FR y generación de SDD)
+**Resultado esperado:** `ovd-analyzer` en Ollama, especializado en razonamiento sobre Feature Requests
+
+#### Fase 0 — Preparación
 
 ```bash
-uv venv mlx-env && source mlx-env/bin/activate
-uv pip install mlx-lm
+cd src/finetune
+source mlx-env/bin/activate  # mlx-lm ya instalado
 
-# Split 80/10/10
-python -c "
-import json, random, pathlib
-data = [json.loads(l) for l in open('src/finetune/data/merged.jsonl')]
-random.seed(42); random.shuffle(data)
-n = len(data)
-pathlib.Path('src/finetune/data/mlx').mkdir(exist_ok=True)
-for name, subset in [('train', data[:249]), ('valid', data[249:280]), ('test', data[280:])]:
-    open(f'src/finetune/data/mlx/{name}.jsonl','w').writelines(json.dumps(e,ensure_ascii=False)+'\n' for e in subset)
-print('train:', 249, 'valid:', 31, 'test:', 32)
-"
+# Enriquecer dataset primero (M1.5)
+python export_cycles.py --min-qa-score 0.80 --output data/recent_cycles.jsonl
+# Merge con dataset existente si hay ciclos nuevos de calidad
 ```
 
-#### Fase 1 — Fine-tuning QLoRA (~35-45 min en M1 Pro)
+#### Fase 1 — Descargar y convertir modelo base
 
 ```bash
-# Descargar modelo base cuantizado
+# DeepSeek-R1-14B desde HuggingFace (formato mlx)
 mlx_lm.convert \
-  --hf-path mlx-community/Qwen2.5-Coder-7B-Instruct-4bit \
-  --mlx-path src/finetune/models/base
+  --hf-path mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit \
+  --mlx-path src/finetune/models/deepseek-r1-14b-4bit
 ```
 
-Archivo `src/finetune/mlx_config.yaml`:
+#### Fase 2 — Fine-tuning QLoRA
+
+Archivo `src/finetune/mlx_config_analyzer.yaml`:
 ```yaml
-model: "./models/base"
+model: "./models/deepseek-r1-14b-4bit"
 data: "./data/mlx"
 train: true
 seed: 42
-batch_size: 2
-iters: 500
-learning_rate: 1e-4
-warmup: 50
+batch_size: 4
+iters: 600
+learning_rate: 5e-5
+warmup: 60
 weight_decay: 0.01
-grad_checkpoint: true   # crítico para 16 GB
+grad_checkpoint: false
 val_batches: 20
 steps_per_report: 25
 steps_per_eval: 100
 save_every: 100
-lora_layers: 16
+lora_layers: 24
 lora_parameters:
   rank: 16
   alpha: 32
-  dropout: 0.1
-mask_prompt: true        # loss solo en respuestas del asistente
-max_seq_length: 2048
-adapter_path: "./adapters"
+  dropout: 0.05
+mask_prompt: true
+max_seq_length: 4096
+adapter_path: "./adapters-analyzer"
 ```
 
 ```bash
-cd src/finetune && mlx_lm.lora --config mlx_config.yaml
+cd src/finetune && mlx_lm.lora --config mlx_config_analyzer.yaml
 ```
 
-**Señales a monitorear:**
-- `Val loss` baja junto con `Train loss` → bien
-- `Val loss` sube sostenidamente → overfitting, detener en ese checkpoint
-- Loss estable antes de iter 100 → normal con dataset pequeño
-
-#### Fase 2 — Export a GGUF para Ollama (~30-60 min)
-
-> `mlx_lm.fuse --export-gguf` no soporta Qwen. Se requiere llama.cpp.
+#### Fase 3 — Export a GGUF y registro en Ollama
 
 ```bash
-# 1. Fusionar adapter (de-quantize obligatorio para llama.cpp)
+# Fusionar adapter
 mlx_lm.fuse \
-  --model src/finetune/models/base \
-  --adapter-path src/finetune/adapters \
-  --save-path src/finetune/fused \
+  --model src/finetune/models/deepseek-r1-14b-4bit \
+  --adapter-path src/finetune/adapters-analyzer \
+  --save-path src/finetune/fused-analyzer \
   --de-quantize
 
-# 2. Compilar llama.cpp desde fuente (soporte Qwen3 actualizado)
-git clone https://github.com/ggml-org/llama.cpp /opt/llama.cpp
-cd /opt/llama.cpp
-cmake -B build -DLLAMA_METAL=ON
-cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-uv pip install -r requirements.txt
+# Convertir con llama.cpp
+python /opt/llama.cpp/convert_hf_to_gguf.py src/finetune/fused-analyzer \
+  --outtype f16 --outfile src/finetune/models/ovd-analyzer.f16.gguf
+/opt/llama.cpp/build/bin/llama-quantize \
+  src/finetune/models/ovd-analyzer.f16.gguf \
+  src/finetune/models/ovd-analyzer-Q4_K_M.gguf Q4_K_M
 
-# 3. Convertir y cuantizar
-python convert_hf_to_gguf.py /ruta/src/finetune/fused \
-  --outtype f16 --outfile /ruta/src/finetune/qwen-arch.f16.gguf
-./build/bin/llama-quantize \
-  /ruta/src/finetune/qwen-arch.f16.gguf \
-  /ruta/src/finetune/qwen-arch-Q4_K_M.gguf Q4_K_M
-
-# 4. Registrar en Ollama
-cat > src/finetune/Modelfile << 'EOF'
-FROM ./qwen-arch-Q4_K_M.gguf
-SYSTEM """Eres un arquitecto de software senior especializado en OVD Platform."""
-PARAMETER temperature 0.7
-PARAMETER num_ctx 4096
-PARAMETER stop "<|im_end|>"
+# Registrar en Ollama
+cat > src/finetune/Modelfile-analyzer << 'EOF'
+FROM ./models/ovd-analyzer-Q4_K_M.gguf
+SYSTEM """Eres un arquitecto de software senior especializado en OVD Platform. Analizas Feature Requests y generas SDDs de alta calidad."""
+PARAMETER temperature 0.6
+PARAMETER num_ctx 8192
 EOF
-ollama create ovd-arch-assistant -f src/finetune/Modelfile
+ollama create ovd-analyzer -f src/finetune/Modelfile-analyzer
+
+# Activar en engine
+# OVD_MODEL_ANALYZER=ovd-analyzer  en .env
 ```
 
-#### Cuantizaciones recomendadas
+#### Cuantizaciones recomendadas (DeepSeek-R1 14B)
 
-| Formato | Tamaño | Uso |
+| Formato | Tamaño aprox. | Uso |
 |---|---|---|
-| Q8_0 | ~7.2 GB | Primera evaluación — máxima calidad |
-| **Q4_K_M** | **~4.1 GB** | **Producción — balance óptimo** |
-| Q5_K_M | ~4.8 GB | Si Q4 se siente degradado |
+| Q8_0 | ~14.5 GB | Primera evaluación — máxima calidad |
+| **Q4_K_M** | **~8.5 GB** | **Producción — balance óptimo** |
+| Q5_K_M | ~10 GB | Si Q4 se siente degradado |
 
 #### Riesgos
 
 | Riesgo | Mitigación |
 |---|---|
-| OOM durante training | `grad_checkpoint: true` + cerrar Chrome/apps pesadas |
-| Overfitting con 312 ejemplos | Monitorear val_loss, detener si diverge de train_loss |
-| Freeze en Qwen3 (issue mlx #516) | Usar Qwen2.5-Coder en primera iteración |
-| GGUF export falla | Asegurar llama.cpp compilado desde fuente (no Homebrew) |
+| Overfitting con 312 ejemplos | Monitorear val_loss; enriquecer dataset con M1.5 antes de entrenar |
+| DeepSeek thinking tokens en fine-tuning | Usar `mask_prompt: true`; verificar que `<think>` no contamina el loss |
+| GGUF export falla para DeepSeek | Asegurar llama.cpp compilado desde fuente (soporte DeepSeek actualizado) |
 
-#### Decisión entre M2.A y M2.B
+---
 
-| | M2.A (Anthropic Haiku FT) | M2.B (MLX local) |
-|---|---|---|
-| Costo | Pago por tokens de entrenamiento | Gratis (solo electricidad) |
-| Velocidad | ~1-2 horas en Anthropic | ~1 hora en M1 Pro |
-| Dependencia | API cloud | 100% local |
-| Calidad esperada | Alta (modelo base más potente) | Media-alta (modelo especializado en código) |
-| Uso en OVD | Cambiar provider en `.env` | Reemplazar qwen2.5-coder:7b en Ollama |
+### Por qué no fine-tunear qwen3-coder-next (80B MoE)
 
-**Recomendación:** ejecutar M2.A primero (dataset listo, menor complejidad), luego M2.B como alternativa offline.
+El modelo 80B MoE ya tiene capacidad de razonamiento muy alta para QA review y security audit. Fine-tunearlo requeriría un dataset específico de reviews (no el actual de analyze_fr/SDD) que aún no está construido. Se evalúa en M4 cuando S41 RAG Learning haya acumulado suficientes ejemplos.
+
+### Por qué no fine-tunear qwen3-coder:30b todavía (M4)
+
+El 30B necesita un dataset de implementación — ejemplos de código generado + tests pasando + aprobado por el equipo. Ese dataset se construye naturalmente con el tiempo a medida que los ciclos acumulan entregas exitosas. S41 RAG Learning es el prerrequisito para tener ese dataset de calidad.
 
 ---
 
@@ -1213,7 +1431,7 @@ FASE 4 (Producción):         18/18 items    100%  ✅
 FASE 5 (Crecimiento):        16/16 items    100%  ✅
 FASE A (Fundación Segura):   17/19 items     89%  ✅  (S8/S9/S10.A–E completos, S10.F–H ⏸ decisión stack observabilidad)
 FASE B (Equipo SaaS):        25/36 items     69%  🔨  (S11.A–D ✅, S12 ✅, S15.B–S17.D ✅)
-FASE M (Modelo Propio):       1/8  hitos     12%  🔨  (M0 activo, SM1 ⏸ créditos API, M1–M6 pendientes)
+FASE M (Modelo Propio):       4/9  hitos     44%  🔨  (M0/SM1/M1/M2.arch ✅ — ovd-arch-assistant en Ollama. Pendiente: M1.5 dataset, M2.analyzer deepseek-r1:14b, M3 benchmark, M4 qwen3-coder:30b)
 FASE C (SaaS Producto):       0/7  items      0%  💡  (largo plazo)
 ──────────────────────────────────────────────────────────────
 Total implementado:          138/138 items  100%  ✅

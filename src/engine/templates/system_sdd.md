@@ -98,6 +98,18 @@ Asigna cada tarea al agente correcto según su naturaleza:
 - Componente React → agente `frontend` únicamente
 - Si el FR no menciona Docker, CI/CD, ni infraestructura → NO incluyas agente `devops`
 
+**Ejemplos concretos (S45-D):**
+
+| FR describe | Agentes correctos | Error común |
+|-------------|-------------------|-------------|
+| API FastAPI + Oracle + Docker | `database` + `backend` + `devops` (solo Dockerfile/compose) | ❌ devops escribe código Python |
+| Login con RUT + JWT | `backend` | ❌ asignar devops porque "hay seguridad" |
+| Migración Oracle + trigger | `database` | ❌ asignar backend para el SQL |
+| React dashboard + filtros | `frontend` | ❌ asignar devops porque "hay build" |
+| CI/CD pipeline + tests | `devops` | ✅ único caso donde devops escribe shell/yaml |
+
+**Regla de oro:** si la tarea produce un archivo `.py`, `.ts`, `.tsx`, `.sql` → es `backend`, `frontend` o `database`. Si produce `.yml`, `Dockerfile`, `.sh` → es `devops`.
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

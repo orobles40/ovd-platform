@@ -374,6 +374,46 @@ async def start_session(
             body.feature_request, body.org_id, body.project_id, body.jwt_token
         )
 
+    # S45-A: Si project_context no viene en el body (dashboard no lo envía),
+    # cargarlo desde ovd_project_profiles para que constraints y stack lleguen a los agentes.
+    effective_project_context = body.project_context
+    if not effective_project_context and body.project_id:
+        _db_url = os.environ.get("DATABASE_URL", "")
+        if _db_url:
+            try:
+                async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
+                    _row = await _conn.execute(
+                        """SELECT language, framework, db_engine, runtime, additional_stack,
+                                  legacy_stack, constraints, code_style, project_description
+                           FROM ovd_project_profiles
+                           WHERE project_id = %s AND org_id = %s AND active = true
+                           LIMIT 1""",
+                        (body.project_id, body.org_id),
+                    )
+                    _r = await _row.fetchone()
+                    if _r:
+                        _profile = {
+                            "language":            _r[0] or "",
+                            "framework":           _r[1] or "",
+                            "db_engine":           _r[2] or "",
+                            "runtime":             _r[3] or "",
+                            "additional_stack":    _r[4] if _r[4] else [],
+                            "legacy_stack":        _r[5] or "",
+                            "constraints":         _r[6] or "",
+                            "code_style":          _r[7] or "",
+                            "project_description": _r[8] or "",
+                        }
+                        effective_project_context = json.dumps(_profile, ensure_ascii=False)
+                        logging.getLogger("ovd.api").info(
+                            "session_create: S45-A perfil cargado desde ovd_project_profiles "
+                            "— constraints=%d chars, framework=%s",
+                            len(_r[6] or ""), _r[1] or "—",
+                        )
+            except Exception as _e:
+                logging.getLogger("ovd.api").warning(
+                    "session_create: S45-A error al cargar ovd_project_profiles — %s", _e
+                )
+
     # Sprint 8+9 — GAP-A3+GAP-A4: construir AgentContext tipado desde el profile
     # to_prompt_block() genera el markdown con restricciones del stack (S8)
     # resolve_async() recupera credenciales desde Infisical si hay secret_ref (S9)
@@ -381,7 +421,7 @@ async def start_session(
     agent_ctx = await ContextResolver.resolve_async(
         org_id=body.org_id,
         project_id=body.project_id,
-        project_context=body.project_context,
+        project_context=effective_project_context,  # S45-A: usa perfil cargado desde BD si body vacío
         rag_context=rag_ctx,
         language=lang,
     )
