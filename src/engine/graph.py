@@ -82,10 +82,16 @@ _CYCLE_BUDGET_TOKENS: int = int(os.getenv("OVD_CYCLE_TOKEN_BUDGET", "0"))
 _NODE_TIMEOUT: float = float(os.getenv("OVD_NODE_TIMEOUT_SECS", "120"))
 
 # S41P.A — Timeouts diferenciados por nodo. Sobrescriben _NODE_TIMEOUT cuando están definidos.
-# Cada nodo tiene su propio peso: security_audit y agents son los más pesados (LLM 80B).
+# Cada nodo tiene su propio peso según la carga de trabajo esperada:
+#   LLM pesados (agentes, security):   1200-1800s — qwen3-coder:30b puede tardar mucho
+#   LLM livianos (analyze, sdd, docs): 300-600s   — salida estructurada, contexto menor
+#   I/O puro (tests, deliver):         120-300s    — sin LLM, solo filesystem/subprocess
 _AGENTS_TIMEOUT: float   = float(os.getenv("OVD_AGENTS_TIMEOUT_SECS",   str(_NODE_TIMEOUT)))
 _SECURITY_TIMEOUT: float = float(os.getenv("OVD_SECURITY_TIMEOUT_SECS", "1800"))
 _QA_TIMEOUT: float       = float(os.getenv("OVD_QA_TIMEOUT_SECS",       "1200"))
+_ANALYZE_TIMEOUT: float  = float(os.getenv("OVD_ANALYZE_TIMEOUT_SECS",  "300"))   # S41P.A
+_SDD_TIMEOUT: float      = float(os.getenv("OVD_SDD_TIMEOUT_SECS",      "600"))   # S41P.A
+_RESEARCH_TIMEOUT: float = float(os.getenv("OVD_RESEARCH_TIMEOUT_SECS", "180"))   # S41P.A
 _TESTS_TIMEOUT: float    = float(os.getenv("OVD_TESTS_TIMEOUT_SECS",    "300"))
 _DOCS_TIMEOUT: float     = float(os.getenv("OVD_DOCS_TIMEOUT_SECS",     "600"))
 
@@ -684,14 +690,24 @@ async def analyze_fr(state: OVDState) -> dict:
             "analyzer", state.get("org_id", ""), state.get("project_id", ""),
             state.get("jwt_token", ""), state.get("stack_routing", "auto"),
         )
-        result: FRAnalysisOutput = await invoke_structured(llm, [
-            SystemMessage(content=template_loader.render(
-                "system_analyzer",
-                language=state.get("language", "es"),
-                project_context=project_ctx,
-            )),
-            HumanMessage(content=_build_fr_content(state)),
-        ], FRAnalysisOutput)
+        try:
+            result: FRAnalysisOutput = await asyncio.wait_for(
+                invoke_structured(llm, [
+                    SystemMessage(content=template_loader.render(
+                        "system_analyzer",
+                        language=state.get("language", "es"),
+                        project_context=project_ctx,
+                    )),
+                    HumanMessage(content=_build_fr_content(state)),
+                ], FRAnalysisOutput),
+                timeout=_ANALYZE_TIMEOUT,  # S41P.A
+            )
+        except asyncio.TimeoutError:
+            log.error("analyze_fr: timeout tras %.0fs — retornando análisis mínimo", _ANALYZE_TIMEOUT)
+            result = FRAnalysisOutput(
+                fr_type="feature", complexity="medium", components=[], oracle_involved=False,
+                risks=[], summary=f"[Timeout en análisis tras {_ANALYZE_TIMEOUT:.0f}s. Revisa el LLM.]",
+            )
 
         span.set_attributes({
             "ovd.fr_type":    result.fr_type,
@@ -837,17 +853,28 @@ async def web_research_node(state: OVDState) -> dict:
         )
 
         try:
-            findings = await web_researcher.run_web_research(
-                queries=queries,
-                org_id=org_id,
-                project_id=project_id,
-                jwt_token=jwt_token,
-                bridge_url=bridge_url,
-                context=state.get("project_context", ""),
-                curated_urls=curated_urls or None,
+            findings = await asyncio.wait_for(  # S41P.A
+                web_researcher.run_web_research(
+                    queries=queries,
+                    org_id=org_id,
+                    project_id=project_id,
+                    jwt_token=jwt_token,
+                    bridge_url=bridge_url,
+                    context=state.get("project_context", ""),
+                    curated_urls=curated_urls or None,
+                ),
+                timeout=_RESEARCH_TIMEOUT,
             )
             span.set_attribute("ovd.web_research.results_count", len(findings.results))
             span.set_attribute("ovd.web_research.indexed", findings.indexed)
+        except asyncio.TimeoutError:
+            log.warning("web_research_node: timeout tras %.0fs — omitiendo investigación web", _RESEARCH_TIMEOUT)
+            return {
+                "messages": state.get("messages", []) + [{
+                    "role": "agent",
+                    "content": f"Investigación web omitida por timeout ({_RESEARCH_TIMEOUT:.0f}s).",
+                }],
+            }
         except Exception as e:
             log.warning("web_research_node: error en búsqueda web — %s", e)
             return {
@@ -924,15 +951,26 @@ async def generate_sdd(state: OVDState) -> dict:
             "sdd", state.get("org_id", ""), state.get("project_id", ""),
             state.get("jwt_token", ""), state.get("stack_routing", "auto"),
         )
-        result: SDDOutput = await invoke_structured(llm, [
-            SystemMessage(content=template_loader.render(
-                "system_sdd",
-                language=state.get("language", "es"),
-                project_context=project_ctx,
-                rag_context=rag_ctx,
-            )),
-            HumanMessage(content=human_content),
-        ], SDDOutput)
+        try:
+            result: SDDOutput = await asyncio.wait_for(
+                invoke_structured(llm, [
+                    SystemMessage(content=template_loader.render(
+                        "system_sdd",
+                        language=state.get("language", "es"),
+                        project_context=project_ctx,
+                        rag_context=rag_ctx,
+                    )),
+                    HumanMessage(content=human_content),
+                ], SDDOutput),
+                timeout=_SDD_TIMEOUT,  # S41P.A
+            )
+        except asyncio.TimeoutError:
+            log.error("generate_sdd: timeout tras %.0fs — retornando SDD mínimo", _SDD_TIMEOUT)
+            result = SDDOutput(
+                summary=f"[Timeout en SDD tras {_SDD_TIMEOUT:.0f}s. Revisa el LLM.]",
+                requirements=[], design_overview="", design_diagrams=[],
+                constraints=[], tasks=[],
+            )
 
         # Serializar los 4 artefactos como dicts para el estado
         sdd = {
