@@ -18,17 +18,32 @@ class TestS33ANoModifyTests:
     """S33-A: update_test_retry incluye instrucción de no modificar tests."""
 
     def test_update_test_retry_incluye_instruccion_critica(self):
-        """update_test_retry agrega instrucción de no modificar tests."""
+        """update_test_retry agrega instrucción de no modificar tests (verifica feedback generado).
+        S43-E: el mensaje viene de _get_retry_no_modify_instruction() — verificar comportamiento."""
         import graph as _graph
         src = inspect.getsource(_graph.update_test_retry)
         assert "S33-A" in src, "Etiqueta S33-A no encontrada en update_test_retry"
-        assert "NUNCA modifiques" in src or "no deben modificarse" in src
+        # Verificar que el feedback generado contiene la instrucción (no el source de la función)
+        state = make_state(
+            test_results={"passed": False, "output": "assert 1 == 2", "runner": "pytest"},
+            test_retry_count=0,
+        )
+        result = _graph.update_test_retry(state)
+        feedback = result.get("retry_feedback", "")
+        assert "NUNCA modifiques" in feedback or "no deben modificarse" in feedback
 
     def test_instruccion_menciona_solo_implementacion(self):
-        """La instrucción indica que solo se debe corregir la implementación."""
+        """La instrucción indica que solo se debe corregir la implementación (verifica feedback generado).
+        S43-E: el mensaje ahora viene de _get_retry_no_modify_instruction() — verificar comportamiento,
+        no source code de update_test_retry."""
         import graph as _graph
-        src = inspect.getsource(_graph.update_test_retry)
-        assert "implementaci" in src.lower() and "src/" in src
+        state = make_state(
+            test_results={"passed": False, "output": "assert 1 == 2", "runner": "pytest"},
+            test_retry_count=0,
+        )
+        result = _graph.update_test_retry(state)
+        feedback = result.get("retry_feedback", "")
+        assert "implementaci" in feedback.lower() and "src/" in feedback
 
     def test_instruccion_es_prominente(self):
         """En el feedback generado, la instrucción aparece antes del output de pytest."""

@@ -181,6 +181,22 @@ def require_valid_rut(rut: str) -> str:
 - **Unicidad:** el campo RUT en la BD debe tener constraint UNIQUE dentro del scope de org_id
 - **Tests obligatorios:** incluir casos: RUT válido, RUT con dígito K, RUT con puntos/guión, RUT inválido (dv incorrecto), RUT con letras
 
+### RUTs válidos para tests (S43-F)
+
+**NUNCA inventes RUTs en tests.** El dígito verificador se calcula con módulo 11 — un RUT inventado casi siempre tiene DV incorrecto y el test falla aunque la implementación sea correcta.
+
+Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribir el assert:
+
+| RUT formateado | Cuerpo | DV | Caso de prueba |
+|----------------|--------|----|----------------|
+| `12.345.678-5` | 12345678 | 5 | Happy path, 8 dígitos |
+| `11.111.111-1` | 11111111 | 1 | Dígitos repetidos |
+| `5.678.901-4` | 5678901 | 4 | Happy path, 7 dígitos |
+| `0.000.001-9` | 1 | 9 | RUT mínimo válido |
+| `12.345.678-4` | 12345678 | 4 | ❌ RUT inválido (DV incorrecto — caso negativo) |
+
+**Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
+
 ## Metodología obligatoria
 
 ### TDD — Ley de hierro

@@ -89,6 +89,16 @@ _QA_TIMEOUT: float       = float(os.getenv("OVD_QA_TIMEOUT_SECS",       "1200"))
 _TESTS_TIMEOUT: float    = float(os.getenv("OVD_TESTS_TIMEOUT_SECS",    "300"))
 _DOCS_TIMEOUT: float     = float(os.getenv("OVD_DOCS_TIMEOUT_SECS",     "600"))
 
+# S43-D: flags adicionales por runner — centralizados para facilitar mantenimiento.
+# Cada runner puede tener flags extra que se agregan al comando base.
+# pytest: --import-mode=importlib resuelve imports sin depender de __init__.py en raíz.
+# vitest/cargo: flags propios del runner; lista vacía significa "sin flags extra".
+_RUNNER_FLAGS: dict[str, list[str]] = {
+    "pytest": ["--no-header", "--import-mode=importlib"],
+    "vitest": ["--reporter=verbose"],
+    "cargo":  [],
+}
+
 # ---------------------------------------------------------------------------
 # Schemas de structured output
 # ---------------------------------------------------------------------------
@@ -2336,9 +2346,9 @@ async def run_tests(state: OVDState) -> dict:
         cycle_ts = state.get("cycle_start_ts", 0)
         _cleanup_impl_files_from_prev_retry(work_dir, cycle_ts)
 
-    # S27-A: inyectar conftest.py si está vacío o no existe en la raíz del workspace.
-    # Garantiza que pytest resuelva imports desde src/ independientemente de lo que generó el agente.
-    if work_dir:
+    # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
+    # Para TypeScript, Rust u otros stacks no existe este mecanismo de resolución de imports.
+    if work_dir and runner == "pytest":
         _conftest = pathlib.Path(work_dir) / "conftest.py"
         if not _conftest.exists() or _conftest.stat().st_size == 0:
             _conftest.write_text(
@@ -2346,7 +2356,7 @@ async def run_tests(state: OVDState) -> dict:
                 'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n',
                 encoding="utf-8",
             )
-            log.info("run_tests: S27-A conftest.py inyectado con sys.path en %s", _conftest)
+            log.info("run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s", _conftest)
 
     # Ejecutar runner
     passed = False
@@ -2384,12 +2394,15 @@ async def run_tests(state: OVDState) -> dict:
                 _pytest_args = [work_dir]
             # S28-C: flags claros sin conflicto (-v y -q se anulan)
             # S33-C: en retry rounds, usar --tb=long para dar más contexto al agente
+            # S43-D: flags extra desde _RUNNER_FLAGS (centralizados a nivel módulo)
             _tb_mode = "long" if retry_round > 0 else "short"
+            _extra_flags = _RUNNER_FLAGS.get("pytest", [])
             cmd = ([sys.executable, "-m", "pytest"] + _pytest_args
-                   + [f"--tb={_tb_mode}", "--no-header", f"--rootdir={work_dir}", "--import-mode=importlib"]
+                   + [f"--tb={_tb_mode}", f"--rootdir={work_dir}"]
+                   + _extra_flags
                    ) if _pytest_args else []
         elif runner == "vitest":
-            cmd = ["npx", "vitest", "run", "--reporter=verbose"]
+            cmd = ["npx", "vitest", "run"] + _RUNNER_FLAGS.get("vitest", [])
         elif runner == "cargo":
             cmd = ["cargo", "test", "--manifest-path", f"{work_dir}/Cargo.toml"]
         else:
@@ -2428,13 +2441,11 @@ async def run_tests(state: OVDState) -> dict:
                                 "run_tests: S32-C pytest exit 4 — ImportError detectado: %s",
                                 " | ".join(_import_errors[:3]),
                             )
-                            # Inyectar diagnóstico claro al inicio del output para el retry_feedback
+                            # S32-C / S43-C: inyectar diagnóstico stack-aware al inicio del output
                             output = (
-                                f"[DIAGNÓSTICO S32-C] ImportError detectado:\n"
+                                f"[DIAGNÓSTICO S32-C/S43-C] ImportError detectado:\n"
                                 + "\n".join(_import_errors[:5])
-                                + "\n\nSOLUCIÓN: Asegúrate de que src/<paquete>/__init__.py existe y que "
-                                "conftest.py tiene sys.path.insert(0, 'src'). "
-                                "Escribe estos archivos de infraestructura PRIMERO antes que el código de negocio.\n\n"
+                                + f"\n\n{_get_import_error_diagnosis(runner)}\n\n"
                                 + output
                             )
                         else:
@@ -2503,6 +2514,61 @@ def _route_after_tests(state: OVDState) -> str:
         return "test_retry"
     log.warning("run_tests: max retries alcanzado, continuando con generate_docs (tests fallidos)")
     return "generate_docs"
+
+
+def _get_retry_no_modify_instruction(runner: str) -> str:
+    """S33-A / S43-E: Instrucción de no modificar tests, adaptada al runner/stack."""
+    base = (
+        "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
+        "Solo corrige la IMPLEMENTACIÓN para que los tests pasen. "
+        "NUNCA modifiques, elimines ni agregues tests."
+    )
+    if runner in ("pytest", ""):
+        return (
+            "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
+            "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
+            "NUNCA modifiques, elimines ni agregues tests."
+        )
+    if runner == "vitest":
+        return (
+            "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
+            "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
+            "NUNCA modifiques, elimines ni agregues tests. "
+            "(TypeScript: implementación en src/, tests en tests/ o __tests__/)"
+        )
+    if runner == "cargo":
+        return (
+            "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
+            "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
+            "NUNCA modifiques, elimines ni agregues tests. "
+            "(Rust: tests de integración en tests/, unitarios con #[cfg(test)] dentro del módulo)"
+        )
+    return base
+
+
+def _get_import_error_diagnosis(runner: str) -> str:
+    """S43-C: Diagnóstico de error de importación adaptado al runner/stack."""
+    if runner == "pytest":
+        return (
+            "SOLUCIÓN: Asegúrate de que src/<paquete>/__init__.py existe y que "
+            "conftest.py tiene sys.path.insert(0, 'src'). "
+            "Escribe estos archivos de infraestructura PRIMERO antes que el código de negocio."
+        )
+    if runner == "vitest":
+        return (
+            "SOLUCIÓN: Verifica que las rutas de importación usen la notación del proyecto "
+            "(paths en tsconfig.json). Asegúrate de que el módulo referenciado existe "
+            "en src/ con el nombre exacto (TypeScript es case-sensitive en Linux)."
+        )
+    if runner == "cargo":
+        return (
+            "SOLUCIÓN: Verifica que el módulo esté declarado con 'mod <nombre>;' en lib.rs o main.rs "
+            "y que el archivo existe en la ruta esperada por Rust."
+        )
+    return (
+        "SOLUCIÓN: Verifica que el módulo importado existe y es accesible "
+        "desde el directorio raíz del proyecto."
+    )
 
 
 def _detect_duplicate_functions(work_dir: str) -> str:
@@ -2674,11 +2740,10 @@ def update_test_retry(state: OVDState) -> dict:
         if duplicate_hint:
             log.warning("update_test_retry: S42-D duplicados detectados en %s", work_dir_for_dup)
 
+    # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
+    _runner_for_msg = tr.get("runner", "")
     new_feedback = (
-        # S33-A: instrucción crítica de no modificar tests — solo corregir implementación
-        "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. "
-        "Solo corrige la IMPLEMENTACIÓN (archivos en src/) para que los tests pasen. "
-        "NUNCA modifiques, elimines ni agregues tests.\n\n"
+        _get_retry_no_modify_instruction(_runner_for_msg) + "\n\n"
         f"TESTS FALLIDOS (ronda {retry_round + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
         + (f"\n{duplicate_hint}\n" if duplicate_hint else "")  # S42-D
@@ -2733,18 +2798,8 @@ async def generate_docs(state: OVDState) -> dict:
         state.get("stack_routing", "auto"),
     )
 
-    # Instrucciones según tipo de FR
-    doc_instructions = {
-        "endpoint":  "Genera: 1) spec OpenAPI YAML del endpoint con todos los campos, 2) ejemplos curl para happy path y error cases.",
-        "backend":   "Genera: 1) spec OpenAPI YAML del endpoint con todos los campos, 2) ejemplos curl para happy path y error cases.",
-        "component": "Genera: 1) README de uso del componente con ejemplos de código, 2) tabla de props/API con tipos y valores por defecto.",
-        "frontend":  "Genera: 1) README de uso del componente con ejemplos de código, 2) tabla de props/API con tipos y valores por defecto.",
-        "migration": "Genera: 1) guía de migración paso a paso, 2) instrucciones de rollback con el SQL de downgrade.",
-        "database":  "Genera: 1) guía de migración paso a paso, 2) instrucciones de rollback con el SQL de downgrade.",
-        "service":   "Genera: 1) README del servicio con arquitectura, 2) spec OpenAPI, 3) diagrama Mermaid del flujo principal.",
-        "refactor":  "Genera: 1) entrada de CHANGELOG con el cambio y motivación, 2) ADR si hay decisión arquitectónica relevante.",
-    }.get(fr_type, "Genera la documentación técnica apropiada para el cambio implementado.")
-
+    # S43-A: instrucciones por tipo de FR movidas a system_docs.md.
+    # El prompt solo indica el tipo detectado — el template contiene la tabla completa.
     test_summary = ""
     if test_results:
         status = "PASARON" if test_results.get("passed") else "FALLARON"
@@ -2754,8 +2809,7 @@ async def generate_docs(state: OVDState) -> dict:
         f"SDD (resumen):\n{_truncate(sdd.get('summary', ''), 4000)}\n\n"
         f"Tipo de Feature Request: {fr_type}\n{test_summary}\n"
         f"Código implementado:\n{_truncate(agent_output, 8000)}\n\n"
-        f"Tarea: {doc_instructions}\n\n"
-        "Usa bloques de código con nombre de archivo (```lang:path/to/doc.md) para cada documento.\n"
+        "Aplica las instrucciones del tipo de FR indicado arriba (ver tabla en tu prompt de sistema).\n"
         "Sé conciso y técnico. No repitas el código implementado, documenta cómo usarlo."
     )
 
