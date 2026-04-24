@@ -69,30 +69,37 @@ class TestGAP001SecurityAuditIndependiente:
 
 class TestGAP002FanOut:
 
-    def test_dispatch_agents_genera_send_por_cada_agente(self):
+    def test_dispatch_agents_grupo1_solo_server_side(self):
         """
-        _dispatch_agents con ["backend","frontend","database"]
-        debe generar exactamente 3 objetos Send.
+        S47: _dispatch_agents con ["backend","frontend","database"]
+        despacha solo el grupo 1 (server-side): backend + database.
+        Frontend queda pendiente para el segundo fan-out.
         """
         from graph import _dispatch_agents
         from langgraph.types import Send
 
-        state = make_state(selected_agents=["backend", "frontend", "database"])
+        state = make_state(selected_agents=["backend", "frontend", "database"],
+                           pending_agents=["frontend"])
         sends = _dispatch_agents(state)
 
-        assert len(sends) == 3
+        # Solo 2 sends: backend + database (server-side)
+        assert len(sends) == 2
         assert all(isinstance(s, Send) for s in sends)
+        agentes = {s.arg["current_agent"] for s in sends}
+        assert agentes == {"backend", "database"}
 
     def test_dispatch_agents_cada_send_tiene_current_agent(self):
-        """Cada Send debe incluir el campo 'current_agent' con el nombre del agente."""
+        """Cada Send del grupo 1 debe incluir el campo 'current_agent' con nombre server-side."""
         from graph import _dispatch_agents
 
-        state = make_state(selected_agents=["backend", "frontend"])
+        state = make_state(selected_agents=["backend", "frontend"],
+                           pending_agents=["frontend"])
         sends = _dispatch_agents(state)
 
         agentes_enviados = [s.arg["current_agent"] for s in sends]
+        # Solo backend va en el primer fan-out
         assert "backend" in agentes_enviados
-        assert "frontend" in agentes_enviados
+        assert "frontend" not in agentes_enviados
 
     def test_agent_results_reducer_acumula(self):
         """

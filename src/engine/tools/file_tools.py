@@ -37,7 +37,22 @@ _MAX_CTX_CHARS     = 2_000    # caracteres por archivo en el contexto
 
 # Patrones relevantes por tipo de agente para read_project_context
 _AGENT_PATTERNS: dict[str, list[str]] = {
-    "frontend":  ["*.tsx", "*.ts", "*.jsx", "*.js", "*.vue", "package.json"],
+    # S47: frontend lee primero los archivos propios (tsx/ts/vue) y luego el código server-side
+    # para conocer las rutas, schemas y modelos reales antes de generar la UI.
+    # El orden importa: los propios van primero para no exceder _MAX_CTX_FILES con solo server files.
+    "frontend":  [
+        "*.tsx", "*.ts", "*.jsx", "*.js", "*.vue",  # propios
+        "package.json",
+        # server-side — cualquier stack
+        "*.py", "requirements.txt",                  # Python (FastAPI, Django, Flask)
+        "*.java",                                     # Java (Spring Boot, etc.)
+        "*.go",                                       # Go
+        "*.rs",                                       # Rust (Actix, Axum)
+        "*.cs",                                       # C# (.NET)
+        "*.rb",                                       # Ruby (Rails)
+        "*.php",                                      # PHP (Laravel, etc.)
+        "*.sql", "schema*.sql",                       # SQL — modelos de BD
+    ],
     "backend":   ["*.py", "requirements.txt", "*.toml", "*.cfg"],
     "database":  ["*.sql", "migrations/*.py", "models.py", "schema*.sql"],
     "devops":    ["Dockerfile*", "docker-compose*.yml", "*.yaml", "*.tf"],

@@ -52,6 +52,8 @@ _STATE_DEFAULTS: dict[str, Any] = {
     "selected_agents": ["backend"],
     "current_agent":   "backend",
     "agent_results":   [],
+    # S47: agentes client-side pendientes
+    "pending_agents":  [],
     # GAP-001/005
     "security_result":     {},
     "qa_result":           {},

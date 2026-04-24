@@ -116,17 +116,22 @@ class TestRouteAfterQA:
 
 class TestDispatchAgents:
 
-    def test_genera_send_por_agente(self):
-        state = make_state(selected_agents=["backend", "frontend"])
+    def test_genera_send_solo_grupo_server_side(self):
+        """S47: con backend+frontend, _dispatch_agents despacha solo el server-side (backend).
+        Frontend queda en pending_agents, se despacha después vía dispatch_frontend."""
+        state = make_state(selected_agents=["backend", "frontend"], pending_agents=["frontend"])
         sends = _dispatch_agents(state)
-        assert len(sends) == 2
+        # Solo backend va en el primer fan-out
+        assert len(sends) == 1
+        assert sends[0].arg["current_agent"] == "backend"
 
-    def test_cada_send_tiene_current_agent(self):
-        state = make_state(selected_agents=["backend", "frontend"])
+    def test_frontend_no_va_en_primer_fanout(self):
+        """S47: frontend no aparece en los Send() del primer fan-out."""
+        state = make_state(selected_agents=["backend", "frontend"], pending_agents=["frontend"])
         sends = _dispatch_agents(state)
         agents_in_sends = {s.arg["current_agent"] for s in sends}
         assert "backend" in agents_in_sends
-        assert "frontend" in agents_in_sends
+        assert "frontend" not in agents_in_sends
 
     def test_todos_son_instancias_de_send(self):
         state = make_state(selected_agents=["backend", "database"])

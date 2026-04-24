@@ -410,6 +410,9 @@ class OVDState(TypedDict):
     current_agent: str
     agent_results: Annotated[list[dict], _list_reset_or_add]
 
+    # S47: agentes client-side pendientes (esperan a que grupo server-side termine)
+    pending_agents: list[str]
+
     # GAP-001: resultado de la auditoria de seguridad independiente
     security_result: dict[str, Any]
 
@@ -1147,6 +1150,12 @@ _AGENT_RUNNERS = {
     "devops":   _run_devops_agent,
 }
 
+# S47: grupos de ejecución por capa — aplica a cualquier stack
+# Grupo 1 (server-side): se ejecutan primero en paralelo
+# Grupo 2 (client-side): se ejecutan después, con acceso al código del grupo 1
+_SERVER_SIDE_AGENTS: frozenset[str] = frozenset({"database", "backend", "devops"})
+_CLIENT_SIDE_AGENTS: frozenset[str] = frozenset({"frontend"})
+
 
 def _build_agent_sdd_content(sdd: dict, agent_name: str) -> str:
     """GAP-007+GAP-002: construye el SDD filtrado por las tareas del agente dado."""
@@ -1235,26 +1244,30 @@ async def route_agents(state: OVDState) -> dict:
     if retry_total > 0:
         retry_info = f" (ciclo de reintento #{retry_total})"
 
+    # S47: separar en grupos por capa para ejecución secuencial
+    group1 = [a for a in selected if a in _SERVER_SIDE_AGENTS]
+    group2 = [a for a in selected if a in _CLIENT_SIDE_AGENTS]
+    # Si no hay server-side, client-side va directamente en el primer fan-out
+    pending = group2 if group1 else []
+    dispatch_note = ""
+    if group1 and group2:
+        dispatch_note = f" | server-side primero: {group1}, client-side después: {group2}"
+
     return {
         # GAP-002: None activa el reset en el reducer _list_reset_or_add
         "agent_results": None,
         "selected_agents": selected,
+        "pending_agents": pending,  # S47: agentes client-side que esperan al grupo 1
         "status": "routing",
         "messages": state.get("messages", []) + [{
             "role": "agent",
-            "content": f"{routing_note} ({len(selected)} agente(s)){retry_info} — iniciando fan-out...",
+            "content": f"{routing_note} ({len(selected)} agente(s)){retry_info}{dispatch_note} — iniciando fan-out...",
         }],
     }
 
 
-def _dispatch_agents(state: OVDState) -> list[Send]:
-    """
-    GAP-002: Arista condicional que genera un Send() por cada agente seleccionado.
-    LangGraph ejecuta todos los agent_executor en paralelo con checkpointing individual.
-    """
-    selected = state.get("selected_agents", ["backend"])
-    # LangGraph 1.x: Send() pasa SOLO el dict al nodo destino (no fusiona con estado padre).
-    # Incluir todos los campos que agent_executor necesita.
+def _make_agent_sends(agents: list[str], state: OVDState) -> list[Send]:
+    """Helper: genera los Send() para una lista de agentes dado el estado actual."""
     shared = {
         "sdd":             state.get("sdd", {}),
         "org_id":          state.get("org_id", ""),
@@ -1268,7 +1281,43 @@ def _dispatch_agents(state: OVDState) -> list[Send]:
         "directory":       state.get("directory", ""),
         "session_id":      state.get("session_id", ""),
     }
-    return [Send("agent_executor", {**shared, "current_agent": agent}) for agent in selected]
+    return [Send("agent_executor", {**shared, "current_agent": agent}) for agent in agents]
+
+
+def _dispatch_agents(state: OVDState) -> list[Send]:
+    """
+    S47: Fan-out en dos grupos por capa.
+
+    Grupo 1 (server-side): database + backend + devops — se despachán aquí en paralelo.
+    Grupo 2 (client-side): frontend — guardado en pending_agents, se despacha después en
+    dispatch_frontend cuando el grupo 1 termina y su código está en disco.
+
+    Si no hay agentes server-side (solo frontend), se despacha directamente aquí.
+    Aplica a cualquier stack — el criterio es la capa, no el lenguaje.
+    """
+    selected = state.get("selected_agents", ["backend"])
+
+    group1 = [a for a in selected if a in _SERVER_SIDE_AGENTS]
+    group2 = [a for a in selected if a in _CLIENT_SIDE_AGENTS]
+
+    if group1:
+        log.info("S47 _dispatch_agents: grupo 1 server-side=%s | pendientes client-side=%s", group1, group2)
+        # group2 se guarda en pending_agents vía el nodo route_agents (actualizado allí)
+        return _make_agent_sends(group1, state)
+    else:
+        # Solo hay agentes client-side (caso edge: SDD solo tiene frontend)
+        log.info("S47 _dispatch_agents: solo client-side=%s, despachando directamente", group2)
+        return _make_agent_sends(group2, state)
+
+
+def _dispatch_frontend(state: OVDState) -> list[Send]:
+    """
+    S47: Fan-out del grupo 2 (client-side) después de que el grupo 1 terminó.
+    El código server-side ya está en disco — read_project_context lo inyectará.
+    """
+    pending = state.get("pending_agents", [])
+    log.info("S47 dispatch_frontend: despachando agentes client-side=%s", pending)
+    return _make_agent_sends(pending, state)
 
 
 async def agent_executor(state: OVDState) -> dict:
@@ -3972,6 +4021,35 @@ def _route_after_analyze_fr(state: OVDState) -> str:
     return "generate_sdd"
 
 
+def _route_after_agent_executor(state: OVDState) -> str:
+    """
+    S47: después de que agent_executor termina, decide si hay agentes client-side pendientes.
+    - Si pending_agents no está vacío → dispatch_frontend (grupo 2 espera al grupo 1)
+    - Si pending_agents está vacío → security_audit (flujo normal)
+    LangGraph llama esta función en el nodo que recibe el resultado acumulado del fan-out.
+    """
+    pending = state.get("pending_agents", [])
+    if pending:
+        log.info("S47 _route_after_agent_executor: %d agente(s) client-side pendientes → dispatch_frontend", len(pending))
+        return "dispatch_frontend"
+    return "security_audit"
+
+
+async def _dispatch_frontend_node(state: OVDState) -> dict:
+    """
+    S47: Nodo de transición antes del segundo fan-out.
+    Limpia pending_agents y resetea agent_results para que el fan-out frontend
+    no mezcle sus resultados con los del grupo server-side ya procesados.
+    No ejecuta ningún LLM — solo prepara el estado.
+    """
+    pending = state.get("pending_agents", [])
+    log.info("S47 dispatch_frontend_node: preparando fan-out client-side=%s", pending)
+    return {
+        "pending_agents": [],   # vaciar — ya se despachan ahora
+        # NO resetear agent_results — los resultados server-side se acumulan para QA y security
+    }
+
+
 def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     builder = StateGraph(OVDState)
 
@@ -4021,11 +4099,20 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
         END: END,
     })
 
-    # GAP-002: fan-out — route_agents elige agentes, _dispatch_agents emite Send() por cada uno
-    # Todos los agent_executor corren en paralelo con checkpointing individual
-    # Al terminar todos, convergen en security_audit
+    # GAP-002 + S47: fan-out en dos grupos por capa
+    # Grupo 1 (server-side): database + backend + devops — paralelo
+    # Grupo 2 (client-side): frontend — espera al grupo 1 vía dispatch_frontend
+    builder.add_node("dispatch_frontend", _dispatch_frontend_node)
     builder.add_conditional_edges("route_agents", _dispatch_agents)
-    builder.add_edge("agent_executor", "security_audit")
+    # Después del fan-out: si hay client-side pendiente → dispatch_frontend; si no → security_audit
+    builder.add_conditional_edges("agent_executor", _route_after_agent_executor, {
+        "dispatch_frontend": "dispatch_frontend",
+        "security_audit":    "security_audit",
+    })
+    # Segundo fan-out: client-side
+    builder.add_conditional_edges("dispatch_frontend", _dispatch_frontend)
+    # Después del fan-out frontend → security_audit (mismo flujo que antes)
+    # LangGraph converge los Send() en el nodo destino automáticamente
 
     # Routing con retry loops
     builder.add_conditional_edges(

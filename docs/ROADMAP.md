@@ -864,22 +864,77 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 ---
 
-## Orden de trabajo — Próximos sprints (2026-04-23)
+### Sprint 47 — Ejecución secuencial server-side → client-side ⬜
+
+**Identificado:** 2026-04-24
+**Motivación:** Los agentes se ejecutan en paralelo: frontend arranca al mismo tiempo que backend, sin conocer las rutas, schemas ni auth que backend generó. El frontend inventa la API, produce tipos incorrectos y genera retries innecesarios. La solución es ejecutar primero el grupo server-side (database + backend + devops) y luego el grupo client-side (frontend) con acceso al código ya escrito.
+
+**Aplica a cualquier stack:** el criterio de agrupación es por capa, no por lenguaje. Un agente `frontend` en Vue, Angular, Flutter web o cualquier otro framework siempre depende de lo que generaron `backend`, `database` y `devops`.
+
+#### S47-A — Grupos de ejecución en `_dispatch_agents`
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S47-A1 | Constantes de grupos | `_SERVER_SIDE_AGENTS = {"database", "backend", "devops"}` / `_CLIENT_SIDE_AGENTS = {"frontend"}` — extensible para nuevos agentes futuros | `graph.py` | ⬜ |
+| S47-A2 | `_dispatch_agents` — solo grupo 1 | Filtra `selected_agents` y despacha solo los server-side. Guarda los client-side en `pending_agents` del estado | `graph.py` | ⬜ |
+| S47-A3 | Nodo `dispatch_frontend` | Se activa después de que todos los `agent_executor` del grupo 1 terminan. Genera los `Send()` para los agentes client-side pendientes | `graph.py` | ⬜ |
+| S47-A4 | Campo `pending_agents` en `OVDState` | Lista de agentes client-side que esperan al grupo 1. Vacía cuando no hay frontend en el SDD | `graph.py` | ⬜ |
+
+#### S47-B — Frontend lee el código server-side generado
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S47-B1 | `_AGENT_PATTERNS["frontend"]` ampliado | Agrega `*.py`, `*.java`, `*.go`, `*.rs`, `requirements.txt`, `*.sql` — el frontend lee los modelos y rutas que generó backend, independiente del lenguaje del stack | `tools/file_tools.py` | ⬜ |
+| S47-B2 | `read_project_context` inyectado en frontend | En `dispatch_frontend`, antes de ejecutar el agente, se llama `read_project_context(directory, "frontend")` para que el LLM reciba el código real de backend como contexto | `graph.py` | ⬜ |
+
+#### S47-C — Edge routing
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S47-C1 | Edge `agent_executor` → `dispatch_frontend` | Condicional: si `pending_agents` no está vacío después del fan-out del grupo 1, ir a `dispatch_frontend`; si está vacío, ir a `security_audit` (flujo actual) | `graph.py` | ⬜ |
+| S47-C2 | Edge `dispatch_frontend` → `agent_executor` | Segundo fan-out Send() — igual al primero pero solo para agentes client-side | `graph.py` | ⬜ |
+| S47-C3 | Después del fan-out frontend → `security_audit` | El flujo post-grupo-2 continúa igual: `security_audit → qa_review → run_tests → deliver` | `graph.py` | ⬜ |
+
+#### S47-D — Dashboard
+
+| # | Item | Descripción | Archivo(s) | Estado |
+|---|------|-------------|-----------|--------|
+| S47-D1 | Nodo `dispatch_frontend` en `GRAPH_NODES` | Label: "Agentes client-side". Aparece entre `agents` (grupo 1) y un nuevo nodo visual `agents_frontend` | `FrLauncher.tsx` | ⬜ |
+| S47-D2 | Alias SSE para `agents_frontend` | `NODE_ALIAS["dispatch_frontend"] = "agents_frontend"` para que el progreso visual sea correcto | `FrLauncher.tsx` | ⬜ |
+
+#### Tests
+
+| # | Test | Valida |
+|---|------|--------|
+| S47.T1 | `test_dispatch_agents_separa_grupos` | Con `["database","backend","frontend"]`, grupo 1 = `["database","backend"]`, `pending_agents = ["frontend"]` |
+| S47.T2 | `test_dispatch_sin_frontend` | Sin frontend en el SDD, `pending_agents = []`, flujo directo a `security_audit` |
+| S47.T3 | `test_dispatch_solo_frontend` | SDD con solo frontend: grupo 1 vacío, frontend se despacha directamente (sin espera) |
+| S47.T4 | `test_frontend_patterns_incluye_backend_files` | `_AGENT_PATTERNS["frontend"]` contiene `*.py`, `*.java`, `*.go` |
+| S47.T5 | `test_dispatch_frontend_inyecta_project_context` | El estado enviado al agente frontend incluye contexto del código server-side ya escrito |
+
+**Trade-off documentado:**
+- Tiempo adicional: +20-30 min por el grupo frontend esperando al grupo server-side
+- Beneficio: el frontend no inventa la API → menos retries por imports y tipos incorrectos
+- Estimado neto: ciclos con retry de frontend (>100 min) se reducen a ciclos sin retry (~90 min)
+
+---
+
+## Orden de trabajo — Próximos sprints (2026-04-24)
 
 Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumulada:
 
 | Prioridad | Sprint | Qué resuelve | Esfuerzo estimado |
 |-----------|--------|-------------|-------------------|
-| 1 | **S45** — Fix gaps de generación | El entregable no arranca: `project_context` no llega a agentes, RUT incorrecto en tests, import chain roto, sin `requirements.txt` | Bajo (~2h) |
-| 2 | **S46** — Design Quality System | UI generada es básica y no presentable: sin design system, sin layout profesional, sin estados de UI | Medio (~1 día) |
-| 3 | **S41.PRE** — Timeouts diferenciados | Ciclos largos se cancelan por heartbeat; nodos pesados sin margen de tiempo propio | Bajo (~1h) |
-| 4 | **S41** — RAG Learning | Los errores recurrentes se corrigen manualmente en templates en vez de aprenderse automáticamente | Alto (~1 día) |
-| 5 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
+| 1 | ~~**S45**~~ — Fix gaps | ✅ Completado 2026-04-24 | — |
+| 2 | ~~**S46**~~ — Design Quality System | ✅ Completado 2026-04-24 | — |
+| 3 | **S47** — Ejecución secuencial server→client | Frontend inventa API de backend → tipos incorrectos → retries innecesarios | Bajo (~2h) |
+| 4 | **S41.PRE** — Timeouts diferenciados | Ciclos largos se cancelan por heartbeat; nodos pesados sin margen de tiempo propio | Bajo (~1h) |
+| 5 | **S41** — RAG Learning | Los errores recurrentes se corrigen manualmente en templates en vez de aprenderse automáticamente | Alto (~1 día) |
+| 6 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
 
 **Razonamiento del orden:**
-- S45 primero porque sin código que arranque, el diseño no importa
-- S46 segundo porque la calidad visual es la queja principal post-prueba
-- S41.PRE es un fix operativo de baja fricción, se puede hacer en paralelo
+- S47 antes de S41.PRE porque reduce retries que son la causa principal de ciclos largos
+- S41.PRE es un fix operativo de baja fricción, complementa S47
 - S41 y S44 son features de plataforma, van después de resolver la calidad del output
 
 ---
