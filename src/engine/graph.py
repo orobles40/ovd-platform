@@ -1649,10 +1649,18 @@ async def _run_agent_with_tools(
             agent_name, stack_routing,
         )
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
-        return await runner(
+        runner_result = await runner(
             sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context,
             stack_language=stack_language,
         )
+        # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
+        # Permite que run_tests detecte los test files correctamente via filesystem
+        if directory and not runner_result.get("artifacts") and runner_result.get("output"):
+            written_arts = _write_artifacts(runner_result["output"], directory, agent_name)
+            if written_arts:
+                runner_result = dict(runner_result, artifacts=written_arts)
+                log.info("S50-A: agente '%s' S49-C — %d archivo(s) escritos al disco via runner", agent_name, len(written_arts))
+        return runner_result
 
     # Intentar vincular herramientas — no todos los modelos lo soportan
     try:
@@ -1710,11 +1718,19 @@ async def _run_agent_with_tools(
                         agent_name, len(final_output),
                     )
                     _runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
-                    return await _runner(
+                    _runner_result = await _runner(
                         sdd_content, comment, llm, project_ctx,
                         retry_feedback, language, rag_context,
                         stack_language=stack_language,
                     )
+                    # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
+                    # Permite que run_tests detecte los test files correctamente via filesystem
+                    if directory and not _runner_result.get("artifacts") and _runner_result.get("output"):
+                        _written = _write_artifacts(_runner_result["output"], directory, agent_name)
+                        if _written:
+                            _runner_result = dict(_runner_result, artifacts=_written)
+                            log.info("S50-A: agente '%s' S49-A — %d archivo(s) escritos al disco via runner", agent_name, len(_written))
+                    return _runner_result
                 else:
                     log.info(
                         "S48-C: agente '%s' — terminó tool loop en iteración %d (sin más tool_calls). "
@@ -3731,11 +3747,19 @@ async def deliver(state: OVDState) -> dict:
                 written = _scan_workspace_artifacts(directory)
                 if written:
                     log.info("deliver: S24-A scan encontró %d archivo(s) no trackeados para agente '%s'", len(written), agent_name)
+        # S50-B: deduplicar artefactos por path — cuando S39-D ejecuta N tareas vía runner,
+        # cada tarea puede generar el mismo archivo. Mantener solo la última versión de cada path.
+        seen_paths: dict[str, dict] = {}
+        for art in written:
+            seen_paths[art.get("path", art.get("lang", id(art)))] = art
+        written_dedup = list(seen_paths.values())
+        if len(written_dedup) < len(written):
+            log.info("S50-B: deduplicados %d → %d artefactos para agente '%s'", len(written), len(written_dedup), agent_name)
         deliverables.append({
             "type": "implementation",
             "agent": agent_name,
             "content": agent_output,
-            "artifacts": written,  # [{path, size, lang}] escritos al disco
+            "artifacts": written_dedup,  # [{path, size, lang}] escritos al disco, sin duplicados
         })
 
     # S22 — Artefactos de documentación generados por generate_docs

@@ -101,7 +101,40 @@ python_functions = test_*
 
 Sin estos archivos, `pytest` no puede descubrir los tests ni resolver los imports.
 
-### Regla de valores numéricos en tests
+### Pydantic v2 obligatorio (S50-C)
+
+**SIEMPRE usa Pydantic v2.** El decorador `@validator` está DEPRECADO desde Pydantic v2.0. Usa `@field_validator` en su lugar.
+
+❌ **INCORRECTO (Pydantic v1 — deprecado):**
+```python
+from pydantic import BaseModel, validator
+
+class ImcRequest(BaseModel):
+    peso: float
+    
+    @validator('peso')
+    def peso_positivo(cls, v):
+        if v <= 0:
+            raise ValueError("El peso debe ser positivo")
+        return v
+```
+
+✅ **CORRECTO (Pydantic v2):**
+```python
+from pydantic import BaseModel, field_validator
+
+class ImcRequest(BaseModel):
+    peso: float
+    
+    @field_validator('peso')
+    @classmethod
+    def peso_positivo(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("El peso debe ser positivo")
+        return v
+```
+
+### Regla de valores numéricos en tests (S50-D)
 
 **NUNCA escribas valores numéricos de punto flotante de memoria.** Los errores de redondeo hacen que el test falle aunque la implementación sea correcta.
 
@@ -110,13 +143,16 @@ Antes de escribir `assert result == X.XX`, verifica el valor exacto con Python:
 ```python
 # Verificar ANTES de escribir el test:
 round(53.4 / 1.70**2, 2)   # → 18.48  ✅  (NO 18.49 ❌)
-round(9 / 5 * 0 + 32, 2)   # → 32.0   ✅
+round(65 / 1.72**2, 2)     # → 21.97  ✅  (NO 22.35 ❌)
+round(70 / 1.75**2, 2)     # → 22.86  ✅
+round(80 / 1.70**2, 2)     # → 27.68  ✅
 ```
 
 Reglas:
 - Usa `round()` con el mismo número de decimales que usará tu implementación
 - Si la implementación usa `round(x, 2)`, el test debe esperarse el mismo resultado de `round(expected, 2)`
 - Para conversiones matemáticas con divisiones/exponenciación: **calcula siempre, no memorices**
+- **NUNCA escribas `22.35` si no verificaste con Python que `round(65/1.72**2, 2) == 22.35`** — el cálculo real da `21.97`
 
 ## Validación de RUT chileno (S40-templates)
 
