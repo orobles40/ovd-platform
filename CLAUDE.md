@@ -42,14 +42,43 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-23)
+## Estado actual (2026-04-25)
 
-- **Sprints completados:** S3 → S40 (template improvements + security bypass fix)
-- **Tests:** Python unit ~764 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~843
-- **Rama activa:** `dev` (commits S22→S40 sin mergear a `main`, pendiente de commit S40)
-- **Próximo foco:** Validar ciclo completo con S40-templates + Mergear `dev` → `main` + VPS (C01)
+- **Sprints completados:** S3 → S49 (Ollama detection + iter-0 runner fallback + task limit 5)
+- **Tests:** Python unit ~1017 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1096
+- **Rama activa:** `dev` (commits hasta S49 sin mergear a `main`)
+- **Próximo foco:** S50 (dedup artefactos + fix cycle_start_ts para run_tests + Pydantic v2 en template)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
-- **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/` (proyecto "Honorarios Médicos")
+- **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
+- **Ciclo de validación S49:** `232f864e` — completed, 1m 18s, QA 65/100, 9/10 tests PASS, 12 archivos generados
+
+### Bug conocido — `ovd_refresh_tokens` columna faltante
+- `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db
+- Causaba crash del engine cuando el dashboard refrescaba JWT durante execute_agents
+
+### Novedades S49 (2026-04-25) — rama `dev`
+
+- **S49-A:** `_run_agent_with_tools` — switch inmediato a runner cuando `iter=0` y `tool_calls=[]`. Evita el overhead S30-B (parse markdown) para modelos que nunca usan tools
+- **S49-B:** `system_sdd.md` — límite estricto de **5 tareas por agente** (antes 6-7). Justificación explícita: 18 tareas = 56 min, 5 tareas = ~1.5 min
+- **S49-C:** Detección de modelos Ollama en `_run_agent_with_tools` via `stack_routing='ollama'` + heurística de nombre de modelo (`_looks_like_ollama_model`). Salta `bind_tools` directamente al runner
+- **Helpers nuevos:** `_get_chat_ollama_class()` + `_looks_like_ollama_model()` en `graph.py`
+- **Fix tests:** `test_graph_routing.py` + `test_regression_sprint.py` — usar `monkeypatch.setattr(graph, '_SECURITY_MIN_SCORE', 70)` para tests de retry de seguridad (roto por S48-A bypass)
+- **15 tests nuevos** en `test_s49.py`. **1017 tests pasan** (0 fallos nuevos)
+- **Resultado ciclo validación:** duración **1m 18s** (vs ~56 min en S48), 5 tareas SDD, 12 archivos reales generados, 9/10 tests PASS
+
+### Novedades S48 (2026-04-25) — rama `dev`
+
+- **S48-A:** `security_audit` — bypass completo cuando `OVD_SECURITY_MIN_SCORE=0` (retorna `passed=True, score=100` sin llamar al LLM). Antes tardaba 20+ min antes de timeout
+- **S48-B:** `system_sdd.md` — sección "Contrato de interfaces compartidas" para prevenir `ImportError` entre agentes por nombres de clase inconsistentes
+- **S48-C:** `_run_agent_with_tools` — log `WARNING` cuando `iter=0` y `tool_calls=[]` (diagnóstico de que qwen3-coder:30b nunca usa tools)
+- **S48-D:** `_run_graph_background` — log del nodo de fallo en el bloque `finally`
+- **Fix DB:** `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT` — crash del engine durante JWT refresh
+
+### Novedades S47 (2026-04-25) — rama `dev`
+
+- **S47-A:** `api.py` — background `asyncio.Task` para el grafo. El grafo corre independiente del SSE → sobrevive desconexión del cliente
+- **S47-B:** Registro temprano de ciclos — `status='started'` al crear sesión, `status='failed'` si muere antes de deliver, `status='completed'` en deliver (UPSERT)
+- **Migración BD:** `ALTER TABLE ovd_cycles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'started'` + `CREATE UNIQUE INDEX ... ON ovd_cycles(thread_id)`
 
 ### Novedades S40 (2026-04-23) — rama `dev` (pendiente de commit)
 
