@@ -48,8 +48,11 @@ Cuando generes código Python, SIEMPRE incluye estos archivos de infraestructura
 2. **`tests/__init__.py`** — paquete de tests ← SEGUNDO
 3. **`conftest.py`** (raíz del proyecto) — inserta `src/` en sys.path ← TERCERO
 4. **`pytest.ini`** o **`pyproject.toml`** — configuración de pytest con `testpaths = tests` ← CUARTO
+5. **`tests/test_<paquete>.py`** — tests unitarios con pytest ← OBLIGATORIO SIEMPRE (S51-B)
 
 Solo después escribe el código de negocio (módulos Python, tests).
+
+**PROHIBIDO entregar sin `tests/test_<paquete>.py`.** Si el SDD incluye una tarea de tests, el archivo DEBE existir en tu respuesta. Un entregable sin tests es un entregable incompleto.
 
 **PROHIBIDO: NUNCA generes `__init__.py` en la RAÍZ del proyecto.** Un `__init__.py` en la raíz convierte todo el workspace en un paquete Python, rompiendo pytest y los imports.
 

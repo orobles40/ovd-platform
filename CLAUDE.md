@@ -44,17 +44,69 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-25)
 
-- **Sprints completados:** S3 → S49 (Ollama detection + iter-0 runner fallback + task limit 5)
-- **Tests:** Python unit ~1017 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1096
-- **Rama activa:** `dev` (commits hasta S49 sin mergear a `main`)
-- **Próximo foco:** S50 (dedup artefactos + fix cycle_start_ts para run_tests + Pydantic v2 en template)
+- **Sprints completados:** S3 → S51 (retry automático tests + prioridad máxima TASK-004/005)
+- **Tests:** Python unit ~1040 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1119
+- **Rama activa:** `dev` (commits hasta S51 sin mergear a `main`)
+- **Próximo foco:** S52 (diagnóstico de archivos de producción no escritos al disco + optimización retry S51-C)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S49:** `232f864e` — completed, 1m 18s, QA 65/100, 9/10 tests PASS, 12 archivos generados
+- **Ciclo de validación S51:** `8f04d629` — completed, 5m 04s, QA 65/100, tests/test_imc.py generado, pytest exit 2 (ImportError)
 
 ### Bug conocido — `ovd_refresh_tokens` columna faltante
 - `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db
 - Causaba crash del engine cuando el dashboard refrescaba JWT durante execute_agents
+
+### Bug conocido — `ANTHROPIC_API_KEY` con comentario inline en `.env`
+- `ANTHROPIC_API_KEY=   # comentario` es leído como valor truthy por el parser de dotenv → context resolver detecta Oracle + API key → routea a Claude → `AuthenticationError 401`
+- **Fix:** separar el comentario en línea propia. La API key debe quedar en línea propia sin texto posterior.
+- **Inicio del engine:** usar `env ANTHROPIC_API_KEY="" .venv/bin/uvicorn ...` si la shell tiene la variable exportada desde `~/.zshrc`
+
+### Roadmap S52 — Próximo sprint
+
+#### S52-A — Diagnóstico de archivos de producción no escritos (crítico)
+- **Síntoma:** directorios `src/calculadora/` y `src/models/` creados pero vacíos tras el ciclo S51. El informe de entrega reporta los archivos pero no están en disco.
+- **Fix:** en el S49-C path (y S49-A), si `_write_artifacts` retorna `[]` pero `output` es no-vacío, loguear un `WARNING` con los primeros 500 chars del output para diagnóstico. También añadir verificación post-write: `if not target.exists(): log.error(...)`.
+- **Test:** `test_s52.py::TestS52ADiagnostics` — verificar que el warning se emite y que los archivos existen en disco tras `_write_artifacts`.
+
+#### S52-B — Optimización del retry S51-C
+- **Síntoma:** S51-C agrega ~3.5 min al ciclo enviando el SDD completo como contexto del retry.
+- **Fix:** en el retry S51-C, construir un prompt mínimo: solo el módulo de producción ya escrito + instrucción directa de generar `tests/test_<paquete>.py`. Sin el SDD completo.
+- **Impacto esperado:** reducir el retry de ~3.5 min a ~1 min.
+
+#### S52-C — Verificación física en S51-C
+- **Síntoma:** S51-C verifica artifacts en memoria pero no en disco. Si los archivos del retry no se escriben al disco, run_tests falla igual.
+- **Fix:** después del retry de S51-C, verificar `(Path(directory) / "tests").glob("test_*.py")` físicamente. Si no hay archivos, intentar `_write_artifacts` explícitamente con el output del retry.
+
+#### S52-D — Flush de log para diagnóstico
+- **Fix:** agregar `logging.basicConfig(force=True)` con `stream=sys.stdout` y `flush=True` al inicio de `api.py` para asegurar que los `log.info/_write_artifacts` aparezcan en tiempo real en el log del engine.
+
+### Novedades S51 (2026-04-25) — rama `dev`
+
+- **S51-A:** `graph.py` S39-D loop — detección de tarea de tests por keywords (`test`, `pytest`, `spec`, `unitari`). Inyecta `[PRIORIDAD MÁXIMA — S51-A]` al inicio del `task_sdd_content`. El LLM recibe la instrucción antes que cualquier otro contexto.
+- **S51-B:** `system_backend.md` — ítem 5 obligatorio en ORDEN DE ESCRITURA: `tests/test_<paquete>.py`. Texto explícito: "PROHIBIDO entregar sin `tests/test_<paquete>.py`."
+- **S51-C:** `graph.py` S39-D loop — después de todas las tareas, verifica si el SDD tenía tarea de tests pero ningún `test_*.py` está en `all_artifacts`. Si detecta ausencia, hace un retry automático con `[PRIORIDAD MÁXIMA — S51-C SEGUNDO INTENTO]`. El retry refresca el contexto del proyecto (incluye archivos ya escritos).
+- **Fix `.env`:** `ANTHROPIC_API_KEY` separado del comentario inline. Comentario movido a línea propia.
+- **11 tests nuevos** en `test_s51.py`. **1040 tests pasan** (0 fallos nuevos; `test_s31.py::test_cycle_start_ts_reciente` flaky pre-existente).
+- **Resultado ciclo validación S51:** `8f04d629` — 5m 04s, S51-C disparó, `tests/test_imc.py` generado (8 casos con floats correctos), pytest exit 2 por ImportError (src/ vacío).
+
+### Línea base temporal de ciclos
+
+| Sprint | Ciclo | Duración | QA | Tests en disco | run_tests |
+|--------|-------|----------|----|----------------|-----------|
+| S48 | — | ~56 min | — | no | skip |
+| S49 | `232f864e` | 1m 18s | 65 | no | skip |
+| S50 | `4cf452ca` | 1m 17s | 65 | no | skip |
+| S51 | `8f04d629` | 5m 04s | 65 | **sí** | **exit 2** |
+| S52 | — | objetivo: ~2.5 min | objetivo: 75+ | sí | objetivo: exit 0 |
+
+### Novedades S50 (2026-04-25) — rama `dev`
+
+- **S50-A:** `_run_agent_with_tools` — en los paths S49-A (iter=0, sin tool_calls) y S49-C (Ollama directo), llama `_write_artifacts(output, directory)` si el runner retorna `artifacts=[]` y `output` no vacío. Permite que `run_tests` detecte archivos en disco durante `execute_agents`.
+- **S50-B:** `deliver` — deduplicación de artefactos por path con `seen_paths` dict. Elimina duplicados generados por S39-D (N tareas × runner = mismo archivo N veces). S49 reportaba 13 archivos, S50 reporta 4 únicos.
+- **S50-C:** `system_backend.md` — sección Pydantic v2 obligatorio con `@field_validator` + `@classmethod`. Marca `@validator` como DEPRECADO. Etiqueta S50-C.
+- **S50-D:** `system_backend.md` — regla floats con ejemplos explícitos: `round(65/1.72**2, 2) → 21.97` (no 22.35). Previene valores hardcodeados incorrectos en tests.
+- **12 tests nuevos** en `test_s50.py`. **1029 tests pasan** (0 fallos nuevos).
+- **Resultado ciclo validación S50:** `4cf452ca` — 1m 17s, 4 archivos únicos, Pydantic v2 respetado, floats correctos, sin tests en disco.
 
 ### Novedades S49 (2026-04-25) — rama `dev`
 

@@ -1474,6 +1474,15 @@ async def agent_executor(state: OVDState) -> dict:
             task_sdd_content = _truncate(
                 _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks))
             )
+            # S51-A: tarea de tests → instrucción de prioridad máxima
+            _task_desc_lower = (task.get("description", "") + " " + task.get("id", "")).lower()
+            if any(kw in _task_desc_lower for kw in ("test", "pytest", "spec", "unitari")):
+                task_sdd_content = (
+                    "[PRIORIDAD MÁXIMA — S51-A] Esta tarea genera el archivo de tests. "
+                    "DEBES incluir el bloque ```python:tests/test_<paquete>.py con al menos 3 casos de prueba. "
+                    "No omitas este archivo bajo ninguna circunstancia.\n\n"
+                ) + task_sdd_content
+                log.info("agent_executor[%s]: S51-A tarea de tests detectada — instrucción de prioridad máxima inyectada", agent_name)
             log.info(
                 "agent_executor[%s]: S39-D tarea %d/%d — id=%s",
                 agent_name, i + 1, len(agent_tasks), task.get("id", "?"),
@@ -1516,6 +1525,63 @@ async def agent_executor(state: OVDState) -> dict:
             total_tokens_all["input"] += t.get("input", 0)
             total_tokens_all["output"] += t.get("output", 0)
             all_uncertainties.extend(task_result.get("uncertainties", []))
+
+        # S51-C: verificar que si el SDD tenía tarea de tests se generó al menos un test_*.py
+        _s51_test_tasks = [
+            t for t in agent_tasks
+            if any(kw in (t.get("description", "") + " " + t.get("id", "")).lower()
+                   for kw in ("test", "pytest", "spec", "unitari"))
+        ]
+        _s51_test_arts = [
+            a for a in all_artifacts
+            if "test_" in a.get("path", "").lower() or "/tests/" in a.get("path", "").lower()
+        ]
+        if _s51_test_tasks and not _s51_test_arts:
+            log.warning(
+                "agent_executor[%s]: S51-C — tarea de tests en SDD pero ningún test_*.py generado — reintentando",
+                agent_name,
+            )
+            _s51_retry_task = _s51_test_tasks[0]
+            _s51_retry_sdd = (
+                "[PRIORIDAD MÁXIMA — S51-C SEGUNDO INTENTO] El intento anterior NO generó el archivo de tests. "
+                "DEBES generar ahora el archivo ```python:tests/test_<paquete>.py``` con al menos 3 casos de prueba. "
+                "Este es tu único objetivo en este turno.\n\n"
+            ) + _truncate(_build_single_task_sdd_content(sdd, agent_name, _s51_retry_task, 0, 1))
+            # Refrescar contexto con archivos ya escritos
+            _s51_ctx = task_project_ctx
+            if directory:
+                _s51_updated = read_project_context(directory, agent_name)
+                if _s51_updated:
+                    _s51_ctx = (_s51_ctx + "\n\n" + _s51_updated).strip() if _s51_ctx else _s51_updated
+            try:
+                if tools:
+                    _s51_result = await asyncio.wait_for(
+                        _run_agent_with_tools(
+                            agent_name, _s51_retry_sdd, comment, llm,
+                            _s51_ctx, retry_feedback, language, tools, directory, rag_context,
+                            stack_language=stack_language,
+                            lessons_context=lessons_context,
+                            stack_routing=state.get("stack_routing", "auto"),
+                        ),
+                        timeout=_AGENTS_TIMEOUT,
+                    )
+                else:
+                    _s51_result = await asyncio.wait_for(
+                        runner(_s51_retry_sdd, comment, llm, _s51_ctx, retry_feedback, language, rag_context, stack_language=stack_language),
+                        timeout=_AGENTS_TIMEOUT,
+                    )
+                all_artifacts.extend(_s51_result.get("artifacts", []))
+                if _s51_result.get("output"):
+                    all_output_parts.append(_s51_result["output"])
+                _s51_t = _s51_result.get("tokens", {"input": 0, "output": 0})
+                total_tokens_all["input"] += _s51_t.get("input", 0)
+                total_tokens_all["output"] += _s51_t.get("output", 0)
+                log.info(
+                    "agent_executor[%s]: S51-C retry completado — %d artifacts nuevos",
+                    agent_name, len(_s51_result.get("artifacts", [])),
+                )
+            except asyncio.TimeoutError:
+                log.error("agent_executor[%s]: S51-C retry timeout — sin tests", agent_name)
 
         result = {
             "agent": agent_name,
