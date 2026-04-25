@@ -211,12 +211,15 @@ class TestGAP005RetryLoop:
         from graph import MAX_RETRIES
         assert MAX_RETRIES == 3
 
-    def test_route_security_escalates_at_max(self):
+    def test_route_security_escalates_at_max(self, monkeypatch):
         """
         Con retry_count=MAX_RETRIES y security fallando →
         route_after_security debe retornar 'handle_escalation'.
         """
+        import graph
         from graph import route_after_security, MAX_RETRIES
+        # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar la escalada
+        monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
 
         state = make_state(
             security_result=make_security_result(passed=False, score=0),
@@ -225,12 +228,15 @@ class TestGAP005RetryLoop:
         result = route_after_security(state)
         assert result == "handle_escalation"
 
-    def test_route_security_continua_con_reintentos_disponibles(self):
+    def test_route_security_continua_con_reintentos_disponibles(self, monkeypatch):
         """
         Con retry_count < MAX_RETRIES y security fallando →
         route_after_security debe retornar 'route_agents' (reintento).
         """
+        import graph
         from graph import route_after_security, MAX_RETRIES
+        # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar el retry
+        monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
 
         state = make_state(
             security_result=make_security_result(passed=False, score=0),

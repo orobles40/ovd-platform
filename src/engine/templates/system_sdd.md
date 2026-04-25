@@ -53,7 +53,10 @@ Genera tareas de implementación con los campos:
 
 ### Reglas obligatorias para tasks (S40-templates)
 
-**Límite de tareas por agente:** máximo 6-7 tareas por agente. Si un agente necesita más, consolida tareas relacionadas en una sola descripción más completa. Un agente con 10+ tareas genera implementaciones parciales e incompletas.
+**Límite de tareas por agente (S49-B): MÁXIMO 5 tareas por agente.** Este límite es estricto — no 6, no 7, no más. Cada tarea debe ser lo suficientemente completa para producir código funcional. Si necesitas más, consolida: agrupa archivos relacionados en una sola tarea. Un ciclo con 18 tareas para 2 agentes = 56 minutos de ejecución. Con máximo 5 tareas por agente = ~14 minutos.
+
+❌ NUNCA generes más de 5 tareas por agente. Si te sientes tentado a agregar la tarea 6, consolídala con la más afín.
+✅ 4-5 tareas por agente es el rango óptimo: suficiente granularidad sin overhead de ejecución.
 
 **PROHIBIDO — tareas scaffold-only:** No generes tareas cuyo único resultado sean stubs vacíos, archivos con solo `pass`, interfaces sin implementar o comentarios tipo `# TODO`. Cada tarea debe producir código funcional y testeable.
 
@@ -144,7 +147,7 @@ Asigna cada tarea al agente correcto según su naturaleza:
 - Siempre incluir constraints de multi-tenancy (filtros por org_id)
 - Las tareas deben cubrir todos los componentes afectados identificados en el análisis
 - Si hay contexto RAG disponible, incorpóralo en el diseño y los constraints
-- Máximo 6-7 tareas por agente — consolidar si superas ese límite
+- **MÁXIMO 5 tareas por agente** — consolidar si superas ese límite (S49-B)
 - Toda validación de negocio (RUT, RFC, CUIT, formato, reglas) debe tener tarea en backend Y frontend
 - Cada agente con código de negocio debe tener su propia tarea de tests unitarios
 

@@ -1487,6 +1487,7 @@ async def agent_executor(state: OVDState) -> dict:
                             task_project_ctx, retry_feedback, language, tools, directory, rag_context,
                             stack_language=stack_language,  # S42-E
                             lessons_context=lessons_context,  # S41
+                            stack_routing=state.get("stack_routing", "auto"),  # S49-C
                         ),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
@@ -1537,6 +1538,7 @@ async def agent_executor(state: OVDState) -> dict:
                     project_ctx, retry_feedback, language, tools, directory, rag_context,
                     stack_language=stack_language,   # S42-E
                     lessons_context=lessons_context,  # S41
+                    stack_routing=state.get("stack_routing", "auto"),  # S49-C
                 )
             return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context, stack_language=stack_language)
 
@@ -1576,6 +1578,30 @@ async def agent_executor(state: OVDState) -> dict:
     }
 
 
+# ─── S49-C helpers ────────────────────────────────────────────────────────────
+
+def _get_chat_ollama_class():
+    """Retorna la clase ChatOllama si langchain_ollama está disponible, o object como fallback."""
+    try:
+        from langchain_ollama import ChatOllama
+        return ChatOllama
+    except ImportError:
+        return type(None)
+
+
+_OLLAMA_MODEL_PATTERNS = (
+    "qwen", "llama", "mistral", "deepseek", "phi", "gemma", "codellama",
+    "nomic", "nous", "vicuna", "orca", "wizardcoder", "starcoder",
+)
+
+def _looks_like_ollama_model(model_name: str) -> bool:
+    """Heurística: si el nombre del modelo contiene algún pattern típico de Ollama."""
+    m = model_name.lower()
+    return any(p in m for p in _OLLAMA_MODEL_PATTERNS)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 async def _run_agent_with_tools(
     agent_name: str,
     sdd_content: str,
@@ -1590,6 +1616,7 @@ async def _run_agent_with_tools(
     *,
     stack_language: str = "",     # S42-E: lenguaje del stack para selección de template
     lessons_context: str = "",    # S41: lecciones de ciclos anteriores del mismo proyecto
+    stack_routing: str = "auto",  # S49-C: routing del stack para detectar Ollama
 ) -> dict:
     """
     S17T.B — Bucle agentico con tool calling.
@@ -1608,6 +1635,24 @@ async def _run_agent_with_tools(
     import json as _json
 
     _MAX_TOOL_ITERS = 8
+
+    # S49-C: modelos Ollama no usan tool calling — detectar y saltar directamente al runner
+    # Evita overhead de bind_tools + iteración completa que siempre falla con Ollama
+    _is_ollama = (
+        stack_routing == "ollama"
+        or isinstance(llm, _get_chat_ollama_class())
+        or (hasattr(llm, "model") and _looks_like_ollama_model(getattr(llm, "model", "")))
+    )
+    if _is_ollama:
+        log.info(
+            "S49-C: agente '%s' — modelo Ollama detectado (stack_routing=%s), usando runner directo sin tool calling",
+            agent_name, stack_routing,
+        )
+        runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
+        return await runner(
+            sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context,
+            stack_language=stack_language,
+        )
 
     # Intentar vincular herramientas — no todos los modelos lo soportan
     try:
@@ -1656,12 +1701,19 @@ async def _run_agent_with_tools(
             tool_calls = getattr(response, "tool_calls", []) or []
             if not tool_calls:
                 final_output = response.content or ""
-                # S48-C: diagnóstico — ¿el modelo nunca intentó llamar tools?
                 if _iter == 0:
+                    # S49-A: modelo ignoró tools en primera iteración → switch inmediato al runner
+                    # Evita el loop S30-B que es lento e impreciso
                     log.warning(
-                        "S48-C: agente '%s' — iteración 0 sin tool_calls. "
-                        "El modelo no intentó usar herramientas. content=%d chars",
+                        "S49-A: agente '%s' — modelo no usó tools en iter 0 (content=%d chars). "
+                        "Switch a runner directo.",
                         agent_name, len(final_output),
+                    )
+                    _runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
+                    return await _runner(
+                        sdd_content, comment, llm, project_ctx,
+                        retry_feedback, language, rag_context,
+                        stack_language=stack_language,
                     )
                 else:
                     log.info(

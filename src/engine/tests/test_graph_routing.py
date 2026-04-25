@@ -56,18 +56,24 @@ class TestRouteAfterSecurity:
         )
         assert route_after_security(state) == "qa_review"
 
-    def test_failed_primer_reintento_va_a_route_agents(self):
+    def test_failed_primer_reintento_va_a_route_agents(self, monkeypatch):
         state = make_state(
             security_result={"passed": False, "score": 30, "severity": "high"},
             security_retry_count=0,
         )
+        import graph
+        # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar el retry
+        monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
         assert route_after_security(state) == "route_agents"
 
-    def test_failed_agota_reintentos_escala(self):
+    def test_failed_agota_reintentos_escala(self, monkeypatch):
         state = make_state(
             security_result={"passed": False, "score": 20, "severity": "critical"},
             security_retry_count=3,
         )
+        import graph
+        # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar la escalada
+        monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
         assert route_after_security(state) == "handle_escalation"
 
     def test_score_supera_umbral_pasa(self, monkeypatch):
