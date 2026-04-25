@@ -259,11 +259,17 @@ def _resolve_model_routing(stack: StackRegistry) -> ModelRouting:
     Resuelve la estrategia de modelo efectiva.
 
     Regla (en orden de precedencia):
-    1. Si model_routing != 'auto': usar el valor explícito
-    2. Si legacy_stack definido o db_engine es legacy: claude
-    3. Si db_restrictions no vacías (stack con restricciones complejas): claude
-    4. Si not: ollama
+    1. Si no hay ANTHROPIC_API_KEY configurada: siempre ollama (solo modelos locales)
+    2. Si model_routing != 'auto': usar el valor explícito
+    3. Si legacy_stack definido o db_engine es legacy: claude
+    4. Si db_restrictions no vacías (stack con restricciones complejas): claude
+    5. Si not: ollama
     """
+    import os as _os
+    # Safety: sin API key de Anthropic, nunca rutear a Claude independientemente del stack
+    if not _os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return "ollama"
+
     if stack.model_routing != "auto":
         return stack.model_routing
 
