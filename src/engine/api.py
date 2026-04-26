@@ -86,9 +86,21 @@ _event_queues: dict[str, asyncio.Queue] = {}          # thread_id → queue de e
 _stream_done: dict[str, asyncio.Event] = {}           # thread_id → señal de fin de stream
 
 
+def _configure_app_loggers() -> None:
+    """S56-B: configura nivel de log para loggers de aplicación via OVD_LOG_LEVEL."""
+    level_str = os.environ.get("OVD_LOG_LEVEL", os.environ.get("LOG_LEVEL", "WARNING")).upper()
+    numeric = getattr(logging, level_str, logging.WARNING)
+    for name in ("ovd-graph", "ovd.api", "ovd.startup", "ovd.heartbeat"):
+        logging.getLogger(name).setLevel(numeric)
+    logging.getLogger("ovd-graph").warning(
+        "S56-B: logging configurado — OVD_LOG_LEVEL=%s (numeric=%d)", level_str, numeric
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _graph, _checkpointer
+    _configure_app_loggers()     # S56-B: configurar antes de assert_env para capturar warnings
     assert_env()                 # falla rapido si faltan variables criticas
     await check_ollama_model()   # P3.B: verifica modelo Ollama disponible (warning, no fatal)
     telemetry.setup_telemetry()  # Sprint 10: inicializa OTEL provider

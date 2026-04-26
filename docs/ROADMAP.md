@@ -1,6 +1,6 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-24
-**Versión actual:** v0.9.2-sequential-agents
+**Última actualización:** 2026-04-26
+**Versión actual:** v0.9.5-qa-contextual
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
 > Muchos ítems marcados como ⬜ estaban ya implementados. El roadmap fue corregido.
@@ -919,7 +919,7 @@ Para agregar un nuevo stack: crear el template en `src/engine/templates/` con no
 
 ---
 
-## Orden de trabajo — Próximos sprints (2026-04-24)
+## Orden de trabajo — Próximos sprints (2026-04-26)
 
 Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumulada:
 
@@ -927,17 +927,155 @@ Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumul
 |-----------|--------|-------------|-------------------|
 | 1 | ~~**S45**~~ — Fix gaps | ✅ Completado 2026-04-24 | — |
 | 2 | ~~**S46**~~ — Design Quality System | ✅ Completado 2026-04-24 | — |
-| 3 | ~~**S47**~~ — Ejecución secuencial server→client | ✅ Completado 2026-04-24 | — |
+| 3 | ~~**S47**~~ — Background graph task + early cycle registration | ✅ Completado 2026-04-25 | — |
 | 4 | ~~**S41.PRE**~~ — Timeouts diferenciados | ✅ Completado 2026-04-24 | — |
 | 5 | ~~**S41**~~ — RAG Learning | ✅ Completado 2026-04-24 | — |
-| 6 | **S48** — Web Research Intelligence | Proveedor único sin fallback, cache muerta, activación <10% de ciclos, sin gestión de proveedores ni cuotas | Medio (~1 día) |
-| 7 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
+| 6 | ~~**S48**~~ — Detección Ollama + task-by-task + Pydantic v2 | ✅ Completado 2026-04-25 (S48/S49/S50) | — |
+| 7 | ~~**S51**~~ — Test file generation + S51-C retry automático | ✅ Completado 2026-04-25 | — |
+| 8 | ~~**S54**~~ — Fence hints + diagnóstico runner | ✅ Completado 2026-04-26 | — |
+| 9 | ~~**S55**~~ — Log visibility + preserve_nonempty + float hint | ✅ Completado 2026-04-26 | — |
+| 10 | ~~**S56**~~ — QA contextualizado + logging configurado + Oracle constraints filter | ✅ Completado 2026-04-26 | — |
+| 11 | **S57** — QA score reducer + collection errors fix | QA reporta último score, no el mejor; tests fallan en retry por collection error | Bajo (~2h) |
+| 12 | **S58** — Stack transversality | Fixes S40–S56 con sesgo Python/pytest no aplican correctamente a TypeScript/Rust | Medio (~1 día) |
+| 13 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
 
-**Razonamiento del orden:**
-- S47 y S41.PRE completados — reducen retries y protegen nodos contra timeouts
-- S41 (RAG Learning) tiene el mayor impacto en calidad acumulativa del ciclo
-- S48 (Web Research) mejora el contexto que reciben los agentes antes de escribir código
-- S44 es plataforma pura, va después de resolver calidad del output
+---
+
+## S55 — Log visibility + preserve_nonempty + float hint (2026-04-26) ✅
+
+**Resultado ciclo validación:** `9d939f29` — 1m 35s, pytest exit 0 (primer éxito histórico), 7/7 PASS, 30k tokens, 0 retries.
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S55-A | `_log_runner_response` eleva diagnóstico a `log.warning` | `graph.py` | ✅ |
+| S55-B | `_write_artifacts(preserve_nonempty=True)` — guard de no-sobreescritura en retry | `graph.py` | ✅ |
+| S55-C | Float hint en tareas de tests — instrucción `round()` en vez de literales | `graph.py` | ✅ |
+| S55-D | `update_test_retry` eleva log de archivos en disco a `log.warning` | `graph.py` | ✅ |
+
+---
+
+## S56 — QA contextualizado + logging + Oracle constraints filter (2026-04-26) ✅
+
+**Motivación:** QA score 65/100 persistente por contaminación de contexto Oracle en FRs sin BD. Logs de nodos invisibles. Constraints Oracle aparecían en SDDs de FRs Python puros.
+
+**Resultado ciclo validación:** `8fc60d00` — 2m 31s, QA ronda 2 = 95/100 sdd_compliance=True (mejor de la historia), pero `deliver` reportó 65 (último round). 17 tests S56 nuevos. 1068 tests pasan.
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S56-A | `_build_qa_sdd_block()` — antepone requirements completos al HumanMessage de QA | `graph.py` | ✅ |
+| S56-A | `system_qa.md` — instrucción crítica: evaluar SOLO contra requisitos del SDD listados | `templates/system_qa.md` | ✅ |
+| S56-B | `_configure_app_loggers()` — configura `OVD_LOG_LEVEL` en lifespan antes de `assert_env` | `api.py` | ✅ |
+| S56-C | `_strip_db_restrictions()` + `_DB_RESTRICTION_KEYWORDS` — filtra restricciones Oracle cuando `oracle_involved=False` | `graph.py` | ✅ |
+| S56-D | `_filter_requirements_for_task()` — filtra requirements por `depends_on` para reducir tokens por tarea | `graph.py` | ✅ |
+
+**Deuda identificada en ciclo S56:**
+- `deliver` toma QA del último round, no el mejor → resuelto en S57-A
+- Tests fallan con collection error en retries → resuelto en S57-B/C/D
+- Incremento de tokens (30k→72k) por 2 retries de agentes → mejorará con S57
+
+---
+
+## S57 — QA score reducer + collection errors fix (pendiente)
+
+**Motivación:** En el ciclo S56, el segundo retry degradó el código y el QA bajó de 95 a 65. `deliver` reportó 65 porque toma el último QA, no el mejor. Adicionalmente, los retries de agentes fallan por collection errors (ImportError, conftest desactualizado).
+
+### S57-A — Reducer `_keep_best_qa` en `OVDState` [CRÍTICO]
+
+**Root cause:** `qa_result: dict[str, Any]` sin reducer → LangGraph sobreescribe en cada ronda.
+**Fix:** LangGraph 1.1.3 soporta `Annotated[dict, fn]` en TypedDict. Función nombrada (no lambda) para evitar problemas en serialización de checkpoints.
+
+```python
+def _keep_best_qa(a: dict, b: dict) -> dict:
+    """S57-A: reducer que preserva el mejor resultado QA del ciclo."""
+    return a if a.get("score", 0) >= b.get("score", 0) else b
+
+class OVDState(TypedDict):
+    qa_result: Annotated[dict, _keep_best_qa]  # antes: dict[str, Any]
+```
+
+Sin cambios en `qa_review` ni en `deliver` — transparente para todos los nodos.
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S57-A | `_keep_best_qa` reducer en `OVDState.qa_result` | `graph.py` | ⬜ |
+
+### S57-B — Corrección exit codes pytest en `run_tests` [ALTO]
+
+**Root cause confirmado (investigación oficial):** pytest exit 4 = `USAGE_ERROR` (flags inválidos), NO collection error. Los `ImportError` reales producen exit 1 con 0 tests pasados.
+
+```python
+# S32-C actual (incorrecto):
+if proc.returncode == 4:  # "error de colección" ← WRONG
+
+# S57-B (correcto):
+if proc.returncode == 4:  # USAGE_ERROR: flags o directorio inválido
+if proc.returncode == 1 and "collected 0 items" in output:  # verdadero collection error
+```
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S57-B | Corrección diagnóstico exit codes en `run_tests` (exit 4 ≠ collection error) | `graph.py` | ⬜ |
+
+### S57-C — `conftest.py` regenerado en rounds de retry [ALTO]
+
+**Root cause:** `conftest.py` se inyecta solo si no existe o está vacío (S27-A). En retry, si el agente reorganizó la estructura de código, el conftest viejo apunta a rutas incorrectas → ImportError inevitable en la siguiente ronda.
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S57-C | Forzar regeneración de `conftest.py` cuando `retry_feedback` presente | `graph.py` | ⬜ |
+
+### S57-D — `preserve_nonempty` en fallback de tool calling [MEDIO]
+
+**Root cause:** El path fallback de `_write_artifacts` (línea ~2098) no pasa `preserve_nonempty` → archivos con contenido válido pueden sobreescribirse con vacío en retry.
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S57-D | Pasar `preserve_nonempty=bool(retry_feedback)` en fallback de tool calling | `graph.py` | ⬜ |
+
+### S57-Tests
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S57-E | `test_s57.py` — 12 tests: reducer best QA, exit codes, conftest retry, preserve fallback | `tests/test_s57.py` | ⬜ |
+
+**Proyección post-S57:**
+
+| Métrica | S56 | S57 objetivo |
+|---------|-----|-------------|
+| QA score reportado | 65 | **95** (preserva mejor) |
+| sdd_compliance | False | **True** |
+| Tests | FAIL (collection) | exit 0 |
+| Retries | 2 | 0–1 |
+| Tokens | 72k | ~30k |
+| Duración | 2m 31s | ~1m 40s |
+
+---
+
+## S58 — Stack Transversality (pendiente)
+
+**Motivación:** Auditoría 2026-04-26 reveló que el 40% de los fixes implementados en S40–S56 tienen sesgo Python/pytest. Se validaron siempre con el mismo FR de IMC en Python — nunca se probó TypeScript ni Rust. Los bugs de sesgo son silenciosos hasta que se usa otro stack.
+
+**Hallazgos de auditoría:**
+
+| Tag | Problema | Riesgo en otros stacks |
+|-----|---------|----------------------|
+| **S51-A** | Instrucción hardcodea `tests/test_<paquete>.py` | Si tarea es Vitest, LLM recibe instrucción Python incorrecta |
+| **S55-C** | Instrucción `round()` — sintaxis Python pura | TypeScript: `toFixed(2)`, Rust: `.round()` |
+| **S27-A** | `conftest.py` injection | Solo existe en pytest — no aplica a Vitest ni Cargo |
+| **S31-C** | Filtra por `test_*.py` hardcoded | Vitest usa `*.test.ts`, Rust usa `*.rs` |
+| **S32-C** | Diagnóstico basado en exit codes pytest | Vitest y Cargo tienen códigos distintos |
+
+**Plan de S58:**
+
+| Item | Descripción | Archivo(s) | Estado |
+|------|-------------|-----------|--------|
+| S58-A | S51-A condicional por `stack_language`: Python→pytest hint, TypeScript→Vitest hint, Rust→cargo test hint | `graph.py` | ⬜ |
+| S58-B | S55-C condicional por stack: Python→`round()`, TypeScript→`toFixed(2)`, Rust→`.round()` | `graph.py` | ⬜ |
+| S58-C | S27-A condicional: solo inyectar `conftest.py` si runner=pytest; para Vitest inyectar `vitest.config.ts` si falta | `graph.py` | ⬜ |
+| S58-D | S31-C patrón por runner: `test_*.py` para pytest, `*.test.ts` para Vitest, `*.rs` para Cargo | `graph.py` | ⬜ |
+| S58-E | S32-C tabla de exit codes por runner — pytest/Vitest/Cargo | `graph.py` | ⬜ |
+| S58-F | Ciclo de validación TypeScript: FR con React + Vitest | Ciclo end-to-end | ⬜ |
+| S58-G | Ciclo de validación Rust: FR con función + `#[cfg(test)]` | Ciclo end-to-end | ⬜ |
 
 ---
 

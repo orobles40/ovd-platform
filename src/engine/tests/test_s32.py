@@ -186,11 +186,13 @@ class TestS32CImportErrorDiagnosis:
     """S32-C: run_tests extrae ImportError del output para retry_feedback más específico."""
 
     def test_run_tests_detecta_import_error(self):
-        """run_tests tiene lógica para detectar ImportError en output de pytest."""
+        """run_tests tiene lógica para detectar ImportError en output de pytest.
+        S57-B: la detección se movió de rc==4 a rc==1 con 'collected 0 items'."""
         import graph as _graph
         src = inspect.getsource(_graph.run_tests)
         assert "ImportError" in src, "run_tests no busca ImportError en output"
-        assert "S32-C" in src, "Etiqueta S32-C no encontrada"
+        # S57-B reemplaza S32-C — aceptar cualquiera de las dos etiquetas
+        assert "S32-C" in src or "S57-B" in src, "Ninguna etiqueta de diagnóstico ImportError encontrada"
 
     def test_run_tests_detecta_module_not_found(self):
         """run_tests también detecta ModuleNotFoundError."""
@@ -205,10 +207,14 @@ class TestS32CImportErrorDiagnosis:
         assert "attempted relative import" in src
 
     def test_diagnostico_incluye_solucion(self):
-        """El mensaje de diagnóstico S32-C incluye instrucción de solución."""
+        """El mensaje de diagnóstico incluye instrucción de solución.
+        S57-B: etiqueta cambiada de S32-C a S57-B pero funcionalidad preservada."""
         import graph as _graph
         src = inspect.getsource(_graph.run_tests)
-        assert "DIAGNÓSTICO S32-C" in src or "SOLUCION" in src or "SOLUCIÓN" in src
+        assert (
+            "DIAGNÓSTICO S32-C" in src or "DIAGNÓSTICO S57-B" in src
+            or "SOLUCION" in src or "SOLUCIÓN" in src
+        ), "Ningún diagnóstico de ImportError encontrado en run_tests"
 
     def test_output_modificado_con_diagnostico(self):
         """Cuando hay ImportError, el output se prepende con diagnóstico."""

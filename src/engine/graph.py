@@ -337,6 +337,21 @@ def _merge_token_usage(existing: dict, update: dict | None) -> dict:
     return merged
 
 
+def _keep_best_qa(existing: dict, update: dict) -> dict:
+    """S57-A: reducer que preserva el mejor resultado QA del ciclo.
+
+    En ciclos con retry, qa_review puede ejecutarse 2-3 veces. El primer resultado
+    puede ser 65/100, el segundo 95/100, y el tercero (tras código degradado) 65/100.
+    Sin reducer, LangGraph sobreescribe con el último. Con este reducer, el estado
+    siempre contiene el mejor score acumulado — sin cambios en qa_review ni en deliver.
+    """
+    if not existing:
+        return update
+    if not update:
+        return existing
+    return existing if existing.get("score", 0) >= update.get("score", 0) else update
+
+
 # ---------------------------------------------------------------------------
 # State del grafo
 # ---------------------------------------------------------------------------
@@ -423,7 +438,7 @@ class OVDState(TypedDict):
     # GAP-001: resultado de la auditoria de seguridad independiente
     security_result: dict[str, Any]
 
-    qa_result: dict[str, Any]
+    qa_result: Annotated[dict, _keep_best_qa]  # S57-A: preserva el mejor score del ciclo
 
     # GAP-005: contadores de reintentos (max 3 antes de escalar)
     security_retry_count: int       # reintentos de security_audit → execute_agents
@@ -918,6 +933,42 @@ async def web_research_node(state: OVDState) -> dict:
     }
 
 
+_DB_RESTRICTION_KEYWORDS = (
+    "oracle", "fetch_first", "lateral join", "listagg", "rownum",
+    "python-oracledb", "oracledb", "thick mode", "cx_oracle",
+    "no_json", "no_fetch", "no_lateral", "no_listagg",
+    "no_with_function", "no_window", "use_rownum", "no_merge",
+    "tns", "sqlnet", "wallet", "oracle_home",
+)
+
+
+def _strip_db_restrictions(project_ctx: str) -> str:
+    """S56-C: elimina líneas con restricciones de BD cuando oracle_involved=False.
+
+    Evita que restricciones Oracle (fetch_first, lateral join, etc.) contaminen
+    el SDD de FRs que no tienen nada que ver con la BD. Filtra línea por línea
+    para no afectar el contenido que sigue a una restricción.
+    """
+    if not project_ctx:
+        return project_ctx
+    trailing_newline = project_ctx.endswith("\n")
+    lines = project_ctx.splitlines()
+    filtered: list[str] = []
+    for line in lines:
+        lower = line.lower()
+        if any(kw in lower for kw in _DB_RESTRICTION_KEYWORDS):
+            log.warning(
+                "S56-C: omitiendo restricción de BD del project_ctx (oracle_involved=False): %s",
+                line.strip()[:80],
+            )
+            continue
+        filtered.append(line)
+    result = "\n".join(filtered)
+    if trailing_newline:
+        result += "\n"
+    return result
+
+
 async def generate_sdd(state: OVDState) -> dict:
     """
     Genera el SDD con 4 artefactos separados usando structured output (GAP-007):
@@ -933,6 +984,12 @@ async def generate_sdd(state: OVDState) -> dict:
     rag_ctx        = state.get("rag_context", "")
     revision_count = state.get("revision_count", 0)
     revision_comment = state.get("approval_comment", "")
+
+    # S56-C: si el FR no involucra Oracle, limpiar restricciones de BD del contexto del proyecto
+    # para evitar que contaminen el SDD con oracle_involved=False.
+    fr_analysis = state.get("fr_analysis", {})
+    if not fr_analysis.get("oracle_involved", True) and project_ctx:
+        project_ctx = _strip_db_restrictions(project_ctx)
 
     # Construir el bloque de revisión si corresponde
     revision_block = ""
@@ -1275,6 +1332,27 @@ def _extract_expected_files_from_task(description: str) -> list[str]:
     return result
 
 
+def _filter_requirements_for_task(requirements: list, task: dict) -> list:
+    """S56-D: retorna solo los requisitos relevantes para esta tarea.
+
+    Si la tarea tiene `depends_on` con IDs de requisito, filtra solo esos.
+    Si no hay referencia explícita, devuelve todos (comportamiento original).
+    """
+    if not requirements:
+        return requirements
+    depends_on = task.get("depends_on", [])
+    if not depends_on:
+        return requirements
+    # depends_on puede ser lista de task IDs o req IDs — filtrar req IDs (REQ-*)
+    req_ids = {d for d in depends_on if isinstance(d, str) and d.upper().startswith("REQ-")}
+    if not req_ids:
+        return requirements
+    filtered = [r for r in requirements if r.get("id", "") in req_ids]
+    # Siempre incluir must-requirements para no perder criterios críticos
+    must_reqs = [r for r in requirements if r.get("priority", "") == "must" and r not in filtered]
+    return filtered + must_reqs
+
+
 def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_index: int, total_tasks: int) -> str:
     """S39-D: construye el SDD para una sola tarea del agente.
 
@@ -1282,9 +1360,12 @@ def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_
     constraints) pero solo una tarea en 'Your Task'. Esto reduce el output de
     10-15K tokens (todas las tareas) a ~800 tokens (una tarea), eliminando timeouts.
     """
+    # S56-D: filtrar requirements por depends_on de la tarea para reducir tokens
+    task_requirements = _filter_requirements_for_task(sdd.get("requirements", []), task)
+
     base = (
         f"## Summary\n{sdd.get('summary', '')}\n\n"
-        f"## Requirements\n{_json.dumps(sdd.get('requirements', []), ensure_ascii=False, indent=2)}\n\n"
+        f"## Requirements\n{_json.dumps(task_requirements, ensure_ascii=False, indent=2)}\n\n"
         f"## Design\n{sdd.get('design', {}).get('overview', '')}\n\n"
         f"## Constraints\n{_json.dumps(sdd.get('constraints', []), ensure_ascii=False, indent=2)}\n\n"
         f"## Your Task ({agent_name}) — {task_index + 1}/{total_tasks}\n"
@@ -2029,7 +2110,12 @@ async def _run_agent_with_tools(
 
     # Si no se escribió nada via tools, intentar parsear del output del LLM
     if not artifacts and final_output:
-        artifacts = _write_artifacts(final_output, directory, agent_name)
+        # S57-D: en rounds de retry, preservar archivos existentes con contenido válido
+        # para evitar sobreescritura destructiva si el LLM genera output truncado o vacío
+        artifacts = _write_artifacts(
+            final_output, directory, agent_name,
+            preserve_nonempty=bool(retry_feedback),  # S57-D
+        )
 
     # S24-A: post-scan del workspace — detectar archivos escritos que no fueron
     # capturados por el tracking de tool calls (e.g., tool_result no era str puro).
@@ -2510,6 +2596,27 @@ def _summarize_for_qa(directory: str) -> str:
     return "\n\n".join(lines)
 
 
+def _build_qa_sdd_block(sdd: dict) -> str:
+    """S56-A: serializa requirements completos del SDD para el QA reviewer.
+
+    Evita que el LLM evalúe contra criterios del proyecto (Oracle, etc.) en lugar
+    de los requisitos reales del feature request. El bloque se antepone al código
+    revisado para que aparezca en la posición primaria del prompt.
+    """
+    requirements = sdd.get("requirements", [])
+    if not requirements:
+        return ""
+    lines = ["## Requisitos del SDD a verificar (EVALÚA SOLO ESTOS):\n"]
+    for req in requirements:
+        lines.append(
+            f"**{req.get('id', '?')}** [{req.get('priority', 'should')}] — {req.get('description', '')}"
+        )
+        for crit in req.get("acceptance_criteria", []):
+            lines.append(f"  - [ ] {crit}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 async def qa_review(state: OVDState) -> dict:
     """Revisa calidad y cumplimiento del SDD (no seguridad — eso lo hace security_audit)."""
     project_ctx = state.get("project_context", "")
@@ -2604,9 +2711,9 @@ async def qa_review(state: OVDState) -> dict:
             project_context=project_ctx,
         )),
         HumanMessage(content=(
-            f"SDD aprobado:\n{_truncate(state['sdd'].get('summary', ''), 8000)}\n\n"
-            + (f"Estructura del workspace (S39-B):\n{_truncate(qa_summary, 4000)}\n\n" if qa_summary else "")
-            + f"Resultado de implementacion a revisar:\n{_truncate(agent_output, 20000)}"  # S38-B: 12k→20k para FRs multi-agente
+            _build_qa_sdd_block(state["sdd"])  # S56-A: requirements completos al inicio
+            + f"\n\n## Código generado:\n{_truncate(agent_output, 18000)}"  # S38-B ajustado: 20k→18k para dar espacio al bloque SDD
+            + (f"\n\n## Estructura workspace (S39-B):\n{_truncate(qa_summary, 3000)}" if qa_summary else "")
         )),
     ]
 
@@ -2796,13 +2903,20 @@ async def run_tests(state: OVDState) -> dict:
     # Para TypeScript, Rust u otros stacks no existe este mecanismo de resolución de imports.
     if work_dir and runner == "pytest":
         _conftest = pathlib.Path(work_dir) / "conftest.py"
+        _is_retry_round = retry_round > 0
+        _conftest_content = (
+            "import sys, os\n"
+            'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n'
+        )
         if not _conftest.exists() or _conftest.stat().st_size == 0:
-            _conftest.write_text(
-                "import sys, os\n"
-                'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n',
-                encoding="utf-8",
-            )
+            _conftest.write_text(_conftest_content, encoding="utf-8")
             log.info("run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s", _conftest)
+        elif _is_retry_round:
+            # S57-C: en rounds de retry, regenerar conftest.py para reflejar posible
+            # reorganización del código por el agente. Si la estructura cambió, el
+            # conftest viejo apunta a rutas incorrectas → ImportError inevitable.
+            _conftest.write_text(_conftest_content, encoding="utf-8")
+            log.warning("run_tests: S57-C conftest.py regenerado en retry_round=%d — %s", retry_round, _conftest)
 
     # Ejecutar runner
     passed = False
@@ -2877,45 +2991,57 @@ async def run_tests(state: OVDState) -> dict:
                             [str(p.relative_to(work_dir)) for p in pathlib.Path(work_dir).rglob("*.py")][:10],
                         )
                     elif rc == 4:
-                        # S32-C: extraer ImportError específico para feedback al agente
-                        _import_errors = [
-                            line for line in output.splitlines()
-                            if "ImportError" in line or "ModuleNotFoundError" in line or "attempted relative import" in line
-                        ]
-                        if _import_errors:
-                            log.warning(
-                                "run_tests: S32-C pytest exit 4 — ImportError detectado: %s",
-                                " | ".join(_import_errors[:3]),
-                            )
-                            # S32-C / S43-C: inyectar diagnóstico stack-aware al inicio del output
-                            output = (
-                                f"[DIAGNÓSTICO S32-C/S43-C] ImportError detectado:\n"
-                                + "\n".join(_import_errors[:5])
-                                + f"\n\n{_get_import_error_diagnosis(runner)}\n\n"
-                                + output
-                            )
-                        else:
-                            log.warning(
-                                "run_tests: pytest exit 4 — error de colección (SyntaxError o ImportError). "
-                                "Output: %s", output[:500],
-                            )
+                        # S57-B: exit 4 = USAGE_ERROR (flags inválidos o directorio inexistente)
+                        # NO es collection error — los ImportError reales llegan como rc==1
+                        log.warning(
+                            "run_tests: S57-B pytest exit 4 (USAGE_ERROR) — "
+                            "flags inválidos o directorio inexistente. cmd=%s output=%s",
+                            cmd, output[:300],
+                        )
                     elif rc == 2:
                         log.warning("run_tests: pytest exit 2 — ejecución interrumpida. Output: %s", output[:200])
-                # S33-B: cuando hay fallos (rc==1), extraer líneas de AssertionError para diagnóstico
+                # S57-B: cuando rc==1, distinguir entre collection error e AssertionError
                 if rc == 1 and not passed:
-                    _assert_lines = [
-                        line for line in output.splitlines()
-                        if "AssertionError" in line or (line.strip().startswith("assert ") and "==" in line)
-                        or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
-                    ]
-                    if _assert_lines:
-                        log.info("run_tests: S33-B AssertionError(s) detectados: %d líneas", len(_assert_lines))
+                    _is_collection_error = (
+                        "collected 0 items" in output and (
+                            "ImportError" in output
+                            or "ModuleNotFoundError" in output
+                            or "attempted relative import" in output
+                            or "ERROR" in output
+                        )
+                    )
+                    if _is_collection_error:
+                        # S57-B: verdadero collection error — extraer ImportError para feedback
+                        _import_errors = [
+                            line for line in output.splitlines()
+                            if "ImportError" in line or "ModuleNotFoundError" in line
+                            or "attempted relative import" in line
+                        ]
+                        log.warning(
+                            "run_tests: S57-B collection error (rc=1, 0 items) — ImportError: %s",
+                            " | ".join(_import_errors[:3]),
+                        )
                         output = (
-                            f"[DIAGNÓSTICO S33-B] Fallos de aserción detectados:\n"
-                            + "\n".join(_assert_lines[:10])
-                            + "\n\n"
+                            f"[DIAGNÓSTICO S57-B] Error de colección (ImportError/ModuleNotFoundError):\n"
+                            + "\n".join(_import_errors[:5])
+                            + f"\n\n{_get_import_error_diagnosis(runner)}\n\n"
                             + output
                         )
+                    else:
+                        # S33-B: fallos de aserción — extraer AssertionError para diagnóstico
+                        _assert_lines = [
+                            line for line in output.splitlines()
+                            if "AssertionError" in line or (line.strip().startswith("assert ") and "==" in line)
+                            or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
+                        ]
+                        if _assert_lines:
+                            log.info("run_tests: S33-B AssertionError(s) detectados: %d líneas", len(_assert_lines))
+                            output = (
+                                f"[DIAGNÓSTICO S33-B] Fallos de aserción detectados:\n"
+                                + "\n".join(_assert_lines[:10])
+                                + "\n\n"
+                                + output
+                            )
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.communicate()

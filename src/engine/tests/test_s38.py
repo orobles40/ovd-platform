@@ -111,18 +111,22 @@ class TestS38AAsyncToolInvocation:
 # ---------------------------------------------------------------------------
 
 class TestS38BQATruncationLimit:
-    """S38-B: qa_review usa _truncate(agent_output, 20000) para soportar FRs multi-agente."""
+    """S38-B: qa_review usa _truncate(agent_output, N) con N >= 18000 para soportar FRs multi-agente."""
 
     def _get_qa_review_source(self) -> str:
         import graph as g
         return inspect.getsource(g.qa_review)
 
     def test_truncation_limit_es_20000(self):
-        """qa_review trunca el output a 20000 chars (no 12000)."""
+        """qa_review trunca el output a >=18000 chars (no 12000). S56-A ajustó 20000→18000."""
+        import re
         src = self._get_qa_review_source()
-        # Buscar el _truncate con agent_output
-        assert "_truncate(agent_output, 20000)" in src, \
-            "S38-B: qa_review no usa _truncate(agent_output, 20000) — revisar límite de truncación"
+        # Buscar _truncate(agent_output, N) donde N >= 18000
+        matches = re.findall(r'_truncate\(agent_output,\s*(\d+)\)', src)
+        assert matches, "S38-B: qa_review no llama _truncate(agent_output, N)"
+        limit = int(matches[0])
+        assert limit >= 18000, \
+            f"S38-B: límite de truncación {limit} < 18000 — debe soportar FRs multi-agente"
 
     def test_no_usa_limite_12000(self):
         """El límite antiguo de 12000 chars ya no está en qa_review para agent_output."""
