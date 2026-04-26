@@ -23,8 +23,10 @@ class TestSystemBackendTemplateS26:
     """system_backend.md prohíbe __init__.py en raíz e incluye conftest con sys.path."""
 
     def _read_template(self) -> str:
-        templates_dir = pathlib.Path(__file__).parent.parent / "templates"
-        return (templates_dir / "system_backend.md").read_text(encoding="utf-8")
+        # S58-pre: __init__.py y conftest reglas movidas a stack/backend_python.md
+        import template_loader
+        template_loader.invalidate()
+        return template_loader.render_composed("system_backend", stack_language="python")
 
     def test_template_prohibits_init_in_root(self):
         """system_backend.md contiene prohibición explícita de __init__.py en raíz."""

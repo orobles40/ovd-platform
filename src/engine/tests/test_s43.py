@@ -268,8 +268,11 @@ class TestS43FRutsValidos:
         assert "NUNCA inventes RUTs" in content or "NUNCA" in content
 
     def test_backend_tiene_tabla_ruts(self):
-        """S43-F: system_backend.md contiene tabla con RUTs válidos."""
-        content = self._get_template("system_backend.md")
+        """S43-F: template backend compuesto (base + stack Python) contiene tabla con RUTs válidos.
+        S58-pre: la tabla fue movida de system_backend.md a stack/backend_python.md."""
+        import template_loader
+        template_loader.invalidate()
+        content = template_loader.render_composed("system_backend", stack_language="python")
         assert "12.345.678-5" in content
         assert "NUNCA inventes RUTs" in content or "NUNCA" in content
 
@@ -311,7 +314,13 @@ class TestS43FRutsValidos:
         assert _calc_dv("12345678") != "4", "El RUT negativo de prueba debe tener DV incorrecto"
 
     def test_templates_mencionan_regla_calculo_dv(self):
-        """S43-F: los templates indican que DV=K viene de remainder==10."""
-        for fname in ("system_backend_python.md", "system_backend.md"):
-            content = self._get_template(fname)
-            assert "remainder" in content or "DV=K" in content or "módulo 11" in content or "modulo 11" in content.lower()
+        """S43-F: el template compuesto indica que DV=K viene de remainder==10.
+        S58-pre: verificar stack/backend_python.md (antes en system_backend.md y system_backend_python.md)."""
+        import template_loader
+        template_loader.invalidate()
+        # El template compuesto con stack Python debe tener la regla
+        composed = template_loader.render_composed("system_backend", stack_language="python")
+        assert "remainder" in composed or "DV=K" in composed or "módulo 11" in composed or "modulo 11" in composed.lower()
+        # system_backend_python.md también debe tenerla (pre-existente, no modificado en S58-pre)
+        content_python = self._get_template("system_backend_python.md")
+        assert "remainder" in content_python or "DV=K" in content_python or "módulo 11" in content_python or "modulo 11" in content_python.lower()

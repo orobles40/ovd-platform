@@ -21,8 +21,11 @@ from tests.factories import make_state
 # ---------------------------------------------------------------------------
 
 def _backend_template() -> str:
-    path = pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
-    return path.read_text()
+    # S58-pre: el contenido Python-specific fue movido a stack/backend_python.md
+    # Los tests deben verificar el template compuesto (base + stack Python)
+    import template_loader
+    template_loader.invalidate()
+    return template_loader.render_composed("system_backend", stack_language="python")
 
 
 def _graph_src() -> str:

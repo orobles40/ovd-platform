@@ -28,6 +28,7 @@ Si el archivo de template no existe, se usa el prompt fallback hardcodeado.
 from __future__ import annotations
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +47,7 @@ _UI_UX_SEARCH = (
 
 # Cache en memoria: "{language}:{name}" -> contenido del template
 _cache: dict[str, str] = {}
+_cache_lock = threading.Lock()  # S58-pre: fix thread-safety para ciclos concurrentes
 
 # ---------------------------------------------------------------------------
 # Prompts fallback (hardcodeados como respaldo)
@@ -408,15 +410,19 @@ def load(name: str, language: str = "es", stack_language: str = "") -> str:
     lang = language if language in SUPPORTED_LANGUAGES else "es"
     sl = stack_language.lower().strip() if stack_language else ""
     cache_key = f"{lang}:{sl}:{name}" if sl else f"{lang}:{name}"
-    if cache_key in _cache:
-        return _cache[cache_key]
+
+    # S58-pre: thread-safe cache lookup
+    with _cache_lock:
+        if cache_key in _cache:
+            return _cache[cache_key]
 
     # S42-E: Buscar template específico del stack tecnológico
     if sl:
         stack_file = _TEMPLATES_DIR / f"{name}_{sl}.md"
         if stack_file.exists():
             content = stack_file.read_text(encoding="utf-8").strip()
-            _cache[cache_key] = content
+            with _cache_lock:
+                _cache[cache_key] = content
             return content
 
     # Buscar template específico del idioma
@@ -424,14 +430,16 @@ def load(name: str, language: str = "es", stack_language: str = "") -> str:
         lang_file = _TEMPLATES_DIR / lang / f"{name}.md"
         if lang_file.exists():
             content = lang_file.read_text(encoding="utf-8").strip()
-            _cache[cache_key] = content
+            with _cache_lock:
+                _cache[cache_key] = content
             return content
 
     # Buscar template español (default)
     template_file = _TEMPLATES_DIR / f"{name}.md"
     if template_file.exists():
         content = template_file.read_text(encoding="utf-8").strip()
-        _cache[cache_key] = content
+        with _cache_lock:
+            _cache[cache_key] = content
         return content
 
     # Fallback inline por idioma
@@ -465,37 +473,96 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
           retry_feedback=state.get("retry_feedback", ""))
     """
     template = load(name, language=language, stack_language=stack_language)
+    return _interpolate(template, **variables)
 
-    # Preparar valores — los vacios generan string vacio
+
+def _interpolate(raw: str, **variables: str) -> str:
+    """Aplica sustitución de variables a un string raw (helper interno)."""
     defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": "", "lessons_context": ""}
     defaults.update(variables)
-
-    # Transformar variables de bloque: si el valor no es vacio, agregar prefijo de seccion
-    ctx = defaults.get("project_context", "")
-    rag = defaults.get("rag_context", "")
-    fb  = defaults.get("retry_feedback", "")
-    ui  = defaults.get("ui_context", "")
-
+    ctx     = defaults.get("project_context", "")
+    rag     = defaults.get("rag_context", "")
+    fb      = defaults.get("retry_feedback", "")
+    ui      = defaults.get("ui_context", "")
     lessons = defaults.get("lessons_context", "")
+    return raw.replace(
+        "{project_context}", f"\n\n{ctx}" if ctx else "",
+    ).replace(
+        "{rag_context}", f"\n\n---\n## Contexto del proyecto (RAG)\n{rag}" if rag else "",
+    ).replace(
+        "{retry_feedback}", f"\n\nFEEDBACK DE REVISION ANTERIOR (corregir estos issues obligatoriamente):\n{fb}" if fb else "",
+    ).replace(
+        "{ui_context}", f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
+    ).replace(
+        "{lessons_context}", f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}" if lessons else "",
+    ).strip()
 
-    rendered = template.replace(
-        "{project_context}",
-        f"\n\n{ctx}" if ctx else "",
-    ).replace(
-        "{rag_context}",
-        f"\n\n---\n## Contexto del proyecto (RAG)\n{rag}" if rag else "",
-    ).replace(
-        "{retry_feedback}",
-        f"\n\nFEEDBACK DE REVISION ANTERIOR (corregir estos issues obligatoriamente):\n{fb}" if fb else "",
-    ).replace(
-        "{ui_context}",
-        f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
-    ).replace(
-        "{lessons_context}",
-        f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}" if lessons else "",
-    )
 
-    return rendered.strip()
+def render_composed(
+    name: str,
+    language: str = "es",
+    stack_language: str = "",
+    **variables: str,
+) -> str:
+    """
+    S58-pre: carga base universal + sección de stack y compone en string único.
+
+    Orden de composición:
+      1. Base universal: templates/{name}.md  (reglas OVD que aplican a cualquier stack)
+      2. Sección de stack: templates/stack/{role}_{stack_language}.md  (convenciones del stack)
+
+    El resultado es: base + "\\n\\n---\\n## Convenciones del stack\\n" + stack_section
+
+    Si no hay archivo de stack, retorna solo el base (equivalente a render()).
+
+    Diferencia vs render() con S42-E:
+      - render() con stack_language carga {name}_{sl}.md REEMPLAZANDO el base
+      - render_composed() carga ambos y los COMBINA (base + stack additions)
+
+    Uso en graph.py (agentes de código):
+      prompt = template_loader.render_composed(
+          "system_backend",
+          language=state.get("language", "es"),
+          stack_language=state.get("stack_language", ""),
+          project_context=...,
+          retry_feedback=...,
+      )
+    """
+    # 1. Base universal — usa load() estándar (NO stack-aware: siempre carga el .md base)
+    #    Usamos stack_language="" para forzar la carga del template base, no el stack-specific
+    base_raw = load(name, language=language, stack_language="")
+    base = _interpolate(base_raw, **variables)
+
+    if not stack_language:
+        return base
+
+    # 2. Sección de stack — inferir rol del nombre del template
+    #    system_backend → backend, system_frontend → frontend, system_database → database
+    role = name.replace("system_", "")
+    sl = stack_language.lower().strip()
+
+    # Buscar en templates/stack/{role}_{sl}.md
+    stack_cache_key = f"stack:{role}:{sl}"
+    with _cache_lock:
+        cached = _cache.get(stack_cache_key)
+
+    if cached is None:
+        stack_path = _TEMPLATES_DIR / "stack" / f"{role}_{sl}.md"
+        if stack_path.exists():
+            raw = stack_path.read_text(encoding="utf-8").strip()
+            with _cache_lock:
+                _cache[stack_cache_key] = raw
+            cached = raw
+        else:
+            with _cache_lock:
+                _cache[stack_cache_key] = ""  # marca "no existe" para no buscar de nuevo
+            cached = ""
+
+    if not cached:
+        return base
+
+    stack_section = _interpolate(cached, **variables)
+    return f"{base}\n\n---\n## Convenciones del stack ({sl})\n{stack_section}"
 
 
 def invalidate(name: Optional[str] = None, language: Optional[str] = None) -> None:
@@ -505,17 +572,17 @@ def invalidate(name: Optional[str] = None, language: Optional[str] = None) -> No
     Con name: invalida ese template en todos los idiomas y stacks.
     """
     global _cache
-    if name is None:
-        _cache = {}
-    elif language is not None:
-        # Eliminar todas las entradas que contengan este idioma y nombre
-        keys_to_del = [k for k in _cache if k.endswith(f":{name}") and k.startswith(f"{language}:")]
-        for k in keys_to_del:
-            del _cache[k]
-    else:
-        keys_to_del = [k for k in _cache if k.endswith(f":{name}")]
-        for k in keys_to_del:
-            del _cache[k]
+    with _cache_lock:
+        if name is None:
+            _cache = {}
+        elif language is not None:
+            keys_to_del = [k for k in _cache if k.endswith(f":{name}") and k.startswith(f"{language}:")]
+            for k in keys_to_del:
+                del _cache[k]
+        else:
+            keys_to_del = [k for k in _cache if k.endswith(f":{name}")]
+            for k in keys_to_del:
+                del _cache[k]
 
 
 def list_available() -> list[str]:

@@ -213,3 +213,36 @@ def read_project_context(base_dir: str, agent_name: str) -> str:
         + "\n---\n".join(collected)
         + "\n=== Fin del contexto existente ===\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# S53-A — calculate_expression: cálculo matemático seguro para tests
+# ---------------------------------------------------------------------------
+
+@tool
+def calculate_expression(expression: str) -> dict:
+    """Evalúa una expresión matemática de forma segura.
+
+    Úsala ANTES de escribir cualquier valor float en un test.
+    El campo `rounded_2d` es el valor que debes usar en el `assert`.
+
+    Ejemplo:
+        calculate_expression("55 / 1.70**2") → {"result": 19.031..., "rounded_2d": 19.03}
+        → assert data["imc"] == 19.03
+    """
+    import math as _math
+    _safe_names = {
+        "round": round, "abs": abs, "pow": pow, "min": min, "max": max,
+        "math": _math, "sqrt": _math.sqrt, "pi": _math.pi,
+    }
+    try:
+        raw = eval(expression, {"__builtins__": {}}, _safe_names)  # noqa: S307
+        result = float(raw)
+        return {
+            "expression": expression,
+            "result": result,
+            "rounded_2d": round(result, 2),
+            "ok": True,
+        }
+    except Exception as exc:
+        return {"expression": expression, "error": str(exc), "ok": False}

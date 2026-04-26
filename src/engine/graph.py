@@ -377,8 +377,8 @@ class OVDState(TypedDict):
     # S42-E — Stack-aware template selection
     # Lenguaje del stack tecnológico del proyecto: "python", "typescript", "java", "go", etc.
     # Leído desde ovd_stack_profiles.language en api.py.
-    # Usado por template_loader.render() para cargar system_backend_python.md en vez de system_backend.md.
-    # Vacío ("") = sin perfil configurado → usa template genérico.
+    # Usado por template_loader.render_composed() para componer base + stack/backend_{sl}.md (S58-pre).
+    # Vacío ("") = sin perfil configurado → usa solo template base.
     stack_language: str
 
     # Sprint 10 — OTEL trace_id (GAP-A6)
@@ -1176,7 +1176,7 @@ async def _run_frontend_agent(
 ) -> dict:
     """Agente especializado en frontend: segun el stack del proyecto."""
     response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render(
+        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
             "system_frontend",
             language=language,
             stack_language=stack_language,
@@ -1200,7 +1200,7 @@ async def _run_backend_agent(
 ) -> dict:
     """Agente especializado en backend: segun el stack del proyecto."""
     response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render(
+        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
             "system_backend",
             language=language,
             stack_language=stack_language,
@@ -1224,7 +1224,7 @@ async def _run_database_agent(
 ) -> dict:
     """Agente especializado en base de datos: segun el motor del proyecto."""
     response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render(
+        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
             "system_database",
             language=language,
             stack_language=stack_language,
@@ -1248,7 +1248,7 @@ async def _run_devops_agent(
 ) -> dict:
     """Agente especializado en DevOps: segun el CI/CD del proyecto."""
     response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render(
+        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
             "system_devops",
             language=language,
             stack_language=stack_language,
@@ -1960,10 +1960,10 @@ async def _run_agent_with_tools(
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
 
-    system_prompt = template_loader.render(
+    system_prompt = template_loader.render_composed(  # S58-pre: base + stack section
         f"system_{agent_name}",
         language=language,
-        stack_language=stack_language,  # S42-E
+        stack_language=stack_language,
         project_context=project_ctx,
         retry_feedback=retry_feedback,
         rag_context=rag_context,

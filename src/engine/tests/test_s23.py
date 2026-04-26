@@ -252,10 +252,10 @@ class TestSystemBackendTemplate:
     """system_backend.md incluye la sección de infraestructura obligatoria para Python."""
 
     def test_template_contains_python_infrastructure_section(self):
-        templates_dir = pathlib.Path(__file__).parent.parent / "templates"
-        template_path = templates_dir / "system_backend.md"
-        assert template_path.exists(), "system_backend.md no existe"
-        content = template_path.read_text(encoding="utf-8")
+        # S58-pre: infraestructura Python movida a stack/backend_python.md — verificar en template compuesto
+        import template_loader
+        template_loader.invalidate()
+        content = template_loader.render_composed("system_backend", stack_language="python")
         assert "Infraestructura obligatoria" in content
         assert "pytest.ini" in content or "pyproject.toml" in content
         assert "__init__.py" in content

@@ -142,14 +142,10 @@ class TestS32BTemplateWriteOrder:
     """S32-B: system_backend.md instruye a escribir infraestructura PRIMERO."""
 
     def _get_template(self) -> str:
-        """Carga system_backend.md desde disco."""
-        import pathlib
-        template_path = pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
-        if not template_path.exists():
-            # Fallback: buscar en template_loader
-            from template_loader import _FALLBACK_PROMPTS
-            return _FALLBACK_PROMPTS.get("system_backend", "")
-        return template_path.read_text(encoding="utf-8")
+        """S58-pre: ORDEN DE ESCRITURA movido a stack/backend_python.md — cargar template compuesto."""
+        import template_loader
+        template_loader.invalidate()
+        return template_loader.render_composed("system_backend", stack_language="python")
 
     def test_template_tiene_orden_de_escritura(self):
         """Template menciona explícitamente el orden de escritura."""
@@ -158,18 +154,19 @@ class TestS32BTemplateWriteOrder:
             "Template no menciona orden de escritura obligatorio"
 
     def test_template_init_py_es_primero(self):
-        """__init__.py de src está marcado explícitamente como el primer archivo a escribir."""
+        """__init__.py de src está etiquetado en el orden de escritura obligatorio.
+        S58-pre: requirements.txt es ahora PRIMERO, __init__.py es SEGUNDO — ambos antes del código de negocio."""
         content = self._get_template()
-        # El template debe etiquetar __init__.py como PRIMERO en el orden de escritura
+        # El template debe tener algún ítem etiquetado como PRIMERO
         assert "PRIMERO" in content, "Template no etiqueta ningún archivo como PRIMERO"
-        # La línea que dice PRIMERO debe estar cerca de __init__.py
+        # __init__.py debe aparecer en el ORDEN DE ESCRITURA (puede ser SEGUNDO con S58-pre)
         lines = content.splitlines()
-        init_with_primero = any(
-            "__init__.py" in line and "PRIMERO" in line
+        init_in_order = any(
+            "__init__.py" in line and ("PRIMERO" in line or "SEGUNDO" in line or "←" in line)
             for line in lines
         )
-        assert init_with_primero, \
-            "Ninguna línea del template tiene '__init__.py' y 'PRIMERO' juntos"
+        assert init_in_order, \
+            "Ninguna línea del template tiene '__init__.py' etiquetado en el orden de escritura"
 
     def test_template_instruye_escribir_infra_antes_de_negocio(self):
         """Template tiene instrucción de escribir infra antes que código de negocio."""

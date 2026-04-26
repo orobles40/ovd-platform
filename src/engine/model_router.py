@@ -367,6 +367,7 @@ def build_llm(config: ResolvedConfig) -> Any:
             model=config.model,
             base_url=base_url,
             num_predict=8192,
+            num_ctx=32768,  # S52-A: ventana explícita — sin esto Ollama puede usar default 2048 y truncar tareas tardías
             temperature=config.temperature,
             think=False,  # Deshabilita thinking mode Qwen3+ via API nativa (ver ADR-002)
         )

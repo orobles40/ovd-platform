@@ -935,9 +935,10 @@ Prioridad basada en impacto sobre calidad del entregable y deuda técnica acumul
 | 8 | ~~**S54**~~ — Fence hints + diagnóstico runner | ✅ Completado 2026-04-26 | — |
 | 9 | ~~**S55**~~ — Log visibility + preserve_nonempty + float hint | ✅ Completado 2026-04-26 | — |
 | 10 | ~~**S56**~~ — QA contextualizado + logging configurado + Oracle constraints filter | ✅ Completado 2026-04-26 | — |
-| 11 | **S57** — QA score reducer + collection errors fix | QA reporta último score, no el mejor; tests fallan en retry por collection error | Bajo (~2h) |
-| 12 | **S58** — Stack transversality | Fixes S40–S56 con sesgo Python/pytest no aplican correctamente a TypeScript/Rust | Medio (~1 día) |
-| 13 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
+| 11 | ~~**S57**~~ — QA score reducer + collection errors fix | ✅ Completado 2026-04-26 | — |
+| 12 | **S58-pre** — Refactoring arquitectura de templates (prerequisito de S58) | Templates actuales son overrides completos — imposible mantener con N stacks | Medio (~1 día) |
+| 13 | **S58** — Stack transversality | Fixes S40–S57 con sesgo Python/pytest no aplican correctamente a TypeScript/Rust | Medio (~1 día) |
+| 14 | **S44** — MCP Server Manager | context7 hardcodeado; no se pueden agregar otros servidores MCP desde UI | Medio (~1 día) |
 
 ---
 
@@ -1051,31 +1052,1274 @@ if proc.returncode == 1 and "collected 0 items" in output:  # verdadero collecti
 
 ---
 
+## S58-pre — Refactoring arquitectura de templates (prerequisito de S58)
+
+**Última iteración:** 2026-04-26 — diseño definido en sesión de análisis de S58.
+**Estado:** ⬜ Pendiente — debe ejecutarse antes de S58.
+
+**Motivación:** El modelo actual de templates usa *overrides completos* por stack. Cada archivo stack-specific (`system_backend_python.md`, `system_backend_typescript.md`) es un template independiente que duplica las reglas universales. Esto genera dos problemas:
+
+1. **Deuda de propagación:** cada fix universal (S32-B, S49-B, S40-A, S55-B...) debe replicarse en N archivos. Con S59, S60, etc. acumulando más fixes, el costo crece linealmente con el número de stacks.
+2. **Barrera de entrada por stack nuevo:** agregar Go o Java requiere crear un template completo desde cero en vez de solo las reglas específicas del stack.
+
+**Argumento de diseño:** El LLM (qwen3-coder:30b) ya conoce la sintaxis de Python, TypeScript, Rust, Go y todos sus frameworks de test. No necesita que el template le explique cómo usar pytest — necesita que le explique las **convenciones OVD** para ese stack. Separar ambas responsabilidades es la clave.
+
+---
+
+### Arquitectura objetivo
+
+```
+templates/
+├── system_backend.md         ← UNIVERSAL: reglas OVD que aplican a cualquier stack
+├── system_frontend.md        ← UNIVERSAL
+├── system_sdd.md             ← UNIVERSAL
+├── system_qa.md              ← UNIVERSAL
+├── system_security.md        ← UNIVERSAL
+├── system_router.md          ← UNIVERSAL
+├── system_docs.md            ← UNIVERSAL
+│
+└── stack/
+    ├── backend_python.md     ← Solo convenciones OVD para Python
+    ├── backend_typescript.md ← Solo convenciones OVD para TypeScript
+    ├── backend_rust.md       ← Solo convenciones OVD para Rust
+    ├── backend_java.md       ← Solo convenciones OVD para Java
+    ├── backend_go.md         ← Solo convenciones OVD para Go
+    ├── frontend_react.md     ← Solo convenciones OVD para React
+    ├── frontend_vue.md       ← Solo convenciones OVD para Vue
+    ├── database_oracle.md    ← Solo convenciones OVD para Oracle
+    └── database_postgresql.md ← Solo convenciones OVD para PostgreSQL
+```
+
+**Composición en `template_loader.render()`:**
+
+```python
+base = load("system_backend.md")           # reglas universales
+stack_section = load(f"stack/backend_{stack_language}.md", default="")  # reglas del stack
+return base + "\n\n---\n## Convenciones del stack\n" + stack_section
+```
+
+---
+
+### Separación de responsabilidades
+
+**`system_backend.md` (universal) — qué incluye:**
+- Orden de escritura de archivos (S32-B): infraestructura primero, negocio después
+- Máximo 5 tareas por agente (S49-B)
+- Prohibición de placeholders y código incompleto (S40-A)
+- Estructura de directorios (`src/<modulo>/`)
+- Tarea de tests obligatoria por agente
+- Regla de no modificar tests en retry (S33-A)
+- Deduplicación de artefactos
+
+**`stack/backend_python.md` — qué incluye:**
+- Tests en `tests/test_<modulo>.py` con pytest
+- `__init__.py` es el primer archivo a escribir (S32-B Python-specific)
+- `conftest.py` con `sys.path.insert(0, "src")`
+- `round()` para assertions de float (S55-C)
+- Pydantic v2 con `@field_validator` + `@classmethod` (S50-C)
+- `pytest.ini` con `testpaths = tests`
+
+**`stack/backend_typescript.md` — qué incluye:**
+- Tests en `tests/<modulo>.test.ts` con Vitest
+- `vitest.config.ts` con `globals: true, environment: "node"`
+- `toFixed(2)` o `Math.abs(a-b) < 0.01` para float assertions
+- Zod para validación de schemas
+- `tsconfig.json` paths y `"moduleResolution": "bundler"`
+
+**`stack/backend_rust.md` — qué incluye:**
+- Unit tests: `#[cfg(test)] mod tests {}` inline en `src/lib.rs`
+- Integration tests: `tests/` directorio independiente
+- `assert!((result - expected).abs() < 1e-2)` para float assertions
+- `Cargo.toml` con sección `[dev-dependencies]`
+
+---
+
+### Investigación de componentes (2026-04-26)
+
+Investigación exhaustiva realizada antes de implementar. Hallazgos críticos que refinan el plan original:
+
+#### Hallazgo 1 — Templates actuales son 5x más largos que el óptimo
+
+Investigación 2024-2025 establece rango óptimo de 1,000–1,500 tokens para system prompts:
+
+| Template | Líneas | Tokens estimados | Estado |
+|----------|--------|-----------------|--------|
+| `system_backend.md` | 319 | ~8,000 | ❌ 5x sobre límite |
+| `system_frontend_react.md` | 538 | ~13,000 | ❌ 9x sobre límite |
+| `system_backend_python.md` | 222 | ~5,500 | ❌ 4x sobre límite |
+| `system_backend_typescript.md` | 104 | ~2,500 | ⚠️ 2x sobre límite |
+| `system_sdd.md` | 194 | ~4,800 | ❌ 3x sobre límite |
+
+**Causa del impacto:** "Lost in the Middle" afecta al system prompt igual que al contexto. Con prompts de 8K tokens, instrucciones en el medio se atienden menos — explicando por qué el LLM ignora algunas reglas de los templates aunque estén escritas. Reorganizar el orden (crítico al inicio/final) es la corrección segura. Reducir tamaño es una optimización posterior que requiere evidencia empírica.
+
+**Meta de S58-pre:** Separar responsabilidades — reglas universales en base, convenciones de stack en archivos `stack/`. El objetivo es organización y transversalidad, **no reducción de tamaño**. La reducción de tamaño es Fase 2 (post-validación, ver sección "Fase 2" al final de S58-pre).
+
+#### Hallazgo 2 — Patrón de composición correcto: concatenación simple
+
+Tres patrones disponibles en LangChain/LangGraph analizados:
+
+| Patrón | Complejidad | Compatible con OVD | Recomendado |
+|--------|-------------|-------------------|-------------|
+| A — Concatenación de strings | Mínima | ✅ Sí | ✅ **Usar este** |
+| B — ChatPromptTemplate | Media | ⚠️ Requiere `.format()` extra | No |
+| C — PipelinePromptTemplate | Alta | ❌ Innecesariamente complejo | No |
+
+LangGraph no tiene límite en `SystemMessage(content: str)`. El prompt caching de Anthropic funciona con strings concatenados. No hay breaking changes.
+
+**Implementación en `template_loader.py`** — nueva función `render_composed()`:
+
+```python
+def render_composed(
+    name: str,
+    language: str = "es",
+    stack_language: str = "",
+    **variables,
+) -> str:
+    """S58-pre: carga base universal + sección de stack y compone en string único."""
+    # 1. Base universal (reglas OVD que aplican a cualquier stack)
+    base = render(name, language=language, **variables)
+
+    # 2. Sección de stack (convenciones OVD específicas del lenguaje)
+    stack_key = f"stack/{name.replace('system_', '')}_{stack_language}"
+    stack_section = ""
+    stack_path = _TEMPLATES_DIR / f"{stack_key}.md"
+    if stack_language and stack_path.exists():
+        raw = stack_path.read_text(encoding="utf-8")
+        stack_section = _interpolate(raw, **variables)
+
+    if stack_section:
+        return f"{base}\n\n---\n## Convenciones del stack ({stack_language})\n{stack_section}"
+    return base
+```
+
+#### Hallazgo 3 — Cache no es thread-safe
+
+El `_cache: dict[str, str]` en `template_loader.py` no tiene locks. Con múltiples ciclos concurrentes (requests simultáneos al engine), hay riesgo de race condition en la primera carga. Solución: `threading.Lock` en la función `load()`.
+
+```python
+_cache_lock = threading.Lock()
+
+def load(name, language="es", stack_language="") -> str:
+    key = f"{language}:{stack_language}:{name}"
+    with _cache_lock:
+        if key in _cache:
+            return _cache[key]
+        # ... carga y guarda en cache
+```
+
+#### Hallazgo 4 — Duplicación confirmada entre templates
+
+`system_backend.md` (319 líneas) y `system_backend_python.md` (222 líneas) comparten las primeras ~100 líneas idénticas (seguridad obligatoria, reglas de implementación, multi-tenancy). Las divergencias reales comienzan en línea ~80. `system_frontend_react.md` (538 líneas) es el más candidato a reducción.
+
+#### Hallazgo 5 — Tests actuales no validan contenido
+
+`test_s42.py` verifica que los templates se cargan y cachean correctamente, pero **no hay tests que validen el contenido de los .md**. Esto significa que una instrucción crítica puede eliminarse accidentalmente sin que ningún test falle.
+
+---
+
+### Plan de implementación — refinado
+
+| Item | Descripción | Archivos | Estado |
+|------|-------------|---------|--------|
+| TP-1 | **Mover (no eliminar)** todo lo Python-specific de `system_backend.md` a `stack/backend_python.md` — el template base queda con reglas verdaderamente universales | `templates/system_backend.md` | ⬜ |
+| TP-2 | Crear `stack/backend_python.md` (contenido v1 especificado abajo) | `templates/stack/` | ⬜ |
+| TP-3 | Crear `stack/backend_typescript.md` (contenido v1 especificado abajo) | `templates/stack/` | ⬜ |
+| TP-4 | Crear `stack/backend_rust.md` (nuevo stack, contenido v1) | `templates/stack/` | ⬜ |
+| TP-5 | Crear `stack/backend_java.md` y `stack/backend_go.md` (nuevos stacks) | `templates/stack/` | ⬜ |
+| TP-6 | Agregar `render_composed()` a `template_loader.py` + fix thread-safety del cache | `template_loader.py` | ⬜ |
+| TP-7 | Actualizar llamadas en `graph.py` de `render()` a `render_composed()` en los 4 agentes de código | `graph.py` líneas 1179, 1203, 1227, 1251 | ⬜ |
+| TP-8 | Reducir `system_frontend_react.md` (538 líneas) — extraer a `stack/frontend_react.md` | `templates/` | ⬜ |
+| TP-9 | Migrar `system_database_oracle.md` y `system_database_postgresql.md` al esquema `stack/` | `templates/stack/` | ⬜ |
+| TP-10 | Tests de contenido: verificar que instrucciones críticas existen en los archivos correctos | `tests/test_s58pre.py` | ⬜ |
+| TP-11 | Tests de composición: `render_composed()` produce output correcto por stack | `tests/test_s58pre.py` | ⬜ |
+| TP-12 | Tests de regresión: ciclo IMC Python produce mismo resultado antes/después | Ciclo end-to-end | ⬜ |
+
+**Criterio de éxito:**
+- **Cero regresión vs S57**: QA score, tests PASS y duración de ciclo IMC Python equivalentes o mejores al baseline S57
+- 0 instrucciones críticas perdidas en la migración — todas las reglas del template actual están presentes en el template compuesto (`base + stack`), en el nivel correcto (validado por TP-10)
+- `render_composed("system_backend", stack_language="python")` produce el mismo contenido efectivo que `system_backend.md` actual + todo lo específico de Python que estaba en `system_backend_python.md`
+- Ciclos con FR TypeScript y Rust completan sin recibir instrucciones Python irrelevantes (validado por TP-12 multi-stack)
+
+> **Nota:** La reducción de tamaño de tokens NO es criterio de éxito de S58-pre. Es un objetivo separado de Fase 2 (ver abajo), que requiere evidencia empírica antes de ejecutarse.
+
+### Fase 2 — Reducción de tamaño (post-validación, sprint futuro S60+)
+
+**Contexto:** S58-pre reorganiza sin reducir. La reducción de tokens es un objetivo válido — pero requiere evidencia empírica para no destruir instrucciones que funcionan.
+
+#### ¿Se puede automatizar la Fase 2?
+
+**Respuesta corta:** semi-automática y data-driven, con trigger manual.
+
+**Por qué no puede ser 100% automática hoy:**
+- Eliminar una instrucción y medir si el QA baja requiere ciclos A/B controlados: misma FR, dos versiones del template. OVD no tiene esa infraestructura de testing de templates.
+- Riesgo de falso positivo: una instrucción puede no activarse en 5 ciclos de validación y parecer "inútil", pero es crítica para FRs poco frecuentes (validación RUT, Oracle, WebSocket).
+
+**Lo que SÍ se puede automatizar (S60+):**
+- OVD ya registra `prompt_eval_count` por ciclo (S55-A). Un script post-ciclo puede generar un reporte de tokens promedio por template y stack.
+- Bloques de instrucciones marcados con `# CANDIDATE_REMOVE` en el .md pueden ser excluidos en una variante de template para ciclos de prueba.
+- Si N ciclos consecutivos con el bloque removido mantienen QA ≥ baseline S57, el bloque se confirma como candidato real a eliminar.
+
+**Flujo propuesto (S60+):**
+```
+ciclo → log prompt_eval_count
+→ análisis batch (script manual) → identificar bloques candidatos
+→ ciclos A/B disparados manualmente → comparar QA + tests PASS
+→ si sin regresión: eliminar bloque del template
+→ commit + nuevo baseline
+```
+
+El **trigger es manual** (Omar ejecuta el análisis), pero la **evidencia es automática** (datos de `ovd_cycles`). Esto garantiza que cada reducción tiene respaldo empírico y no está basada en intuición sobre qué instrucciones son "necesarias".
+
+**Cuándo ejecutar Fase 2:** después de que S58-pre valide con al menos 3 stacks distintos (Python, TypeScript, Rust) y los ciclos sean estables.
+
+---
+
+### Especificación de contenido — templates de stack (v1)
+
+**Contexto:** El plan TP-2 a TP-7 dice "crear el archivo" pero no especifica qué escribir en él. Este bloque define el contenido base de cada template. Es parte integral de la implementación — no es opcional.
+
+**Principio de los archivos v1:** el contenido está derivado de los fixes ya validados en S27–S57. No son templates teóricos — son las instrucciones que se sabe que el LLM necesita porque su ausencia causó bugs documentados. Evolucionan con cada ciclo de validación.
+
+#### `templates/stack/backend_python.md` — v1
+
+```markdown
+## Convenciones OVD — Python
+
+### ORDEN DE ESCRITURA (obligatorio, S32-B)
+1. `src/<paquete>/__init__.py` ← PRIMERO, aunque esté vacío
+2. `src/<paquete>/models.py`
+3. `src/<paquete>/service.py`
+4. `src/<paquete>/router.py` o `src/main.py`
+5. `tests/test_<paquete>.py` ← ÚLTIMO
+
+### Infraestructura obligatoria (S23-D, S27-A)
+- `src/<paquete>/__init__.py` — vacío, habilita imports entre módulos
+- `conftest.py` en raíz:
+  import sys, os
+  sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+- `pytest.ini`:
+  [pytest]
+  testpaths = tests
+
+### Tests (S51-A, S51-B)
+- Ruta: `tests/test_<paquete>.py`
+- Runner: pytest
+- Mínimo 3 casos: happy path, valor límite, error esperado
+- NUNCA modificar tests en retry — solo corregir implementación (S33-A)
+
+### Validación de datos (S50-C)
+- Pydantic v2 exclusivamente
+- Validators: `@field_validator` + `@classmethod`
+- PROHIBIDO: `@validator` (deprecado), `dict()` → usar `.model_dump()`
+
+### Assertions de float (S55-C, S36-B)
+- NUNCA hardcodear valores float de memoria en asserts
+- SIEMPRE calcular con la misma fórmula de la implementación:
+  # implementación: return round(peso / altura ** 2, 2)
+  # test:           assert calcular_imc(65, 1.72) == round(65 / 1.72 ** 2, 2)
+
+### Frameworks disponibles (usar según {project_context})
+- FastAPI, Django, Flask → APIs REST
+- SQLAlchemy 2.x, Alembic → ORM + migraciones
+- httpx → cliente HTTP async
+- Redis-py → caché y colas
+```
+
+#### `templates/stack/backend_typescript.md` — v1
+
+```markdown
+## Convenciones OVD — TypeScript
+
+### ORDEN DE ESCRITURA (obligatorio)
+1. `tsconfig.json` ← PRIMERO
+2. `package.json` con scripts: dev, build, test
+3. `src/<modulo>/types.ts` — interfaces y tipos
+4. `src/<modulo>/<modulo>.ts` — implementación
+5. `tests/<modulo>.test.ts` ← ÚLTIMO
+
+### Infraestructura obligatoria
+- `tsconfig.json`: { "compilerOptions": { "strict": true, "moduleResolution": "bundler" } }
+- `vitest.config.ts`:
+  import { defineConfig } from "vitest/config";
+  export default defineConfig({ test: { globals: true, environment: "node" } });
+
+### Tests (S58-A)
+- Ruta: `tests/<modulo>.test.ts` o `<modulo>.spec.ts`
+- Runner: Vitest
+- Mínimo 3 casos por función
+
+### Validación de datos
+- Zod para schemas de entrada en endpoints
+- Tipos explícitos en todas las funciones — sin `any`
+
+### Assertions de float (S58-B)
+- expect(Number(calcularImc(65, 1.72).toFixed(2))).toBe(21.97)
+- O validar por diferencia: expect(Math.abs(result - 21.97)).toBeLessThan(0.01)
+
+### Frameworks disponibles (usar según {project_context})
+- Express, Hono, NestJS → APIs REST
+- Prisma, Drizzle, TypeORM → ORM
+- Zod → validación de schemas
+- tRPC → APIs type-safe
+```
+
+#### `templates/stack/backend_rust.md` — v1
+
+```markdown
+## Convenciones OVD — Rust
+
+### ORDEN DE ESCRITURA (obligatorio)
+1. `Cargo.toml` ← PRIMERO con [dependencies] y [dev-dependencies]
+2. `src/lib.rs` — punto de entrada y módulos públicos
+3. `src/<modulo>.rs` — implementación por módulo
+4. Tests inline al final de cada módulo (S58-A)
+
+### Infraestructura obligatoria
+- `Cargo.toml` con sección [dev-dependencies] para dependencias de test
+- No se requiere archivo de configuración externo — cargo test funciona nativamente
+
+### Tests (S58-A)
+- Unit tests: inline en cada módulo src/
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+      #[test]
+      fn test_caso() { assert_eq!(funcion(x), esperado); }
+  }
+- Integration tests: archivos en `tests/` sin #[cfg(test)]
+- Runner: cargo test opera sobre el proyecto completo — no archivos individuales
+
+### Assertions de float (S58-B)
+- NUNCA comparar floats con ==
+- assert!((calcular_imc(65.0, 1.72) - 21.97_f64).abs() < 1e-2)
+
+### Frameworks disponibles (usar según {project_context})
+- Actix-web, Axum, Rocket → APIs REST
+- SQLx, Diesel → acceso a BD async/sync
+- Serde → serialización JSON
+- Tokio → runtime async
+```
+
+#### `templates/stack/backend_java.md` — v1
+
+```markdown
+## Convenciones OVD — Java
+
+### ORDEN DE ESCRITURA (obligatorio)
+1. `pom.xml` o `build.gradle` ← PRIMERO
+2. `src/main/java/<paquete>/model/` — entidades y DTOs
+3. `src/main/java/<paquete>/service/` — lógica de negocio
+4. `src/main/java/<paquete>/controller/` — endpoints REST
+5. `src/test/java/<paquete>/` — tests ← ÚLTIMO
+
+### Infraestructura obligatoria
+- Estructura Maven estándar: src/main/java/ y src/test/java/
+- pom.xml con JUnit 5: groupId org.junit.jupiter, artifactId junit-jupiter, scope test
+
+### Tests
+- Ruta: `src/test/java/<paquete>/<Modulo>Test.java`
+- Runner: JUnit 5 — usar @Test, @BeforeEach, @ParameterizedTest
+- Mínimo 3 casos por método
+
+### Assertions de float
+- assertEquals(21.97, calcularImc(65.0, 1.72), 0.01);
+- El tercer parámetro es el delta permitido
+
+### Frameworks disponibles (usar según {project_context})
+- Spring Boot → APIs REST + inyección de dependencias
+- Hibernate / JPA → ORM
+- Flyway → migraciones de BD
+- Lombok → @Data, @Builder, @Slf4j
+- MapStruct → mapeo DTO ↔ entidad
+```
+
+#### `templates/stack/backend_go.md` — v1
+
+```markdown
+## Convenciones OVD — Go
+
+### ORDEN DE ESCRITURA (obligatorio)
+1. `go.mod` ← PRIMERO con nombre de módulo y versión Go
+2. `internal/<modulo>/<modulo>.go` — implementación
+3. `internal/<modulo>/<modulo>_test.go` — tests en mismo paquete
+4. `cmd/main.go` — entrypoint
+
+### Infraestructura obligatoria
+- `go.mod`: module github.com/<org>/<repo>
+- Tests en mismo directorio que el código con sufijo _test.go
+- No se requiere configuración adicional — go test funciona nativamente
+
+### Tests
+- Archivo: `<modulo>_test.go` en mismo directorio que el código
+- Función: func Test<Nombre>(t *testing.T)
+- Runner: go test ./... cubre todo el proyecto
+- Mínimo 3 casos por función
+
+### Assertions de float
+- if math.Abs(resultado - 21.97) > 0.01 { t.Errorf(...) }
+
+### Frameworks disponibles (usar según {project_context})
+- Gin, Echo, Fiber → APIs REST
+- GORM, sqlx → ORM y acceso a BD
+- pgx → PostgreSQL nativo async
+```
+
+#### `templates/stack/frontend_react.md` — v1
+
+```markdown
+## Convenciones OVD — React / TypeScript
+
+### ORDEN DE ESCRITURA (obligatorio)
+1. `vitest.config.ts` ← PRIMERO
+2. `src/setupTests.ts` con imports de Testing Library
+3. `src/components/<Componente>/<Componente>.tsx`
+4. `src/components/<Componente>/<Componente>.test.tsx` ← ÚLTIMO
+
+### Infraestructura obligatoria
+- vitest.config.ts:
+  import { defineConfig } from "vitest/config";
+  export default defineConfig({ test: { globals: true, environment: "jsdom",
+    setupFiles: ["./src/setupTests.ts"] } });
+- src/setupTests.ts:
+  import "@testing-library/jest-dom";
+
+### Tests (S40-C)
+- Ruta: `src/components/<Componente>/<Componente>.test.tsx`
+- Runner: Vitest + Testing Library
+- Mínimo: render sin crash + interacción principal + estado de error
+  import { render, screen } from "@testing-library/react";
+  it("renders", () => { render(<Componente />); expect(screen.getByRole(...)).toBeInTheDocument(); });
+
+### Convenciones de código
+- React 19 — sin class components
+- Hooks propios en `src/hooks/use<Nombre>.ts`
+- Props tipadas con interface — sin `any`
+
+### Frameworks disponibles (usar según {project_context})
+- React Query / SWR → fetching de datos
+- Zustand / Jotai → estado global
+- React Hook Form + Zod → formularios con validación
+- Tailwind CSS → estilos
+- React Router v6 → routing client-side
+```
+
+---
+
+### Evolución de los templates v1
+
+Cada archivo es un documento vivo. El patrón de evolución es el mismo que S27–S57:
+
+| Disparador | Acción |
+|-----------|--------|
+| Ciclo de validación revela gap | Agregar instrucción al template del stack afectado |
+| Fix nuevo en graph.py requiere instrucción al LLM | Evaluar si va en template universal o en stack section |
+| Nuevo stack agregado al proyecto | Crear `stack/backend_<lenguaje>.md` con estructura base |
+| Instrucción que aplica a todos los stacks | Mover de stack section a `system_backend.md` |
+
+**No esperar al template perfecto.** v1 entra en producción, los ciclos revelan los gaps, v2 los corrige.
+
+---
+
+### Beneficio para S58
+
+Con esta arquitectura, los items S58-A a S58-F se simplifican:
+- S58-A (instrucción test path): ya estará en `stack/backend_{stack}.md` — no necesita lógica condicional en `graph.py`
+- S58-B (float hint): ya estará en `stack/backend_{stack}.md`
+- S58-F (system_sdd.md): puede usar la misma composición para la sección de tests
+
+Los items S58-C, S58-D, S58-E (lógica en `run_tests`) siguen siendo cambios en `graph.py` — no los afecta este refactoring.
+
+---
+
+### ADR-01 — Templates en filesystem vs PostgreSQL (decisión 2026-04-26)
+
+**Pregunta:** ¿Deberían los archivos `.md` de templates almacenarse en PostgreSQL en vez del repositorio?
+
+**Decisión: mantener templates base en el repositorio. Overrides por proyecto en PostgreSQL.**
+
+#### Argumentos que definen la decisión
+
+Los templates definen el **comportamiento del LLM** en cada nodo del grafo. Cambiar una línea en `system_backend.md` cambia cómo el agente escribe código en todos los proyectos. Eso los hace funcionalmente equivalentes a código fuente — no a datos de usuario.
+
+| Criterio | Filesystem (repo) | PostgreSQL |
+|----------|-------------------|-----------|
+| Historial de cambios | Git nativo — cada fix tiene commit, mensaje y contexto (S32, S40, S50...) | Requiere implementar auditoría paralela |
+| Validación antes de producción | CI/CD automático — tests de contenido corren en cada PR | Manual o sin validación — prompt malo llega a producción directo |
+| Tests de contenido | Directos — leen el `.md` desde disco | Requieren seed de BD o mocks — tests más frágiles |
+| Latencia de carga | Cero — cache en RAM después del primer load | Query inicial por instancia del engine |
+| Dev local sin BD | Funciona sin PostgreSQL | Engine no puede arrancar sin conexión |
+| Fallback inline (`_FALLBACK_PROMPTS`) | Una sola fuente de verdad | Tres fuentes en conflicto: BD + disco + inline |
+
+**Lo que PostgreSQL NO resuelve bien para templates base:**
+- *Hot reload sin reiniciar* — los templates base cambian cada días/semanas (no en runtime). El costo de reiniciar el engine es mínimo vs el riesgo de edición sin validación.
+- *Edición desde dashboard* — un prompt de producción editable desde UI sin tests es equivalente a editar código Python directamente en producción.
+- *Multi-organización* — ese es el problema de overrides por proyecto, no de templates base.
+
+#### Arquitectura híbrida resultante
+
+```
+FILESYSTEM (git-versioned)              POSTGRESQL
+────────────────────────────────        ─────────────────────────────────
+Templates base — comportamiento         Overrides por proyecto — configuración
+del sistema OVD para todos:            de usuario, sin afectar el sistema base:
+
+  templates/system_backend.md            ovd_project_custom_templates
+  templates/stack/backend_python.md        (project_id, template_name,
+  templates/stack/backend_typescript.md    content, version, active)
+  ...
+                                        A/B experiments (futuro):
+Código → git → CI/CD → review           ovd_template_experiments
+```
+
+El override por proyecto es la capa faltante — actúa **sobre** la base en disco, no la reemplaza. La función `template_loader.render()` quedaría:
+
+```python
+def render(name, language, stack_language, **vars):
+    # 1. Base universal (disco)
+    base = load(f"system_{name}.md")
+    # 2. Sección de stack (disco)
+    stack_section = load(f"stack/{name}_{stack_language}.md", default="")
+    # 3. Override por proyecto (PostgreSQL) — futuro S60/C10
+    project_override = db_load(project_id, name, default="")
+    return compose(base, stack_section, project_override, **vars)
+```
+
+**Pendiente de implementar (S60 o C10):** tabla `ovd_project_custom_templates` + endpoint API + UI en dashboard para editar overrides por proyecto.
+
+---
+
+### ADR-02 — Cómo fluyen frameworks y librerías al LLM (diseño 2026-04-26)
+
+**Pregunta:** ¿Cómo sabe el LLM qué frameworks y librerías usar en cada proyecto? ¿Necesita templates por framework?
+
+#### Principio base
+
+El LLM (qwen3-coder:30b) ya conoce FastAPI, SQLAlchemy, Prisma, Hibernate, Actix-web y el resto — están en su entrenamiento. **No necesita que el template le enseñe el framework.** Solo necesita dos cosas:
+
+1. **Cuál usar** → viene del perfil del proyecto (`{project_context}`)
+2. **Cómo estructurarlo en OVD** → viene del template de stack
+
+#### Los tres niveles que se combinan en cada llamada al LLM
+
+```
+NIVEL 1 — Template universal (system_backend.md)
+  Reglas OVD independientes de lenguaje y framework
+  Ej: "escribe infraestructura primero", "máx 5 tareas", "sin placeholders"
+
+NIVEL 2 — Sección de lenguaje (stack/backend_python.md)
+  Convenciones OVD para el lenguaje, agnóstico al framework concreto
+  Ej: "pytest en tests/test_*.py", "Pydantic v2", "round() en asserts"
+
+NIVEL 3 — {project_context} con framework y librerías específicas
+  Qué usa ESTE proyecto — viene de ovd_project_profiles
+  Ej: "Framework: FastAPI / Stack: SQLAlchemy, Redis, Alembic"
+```
+
+El LLM combina los tres: genera código FastAPI + SQLAlchemy con estructura OVD Python.
+
+#### Cuándo SÍ se necesita un template por framework
+
+Solo cuando el framework impone patrones OVD tan diferentes que el `{project_context}` no es suficiente. Criterio: si dos proyectos del mismo lenguaje tienen convenciones OVD completamente distintas entre sí.
+
+Ejemplos que SÍ justificarían un cuarto nivel (`stack/backend_python_fastapi.md`):
+- FastAPI async vs Django sync — estructuras de proyecto radicalmente distintas
+- SQLAlchemy Core vs ORM — patrones de query incompatibles
+
+Ejemplos que NO lo justifican (el `{project_context}` es suficiente):
+- FastAPI vs Flask — el LLM adapta el estilo solo con saber el framework
+- SQLAlchemy vs Peewee — diferencia de librería, no de patrón OVD
+
+**Regla práctica:** empezar con dos niveles (universal + lenguaje). Agregar el cuarto nivel solo cuando un ciclo real falle por ambigüedad de framework — no de forma preventiva.
+
+#### Campos del perfil que alimentan el nivel 3
+
+| Campo | Impacto en el LLM | Estado actual |
+|-------|------------------|---------------|
+| `framework` | El LLM elige el framework correcto | ✅ En formulario — texto libre |
+| `additional_stack` | El LLM incluye las librerías en requirements/package.json | ⚠️ En BD, oculto en formulario |
+| `test_framework` | El LLM usa el runner correcto desde el primer ciclo | ❌ No existe — propuesto en S58 |
+| `qa_tools` | El LLM incluye ruff/eslint/mypy en la configuración | ⚠️ En BD, oculto en formulario |
+| `external_integrations` | El LLM no inventa sistemas de auth o APIs ya existentes | ⚠️ En BD, oculto en formulario |
+
+#### Ejemplo de flujo completo
+
+```
+Proyecto: "API contratos" / Python / FastAPI / PostgreSQL
+
+Nivel 1 (universal):  "escribe __init__.py primero, máx 5 tareas"
+Nivel 2 (python):     "tests con pytest, Pydantic v2, round() en asserts"
+Nivel 3 (proyecto):   "FastAPI, SQLAlchemy, Redis, Alembic, PostgreSQL 16"
++ rag_context:        "ciclo anterior: endpoint /contratos usa JWT Bearer"
+        ↓
+LLM genera sin instrucciones adicionales:
+  src/contratos/models.py     ← SQLAlchemy models (sabe usarlo)
+  src/contratos/service.py    ← lógica de negocio
+  src/contratos/router.py     ← FastAPI router con JWT (lo infiere del contexto)
+  src/contratos/cache.py      ← Redis integration
+  tests/test_contratos.py     ← pytest con patrones OVD
+```
+
+---
+
+### Contenido de los templates de stack — especificación de implementación
+
+**Aclaración crítica sobre el plan TP-1 a TP-8:** los items TP-2, TP-3 y TP-4 dicen "crear `stack/backend_python.md`" pero no especifican el contenido. Este análisis define qué debe ir en cada archivo. Es parte integral de la implementación de S58-pre — no es opcional.
+
+#### `stack/backend_python.md` — contenido requerido
+
+```markdown
+## Convenciones OVD — Python
+
+### Infraestructura (escribir PRIMERO antes que cualquier módulo)
+- `src/<paquete>/__init__.py` — archivo vacío, habilita imports
+- `conftest.py` en raíz con `sys.path.insert(0, "src")`
+- `pytest.ini` con `testpaths = tests`
+
+### Tests
+- Archivo: `tests/test_<modulo>.py`
+- Runner: pytest
+- Mínimo 3 casos por función: happy path, valor límite, error esperado
+
+### Validación de datos
+- Usar Pydantic v2 exclusivamente
+- Validators: `@field_validator` + `@classmethod` (NO `@validator` — deprecado)
+- Nunca usar `dict()` — usar `.model_dump()`
+
+### Assertions de float en tests
+- NUNCA hardcodear valores float de memoria
+- SIEMPRE calcular con round(): `round(65 / 1.72**2, 2)` → 21.97
+- El assert usa el mismo resultado: `assert resultado == 21.97`
+
+### Frameworks disponibles (usar según {project_context})
+- FastAPI + Pydantic v2 — APIs REST async
+- SQLAlchemy 2.x — ORM (preferir async cuando el proyecto lo requiera)
+- Alembic — migraciones de BD
+- httpx — cliente HTTP async
+- Redis-py — cache y colas
+```
+
+#### `stack/backend_typescript.md` — contenido requerido
+
+```markdown
+## Convenciones OVD — TypeScript
+
+### Infraestructura (escribir PRIMERO)
+- `tsconfig.json` con `"strict": true, "moduleResolution": "bundler"`
+- `package.json` con scripts: `dev`, `build`, `test`
+- `vitest.config.ts` con `globals: true, environment: "node"`
+
+### Tests
+- Archivo: `tests/<modulo>.test.ts` o `<modulo>.spec.ts`
+- Runner: Vitest
+- Mínimo 3 casos por función
+
+### Validación de datos
+- Usar Zod para schemas de entrada en endpoints
+- Tipos explícitos en todas las funciones — sin `any`
+
+### Assertions de float en tests
+- Usar `expect(Number(value.toFixed(2))).toBe(21.97)`
+- O validar con `Math.abs(result - expected) < 0.01`
+
+### Frameworks disponibles (usar según {project_context})
+- Express / Hono / NestJS — APIs REST
+- Prisma / Drizzle / TypeORM — ORM
+- Zod — validación de schemas
+- tRPC — APIs type-safe (si el proyecto lo indica)
+```
+
+#### `stack/backend_rust.md` — contenido requerido
+
+```markdown
+## Convenciones OVD — Rust
+
+### Infraestructura (escribir PRIMERO)
+- `Cargo.toml` con secciones `[dependencies]` y `[dev-dependencies]`
+- `src/lib.rs` como punto de entrada de la librería
+
+### Tests
+- Unit tests: `#[cfg(test)] mod tests {}` inline en cada módulo `src/`
+- Integration tests: archivos independientes en `tests/` (sin #[cfg(test)])
+- Runner: cargo test — opera sobre el proyecto completo, no archivos individuales
+
+### Assertions de float en tests
+- Usar `assert!((result - expected).abs() < 1e-2)`
+- Nunca comparar floats con `==`
+
+### Frameworks disponibles (usar según {project_context})
+- Actix-web / Axum / Rocket — APIs REST
+- SQLx / Diesel — acceso a BD
+- Serde — serialización JSON
+- Tokio — runtime async
+```
+
+#### `stack/backend_java.md` — contenido requerido
+
+```markdown
+## Convenciones OVD — Java
+
+### Infraestructura (escribir PRIMERO)
+- `pom.xml` (Maven) o `build.gradle` (Gradle) según {project_context}
+- Estructura: `src/main/java/` para código, `src/test/java/` para tests
+
+### Tests
+- Archivo: `src/test/java/<paquete>/Test<Modulo>.java`
+- Runner: JUnit 5 con `@Test`, `@BeforeEach`, `@ParameterizedTest`
+- Mínimo 3 casos por método
+
+### Frameworks disponibles (usar según {project_context})
+- Spring Boot — APIs REST + inyección de dependencias
+- Hibernate / JPA — ORM
+- Flyway / Liquibase — migraciones
+- MapStruct — mapeo de DTOs
+- Lombok — reducción de boilerplate
+```
+
+#### `stack/frontend_react.md` — contenido requerido
+
+```markdown
+## Convenciones OVD — React / TypeScript
+
+### Infraestructura (escribir PRIMERO)
+- `vitest.config.ts` con `globals: true, environment: "jsdom"`
+- `src/setupTests.ts` con `import "@testing-library/jest-dom"`
+
+### Tests
+- Archivo: `src/components/<Componente>.test.tsx`
+- Runner: Vitest + Testing Library
+- Mínimo: render sin crash + interacción principal + estado de error
+
+### Librerías disponibles (usar según {project_context})
+- React 19 + hooks — sin class components
+- React Query / SWR — fetching de datos
+- Zustand / Jotai — estado global (preferir sobre Redux para proyectos nuevos)
+- React Hook Form + Zod — formularios con validación
+- Tailwind CSS — estilos (si el proyecto lo indica)
+```
+
+---
+
+### ADR-03 — Arquitectura de conocimiento del LLM (diseño 2026-04-26)
+
+**Pregunta:** Cuando el LLM no tiene el conocimiento necesario para un FR — porque la tecnología es nueva, niche o interna — ¿cómo lo obtiene? ¿MCP servers o web_research?
+
+**Respuesta:** No son alternativas — son capas complementarias. Cada una resuelve un tipo distinto de brecha.
+
+---
+
+#### Las 5 capas de conocimiento
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CAPA 1 — Entrenamiento del LLM          sin red, siempre       │
+│  CAPA 2 — Templates .md                  sin red, estático      │
+│  CAPA 3 — RAG / {rag_context}            pgvector, por ciclo    │
+│  CAPA 4 — web_research_node              red, runtime           │
+│  CAPA 5 — MCP servers                    red, runtime           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Capa 1 — Entrenamiento del LLM
+
+Lo que el modelo sabe por su entrenamiento (cutoff agosto 2025 para qwen3-coder:30b):
+
+| Cobertura | Ejemplos |
+|-----------|---------|
+| ✅ Disponible | FastAPI, SQLAlchemy 2.x, Pydantic v2, React 19, Prisma, Axum, pytest, Vitest, JUnit 5, Docker, PostgreSQL, Redis |
+| ✅ Disponible | Patrones de código, algoritmos, estructuras de datos en 119 lenguajes |
+| ❌ No disponible | Librerías lanzadas después del cutoff |
+| ❌ No disponible | Versiones con breaking changes posteriores al cutoff |
+| ❌ No disponible | Frameworks internos o propietarios de cada cliente |
+
+> **Nota — pendiente resolver (futuro cercano):** definir proceso para actualizar el cutoff de conocimiento cuando se cambie de modelo LLM. Cada modelo tiene su propia fecha de corte — documentar en el perfil del modelo en `.env` para que los agentes sepan qué pueden asumir sin verificar.
+
+---
+
+#### Capa 2 — Templates .md
+
+Lo que el LLM sabe pero aplica incorrectamente sin instrucción explícita — las convenciones OVD:
+
+| Cobertura | Ejemplos |
+|-----------|---------|
+| ✅ Resuelve | Pydantic v2 en vez de v1 — el LLM conoce ambas, el template le dice cuál usar (S50-C) |
+| ✅ Resuelve | `round()` para float assertions — el LLM no lo haría solo sin instrucción (S55-C) |
+| ✅ Resuelve | Orden de escritura de archivos — convención OVD, no estándar del lenguaje (S32-B) |
+| ❌ No resuelve | Conocimiento que el LLM no tiene — el template no puede inventar lo que no existe en entrenamiento |
+| ❌ No resuelve | Tecnologías post-cutoff — el template puede mencionar el nombre pero no los patrones correctos |
+
+> **Nota — pendiente resolver (S58-pre):** completar los templates v1 de stack con el contenido especificado en este roadmap. Hasta que TP-2 a TP-7 estén implementados, la capa 2 cubre solo Python.
+
+---
+
+#### Capa 3 — RAG / {rag_context} / {lessons_context}
+
+Conocimiento acumulado de ciclos anteriores del mismo proyecto, indexado en pgvector:
+
+| Cobertura | Ejemplos |
+|-----------|---------|
+| ✅ Resuelve | "En ciclo anterior el endpoint /contratos falló con JWT mal configurado" |
+| ✅ Resuelve | "El proyecto usa oracle-thick mode — documentado en 3 ciclos anteriores" |
+| ✅ Resuelve | Documentación interna indexada manualmente en pgvector |
+| ❌ No resuelve | Tecnologías nuevas que nunca han aparecido en un ciclo OVD anterior |
+| ❌ No resuelve | Documentación del cliente no indexada aún |
+
+> **Nota — pendiente resolver (futuro cercano):** hoy la indexación de documentación interna del cliente es manual. Diseñar un mecanismo de indexado batch desde rutas configuradas por proyecto (ej: directorio de docs, URL de Confluence, repositorio de specs). Candidato para S60 o C10.
+
+---
+
+#### Capa 4 — web_research_node
+
+Conocimiento dinámico obtenido en runtime durante el ciclo — documentación actual, changelogs, APIs recientes:
+
+| Cobertura | Ejemplos |
+|-----------|---------|
+| ✅ Resuelve | Librería reciente posterior al cutoff del LLM |
+| ✅ Resuelve | Breaking changes en versión nueva de un framework conocido |
+| ✅ Resuelve | Verificar API actual de una librería que puede haber cambiado |
+| ❌ No resuelve | Documentación interna no publicada en internet |
+| ❌ No resuelve | APIs privadas del cliente |
+
+**Estado actual (documentado en S48):**
+
+| Problema | Impacto |
+|----------|---------|
+| Activo en <10% de los ciclos | El analizador de FR no detecta cuándo activarlo |
+| Un solo proveedor sin fallback | Si falla, el nodo falla silenciosamente |
+| Cache definido pero nunca consultado | Cada ciclo refetch aunque ya investigó lo mismo |
+| RAG indexing depende del Bridge | Los findings se pierden si el Bridge está caído |
+
+> **Nota — pendiente resolver (S48):** implementar multi-proveedor con failover (Tavily → Brave → SearXNG → DuckDuckGo), cache real con TTL, criterio explícito de activación basado en detección de tecnologías desconocidas en el FR, e indexado robusto independiente del Bridge.
+
+---
+
+#### Capa 5 — MCP servers
+
+Fuentes de conocimiento especializadas o privadas, accesibles en runtime:
+
+| Servidor | Cobertura | Estado |
+|----------|-----------|--------|
+| **context7** | Documentación live de librerías open source — verifica API actual antes de generar código | ✅ Activo desde S38 |
+| **Oracle MCP** | Esquemas, tablas y datos de BD Oracle del cliente | ✅ Activo |
+| **MCP custom cliente** | APIs internas, Confluence, Notion, Swagger privado | ❌ Requiere S44 |
+| **MCP BD interna** | Documentación técnica del cliente no publicada | ❌ Requiere S44 |
+
+| Cobertura | Ejemplos |
+|-----------|---------|
+| ✅ Resuelve | Verificar API exacta de una librería en su versión actual (context7) |
+| ✅ Resuelve | Acceder a esquemas Oracle del proyecto del cliente (Oracle MCP) |
+| ❌ No resuelve (aún) | Documentación interna de la empresa del cliente |
+| ❌ No resuelve (aún) | APIs propietarias no expuestas públicamente |
+
+> **Nota — pendiente resolver (S44):** implementar MCP Server Manager — administración dinámica de servidores MCP desde el dashboard. Permitir que cada proyecto configure sus propias fuentes de conocimiento (Confluence, Notion, Swagger interno, repositorio de specs). Sin S44, la capa 5 solo cubre fuentes globales (context7, Oracle).
+
+---
+
+#### Flujo de decisión — cuándo activa cada capa
+
+```
+FR recibido: "Implementar auth con Lucia v3 (TypeScript)"
+      ↓
+Capa 1: ¿Lo sabe el LLM?
+  → Lucia v3 es reciente — conocimiento parcial
+      ↓
+Capa 2: ¿Hay convención OVD en el template?
+  → No está en stack/backend_typescript.md aún
+      ↓
+Capa 3: ¿Hay RAG de ciclos anteriores con Lucia?
+  → No — primer ciclo con esta librería
+      ↓
+Capa 4: web_research activa búsqueda
+  → "Lucia v3 TypeScript auth 2025" → docs actuales → {rag_context}
+      ↓
+Capa 5: context7 MCP verifica API durante ejecución del agente
+  → Confirma sintaxis exacta de la versión instalada
+      ↓
+LLM genera código correcto con docs actuales
+      ↓
+Informe de entrega indexado en pgvector
+  → Próximo ciclo con Lucia ya tiene Capa 3 disponible
+```
+
+---
+
+#### Tabla de activación por situación
+
+| Situación | Capa principal | Sprint que lo habilita |
+|-----------|---------------|----------------------|
+| Framework popular en entrenamiento | Capa 1 + Capa 2 | S58-pre |
+| Convención OVD específica del stack | Capa 2 | S58-pre |
+| Misma tecnología en ciclos anteriores | Capa 3 RAG | Activo desde S37 |
+| Librería conocida, verificar API actual | Capa 5 context7 | Activo desde S38 |
+| Librería reciente o post-cutoff | Capa 4 web_research | **S48 — pendiente** |
+| API interna / framework propietario | Capa 5 MCP custom | **S44 — pendiente** |
+| Docs del cliente no indexadas | Capa 3 batch indexing | **S60/C10 — pendiente** |
+| Docs proyecto cliente en Confluence/Notion | Capa 5 MCP custom | **S44 — pendiente** |
+
+---
+
+#### Relación con S58-pre
+
+S58-pre fortalece la **Capa 2** — la más eficiente porque no requiere red ni latencia. Una Capa 2 robusta reduce la necesidad de activar Capas 4 y 5, pero no las elimina. Las brechas que los templates no pueden cubrir por diseño (tecnologías post-cutoff, APIs privadas) requieren Capas 4 y 5 operativas.
+
+**Orden de implementación recomendado:**
+```
+S58-pre  → Capa 2 robusta (templates v1 por stack)
+S48      → Capa 4 confiable (web_research multi-proveedor)
+S44      → Capa 5 extensible (MCP Server Manager)
+S60/C10  → Capa 3 automatizada (batch indexing docs del cliente)
+```
+
+---
+
 ## S58 — Stack Transversality (pendiente)
 
-**Motivación:** Auditoría 2026-04-26 reveló que el 40% de los fixes implementados en S40–S56 tienen sesgo Python/pytest. Se validaron siempre con el mismo FR de IMC en Python — nunca se probó TypeScript ni Rust. Los bugs de sesgo son silenciosos hasta que se usa otro stack.
+**Última iteración:** 2026-04-26 — investigación profunda completada, plan refinado con hallazgos de codebase + LangGraph docs + benchmarks qwen3-coder.
 
-**Hallazgos de auditoría:**
+**Motivación:** Auditoría 2026-04-26 reveló que el 40% de los fixes implementados en S40–S57 tienen sesgo Python/pytest. Se validaron siempre con el mismo FR de IMC en Python — nunca se probó TypeScript ni Rust. Los bugs de sesgo son silenciosos hasta que se usa otro stack.
 
-| Tag | Problema | Riesgo en otros stacks |
-|-----|---------|----------------------|
-| **S51-A** | Instrucción hardcodea `tests/test_<paquete>.py` | Si tarea es Vitest, LLM recibe instrucción Python incorrecta |
-| **S55-C** | Instrucción `round()` — sintaxis Python pura | TypeScript: `toFixed(2)`, Rust: `.round()` |
-| **S27-A** | `conftest.py` injection | Solo existe en pytest — no aplica a Vitest ni Cargo |
-| **S31-C** | Filtra por `test_*.py` hardcoded | Vitest usa `*.test.ts`, Rust usa `*.rs` |
-| **S32-C** | Diagnóstico basado en exit codes pytest | Vitest y Cargo tienen códigos distintos |
+**Argumento clave:** El problema no es el modelo. `qwen3-coder:30b` soporta 119 lenguajes oficialmente (SWE-Bench 69.6%), conoce pytest/Vitest/Jest/cargo test, y tiene un context window de 256K tokens. El problema es que OVD le envía instrucciones con `"```python:tests/test_*.py"` cuando el proyecto es TypeScript. Con la instrucción correcta, el modelo genera el código correcto.
 
-**Plan de S58:**
+---
 
-| Item | Descripción | Archivo(s) | Estado |
-|------|-------------|-----------|--------|
-| S58-A | S51-A condicional por `stack_language`: Python→pytest hint, TypeScript→Vitest hint, Rust→cargo test hint | `graph.py` | ⬜ |
-| S58-B | S55-C condicional por stack: Python→`round()`, TypeScript→`toFixed(2)`, Rust→`.round()` | `graph.py` | ⬜ |
-| S58-C | S27-A condicional: solo inyectar `conftest.py` si runner=pytest; para Vitest inyectar `vitest.config.ts` si falta | `graph.py` | ⬜ |
-| S58-D | S31-C patrón por runner: `test_*.py` para pytest, `*.test.ts` para Vitest, `*.rs` para Cargo | `graph.py` | ⬜ |
-| S58-E | S32-C tabla de exit codes por runner — pytest/Vitest/Cargo | `graph.py` | ⬜ |
-| S58-F | Ciclo de validación TypeScript: FR con React + Vitest | Ciclo end-to-end | ⬜ |
-| S58-G | Ciclo de validación Rust: FR con función + `#[cfg(test)]` | Ciclo end-to-end | ⬜ |
+### Arquitectura del sistema de templates (investigado 2026-04-26)
+
+El sistema tiene 3 capas. Entender esto es prerequisito para diseñar S58 correctamente.
+
+#### Capa 1 — Perfil del proyecto (`ovd_project_profiles`)
+
+Campos configurables por proyecto que se inyectan en `{project_context}` de todos los templates:
+
+| Campo | Uso | Ejemplo |
+|-------|-----|---------|
+| `language` | Lenguaje principal | `python`, `typescript` |
+| `framework` | Framework | `FastAPI`, `React`, `Hono` |
+| `db_engine` + `db_version` | Genera restricciones SQL automáticas via `ContextResolver` | `oracle 19c` → inyecta `FETCH FIRST`, `thick mode`, etc. |
+| `constraints` | Texto libre — reglas del proyecto | `"Usar RUT chileno limpio sin puntos ni guión"` |
+| `code_style` | Guía de estilo | `"snake_case, type hints obligatorios"` |
+| `project_description` | Descripción narrativa | `"Sistema HHMM de honorarios médicos"` |
+| `additional_stack` | Librerías extra | `["Redis", "Celery"]` |
+| `legacy_stack` | Sistemas legacy | `"Oracle EBS 12.1"` |
+
+`ContextResolver.to_prompt_block()` transforma estos campos en un bloque markdown que recibe el LLM en cada llamada.
+
+#### Capa 2 — Stack del proyecto (`ovd_stack_profiles`)
+
+El campo `language` determina qué archivo `.md` carga `template_loader.render()`:
+
+```
+stack_language="python"      → system_backend_python.md  → fallback: system_backend.md
+stack_language="typescript"  → system_backend_typescript.md → fallback: system_backend.md
+stack_language="oracle"      → system_database_oracle.md → fallback: system_database.md
+```
+
+Templates stack-specific disponibles hoy (creados en S42-E):
+
+| Archivo | Stack |
+|---------|-------|
+| `system_backend_python.md` | Python + FastAPI |
+| `system_backend_typescript.md` | TypeScript + Hono |
+| `system_frontend_react.md` | React |
+| `system_database_oracle.md` | Oracle |
+| `system_database_postgresql.md` | PostgreSQL |
+
+#### Capa 3 — Templates en disco (`src/engine/templates/*.md`)
+
+Son globales — todos los proyectos los comparten. Las 5 variables interpolables:
+
+| Variable | Contenido | Quién la rellena |
+|----------|-----------|-----------------|
+| `{project_context}` | Perfil completo (capas 1+2) | `api.py` desde BD |
+| `{rag_context}` | Contexto semántico (pgvector) | `graph.py` antes de cada nodo |
+| `{retry_feedback}` | Feedback acumulado de retries | `graph.py` en `update_test_retry` |
+| `{lessons_context}` | Lecciones de ciclos anteriores (S41) | `graph.py` — activo |
+| `{ui_context}` | Guías UI/UX desde knowledge | Definido pero sin llamadas activas |
+
+**Limitación actual:** No existe mecanismo de templates custom por proyecto. Toda personalización pasa por `constraints`, `code_style` (texto libre en `{project_context}`) o RAG. Si dos proyectos TypeScript tienen convenciones distintas, ambos reciben el mismo `system_backend_typescript.md`.
+
+**Implicación para S58:** Los fixes de S58-A/B/C/D/E van en `graph.py` (lógica inline que ignora `stack_language`), no en los templates `.md`. Los templates ya están correctamente separados por stack. El problema es la lógica dentro de los nodos.
+
+---
+
+### Hallazgos de auditoría del codebase
+
+Investigación exhaustiva de `graph.py` completada 2026-04-26:
+
+| Tag | Ubicación | Problema | Prioridad |
+|-----|-----------|----------|-----------|
+| **S51-A** | `graph.py:1701` — keywords | Detecta tareas de tests con `("test", "pytest", "unitari", "spec")` — keyword `"pytest"` es Python-specific | CRÍTICA |
+| **S51-A** | `graph.py:1704` — instrucción | Inyecta `` ```python:tests/test_<paquete>.py `` hardcodeado | CRÍTICA |
+| **S51-C** | `graph.py:1769` — retry | Mismo problema en el segundo intento de generación de tests | CRÍTICA |
+| **S55-C** | `graph.py:1410-1417` — float hint | Instrucción `round()` enviada a todos los stacks. TypeScript usa `toFixed(2)`, Rust usa `(a-b).abs() < 1e-2` | ALTA |
+| **S31-C** | `graph.py:2934` — filtro mtime | `_base.rglob("test_*.py")` hardcodeado. Vitest usa `*.test.ts`, Rust no tiene patrón de nombre | ALTA |
+| **S32-C/S57-B** | `graph.py:3104-3179` — exit codes | Exit 4/5 son códigos pytest. Vitest tiene bug conocido (#5249) — puede retornar 0 sin tests | MEDIA |
+| **S27-A** | `graph.py:2902` — conftest | Ya condicional `if runner == "pytest"` ✅. Pero no genera equivalente Vitest (`vitest.config.ts`) | MEDIA |
+
+**Lo que YA es stack-aware (no necesita fix):**
+- `_detect_test_runner()` — detecta pytest/vitest/cargo por filesystem ✅
+- Comandos de ejecución — en ramas condicionales por runner ✅
+- Templates por stack — routing correcto vía `template_loader.render()` ✅
+- `system_sdd.md` — nombra pytest/Vitest explícitamente ✅ (parcial)
+
+---
+
+### Hallazgos de documentación oficial (LangGraph + qwen3-coder)
+
+#### LangGraph 1.1.3
+
+- **`add_conditional_edges`** es el patrón estándar para routing por `stack_language`, pero NO es necesario para S58. Los problemas están en lógica *dentro* de nodos, no en routing del grafo.
+- **Annotated reducers** (`_keep_best_qa` de S57-A) funcionan igual en async/sync. Sin issues conocidos con `astream()`.
+- **Issue #4305:** `Optional[int]` tiene comportamiento inconsistente — usar `int | None` en nuevos campos de OVDState.
+- **Issue #4826:** Streaming context leaks en subgrafos anidados. No afecta a OVD (no usa subgrafos).
+
+#### qwen3-coder:30b
+
+- Soporta 119 lenguajes oficialmente.
+- SWE-Bench Verified: 69.6% — benchmark mayormente Python.
+- Context window: 256K tokens (OVD usa ~30K en promedio — sin problema de tamaño).
+- Conoce pytest, Jest, Vitest, JUnit, cargo test — el modelo es capaz, las instrucciones no lo son.
+- Debilidad documentada: generics complejos en TypeScript. No afecta a FRs simples de CRUD/API.
+
+#### Exit codes por framework (hallazgo crítico para S58-E)
+
+| Framework | Exit 0 | Exit 1 | Exit 4 | Exit 5 | Issue conocido |
+|-----------|--------|--------|--------|--------|---------------|
+| pytest | passed | failed | USAGE_ERROR | no tests | — |
+| Vitest | passed | failed | — | — | **Bug #5249**: puede retornar 0 sin tests |
+| cargo test | passed | failed | — | — | Issue #16558: edge case con `process::exit` |
+| Jest | passed | failed | — | — | Issue #9324: puede retornar 1 sin fallos |
+
+Vitest bug #5249 es el más crítico: la lógica de `run_tests` que confía en exit 0 = éxito fallaría silenciosamente para TypeScript.
+
+#### Convenciones de test setup por stack
+
+| Stack | Equivalente a conftest.py | Patrón de archivo de test |
+|-------|--------------------------|--------------------------|
+| Python/pytest | `conftest.py` + `pytest.ini` | `test_*.py` / `*_test.py` |
+| TypeScript/Vitest | `vitest.config.ts` (setupFiles) | `*.test.ts` / `*.spec.ts` / `*.test.tsx` |
+| Rust/cargo | No necesita setup — `Cargo.toml` lo maneja | Unit: `#[cfg(test)]` inline en `src/`. Integration: `tests/*.rs` |
+| Go | No requiere configuración | `*_test.go` |
+| Java/JUnit | `src/test/resources/` | `Test*.java` / `*Test.java` |
+
+---
+
+### Plan de implementación S58
+
+Orden de ejecución: `S58-A → S58-B → S58-C → S58-D → S58-E → S58-F (template) → Tests → S58-G/H (ciclos)`
+
+#### S58-A — S51-A keywords + instrucción stack-aware (CRÍTICO)
+
+**Archivo:** `graph.py` ~línea 1700 — función `execute_agents`
+
+**Cambio:** Keywords de detección y path de archivo condicional por `stack_language`:
+
+```python
+_stack = state.get("stack_language", "python")
+_test_keywords = {
+    "typescript": ("test", "vitest", "jest", "spec", "unitari"),
+    "rust":       ("test", "cargo", "spec", "unitari"),
+    "python":     ("test", "pytest", "unitari", "spec"),
+}.get(_stack, ("test", "pytest", "unitari", "spec"))
+
+if any(kw in _task_desc_lower for kw in _test_keywords):
+    _test_path = {
+        "typescript": "tests/<modulo>.test.ts",
+        "rust":       "tests/integration_test.rs",
+    }.get(_stack, "tests/test_<paquete>.py")
+    _test_fence = {"typescript": "typescript", "rust": "rust"}.get(_stack, "python")
+    task_hint = (
+        f"[PRIORIDAD MÁXIMA — S58-A] Esta tarea genera el archivo de tests. "
+        f"DEBES incluir el bloque ```{_test_fence}:{_test_path} con al menos 3 casos."
+    )
+```
+
+Mismo cambio en el retry S51-C (~línea 1769).
+
+#### S58-B — S55-C float hint stack-aware (ALTA)
+
+**Archivo:** `graph.py` ~línea 1408
+
+```python
+if _is_test_task:
+    if _stack == "python":
+        float_hint = "\n\n[S58-B] REGLA FLOAT Python: SIEMPRE usa round(expr, 2). Ej: round(65/1.72**2, 2) → 21.97"
+    elif _stack == "typescript":
+        float_hint = "\n\n[S58-B] REGLA FLOAT TypeScript: usa Number(value.toFixed(2)) o Math.abs(a-b) < 0.01"
+    elif _stack == "rust":
+        float_hint = "\n\n[S58-B] REGLA FLOAT Rust: usa assert!((result - expected).abs() < 1e-2)"
+    else:
+        float_hint = ""  # Stack desconocido: no inyectar hint incorrecto
+```
+
+#### S58-C — Setup injection stack-aware (MEDIA)
+
+**Archivo:** `graph.py` ~línea 2902 — nodo `run_tests`
+
+Agregar rama Vitest al bloque `if runner == "pytest"`:
+
+```python
+elif runner == "vitest":
+    _vite_config = pathlib.Path(work_dir) / "vitest.config.ts"
+    if not _vite_config.exists():
+        _vite_config.write_text(
+            'import { defineConfig } from "vitest/config";\n'
+            'export default defineConfig({ test: { globals: true, environment: "node" } });\n'
+        )
+        log.warning("S58-C: vitest.config.ts inyectado en %s", work_dir)
+# cargo: no necesita setup — Cargo.toml lo maneja
+```
+
+#### S58-D — Filtro de test files stack-aware (ALTA)
+
+**Archivo:** `graph.py` ~línea 2934 — nodo `run_tests`, código S31-C
+
+```python
+if _runner == "pytest":
+    _all_tests  = [str(fp) for fp in sorted(base.rglob("test_*.py"))]
+    _all_tests += [str(fp) for fp in sorted(base.rglob("*_test.py"))]
+elif _runner == "vitest":
+    _all_tests  = [str(fp) for fp in sorted(base.rglob("*.test.ts"))]
+    _all_tests += [str(fp) for fp in sorted(base.rglob("*.spec.ts"))]
+    _all_tests += [str(fp) for fp in sorted(base.rglob("*.test.tsx"))]
+elif _runner == "cargo":
+    _all_tests = [str(base)]  # cargo test opera sobre el proyecto completo
+else:
+    _all_tests = []
+```
+
+#### S58-E — Exit codes por runner (MEDIA)
+
+**Archivo:** `graph.py` ~línea 3104 — diagnósticos post-ejecución
+
+Tabla de exit codes por runner + workaround Vitest bug #5249:
+
+```python
+# Para Vitest: verificar output además del exit code (bug #5249)
+if runner == "vitest" and rc == 0:
+    if "No test files found" in output or "0 tests" in output:
+        log.warning("S58-E: Vitest retornó 0 pero sin tests (bug vitest#5249) — thread=%s", thread_id)
+        # No bloquear ciclo, pero documentar en retry_feedback
+```
+
+#### S58-F — system_sdd.md stack-aware para tests (MEDIA)
+
+**Archivo:** `src/engine/templates/system_sdd.md` ~línea 96
+
+Reemplazar "pytest" / "Vitest" nombrados explícitamente por tabla por stack:
+
+```markdown
+- Agente `backend` → tarea de tests según stack:
+  - Python: `tests/test_<modulo>.py` — pytest
+  - TypeScript/Node: `tests/<modulo>.test.ts` — Vitest
+  - Rust: `#[cfg(test)] mod tests {}` inline en `src/lib.rs` — cargo test
+  - Java: `src/test/java/.../Test*.java` — JUnit 5
+- Agente `frontend` → `tests/<componente>.test.tsx` — Vitest + Testing Library
+```
+
+---
+
+### Tests unitarios S58
+
+| # | Test | Valida |
+|---|------|--------|
+| 1 | `test_s51a_typescript_injects_vitest_path` | S58-A inyecta `.test.ts` para TypeScript |
+| 2 | `test_s51a_rust_injects_cargo_path` | S58-A inyecta `integration_test.rs` para Rust |
+| 3 | `test_s51a_python_unchanged` | S58-A no rompe comportamiento Python existente |
+| 4 | `test_s55c_typescript_uses_tofixed` | S58-B inyecta `toFixed(2)` para TypeScript |
+| 5 | `test_s55c_rust_uses_abs_diff` | S58-B inyecta `abs() < 1e-2` para Rust |
+| 6 | `test_s55c_unknown_stack_no_hint` | S58-B retorna `""` para stack desconocido |
+| 7 | `test_s27a_vitest_injects_config` | S58-C genera `vitest.config.ts` si no existe |
+| 8 | `test_s27a_cargo_no_injection` | S58-C no toca nada para Rust |
+| 9 | `test_s31c_vitest_pattern_test_ts` | S58-D busca `*.test.ts` y `*.spec.ts` para Vitest |
+| 10 | `test_s31c_cargo_uses_project_dir` | S58-D usa directorio raíz para Cargo |
+| 11 | `test_exit_vitest_zero_no_tests_detected` | S58-E detecta Vitest bug #5249 (exit 0 sin tests) |
+| 12 | `test_sdd_template_lists_stack_conventions` | `system_sdd.md` menciona pytest/Vitest/cargo por stack |
+
+---
+
+### Ciclos de validación end-to-end
+
+#### S58-G — TypeScript + Vitest
+- **FR:** "Implementar función que valida email según RFC 5322, retorna bool, con tests en Vitest"
+- **Verificar:** `*.test.ts` en disco, `vitest.config.ts` inyectado, vitest exit 0
+- **Métricas objetivo:** QA 80+, pytest exit 0 equivalente, 0 retries
+
+#### S58-H — Rust + cargo test
+- **FR:** "Implementar función que calcula distancia Levenshtein entre dos strings, con tests cargo"
+- **Verificar:** `#[cfg(test)]` en `src/lib.rs`, cargo test exit 0
+- **Métricas objetivo:** QA 80+, cargo exit 0, 0 retries
+
+---
+
+### Impacto esperado
+
+| Métrica | Antes de S58 | Después de S58 |
+|---------|-------------|----------------|
+| FR Python → pytest | Funciona (validado S49–S57) | Sin cambio |
+| FR TypeScript → Vitest | Genera `test_*.py` o falla en colección | Genera `*.test.ts` + `vitest.config.ts` |
+| FR Rust → cargo test | Genera `conftest.py` innecesario | Usa cargo test directo |
+| Float hints | `round()` para todos los stacks | `round()` / `toFixed(2)` / `abs()` según stack |
+| Exit code Vitest | Falso positivo si no hay tests (bug #5249) | Detectado y documentado en retry_feedback |
+| QA score TypeScript | Desconocido — nunca validado | Objetivo: 80+ |
+
+---
+
+### Deuda pendiente post-S58 (identificada en iteración)
+
+1. **Templates custom por proyecto** — hoy no existe. Toda personalización va por `constraints` (texto libre) o RAG. Para proyectos con convenciones muy específicas (ej: dos proyectos TypeScript con guías distintas), falta una tabla `ovd_project_custom_templates` que permita sobrescribir un template por `project_id`. Candidato para **S60 o C10**.
+
+2. **`{ui_context}`** — variable definida en `template_loader.py` pero sin llamadas activas en `graph.py`. `query_ui_context()` existe pero nunca se invoca. Candidato para reactivar en el nodo frontend.
+
+3. **Benchmarking por stack en OVD** — no existe benchmarking público desagregado por framework (pytest vs Vitest vs cargo). OVD Platform puede ser caso de estudio. Documentar resultados de S58-G/H en `docs/BENCHMARKS_S58.md`.
+
+---
+
+### Perfil de proyecto — campos para templates (iteración 2026-04-26, posible sprint separado)
+
+**Contexto:** Análisis del formulario de creación de proyectos reveló que hay campos en la BD que no aparecen en el dashboard, y campos nuevos que mejorarían significativamente la calidad del código generado.
+
+#### Estado actual del formulario (`ProjectModal.tsx`)
+
+El dashboard muestra hoy 7 campos de stack:
+`language`, `framework`, `db_engine`, `runtime`, `legacy_stack`, `constraints`, `project_description`
+
+#### Campos en BD pero ocultos en el formulario
+
+| Campo | Tabla | Impacto en templates | Prioridad |
+|-------|-------|---------------------|-----------|
+| `code_style` | `ovd_project_profiles` | **Alto** — el LLM escribe el código según este campo. Ej: `"snake_case obligatorio, type hints, docstrings en español"` | Alta |
+| `qa_tools` | `ovd_project_profiles` | **Medio** — el agente backend puede incluirlos en `requirements.txt` / `package.json`. Ej: `"ruff, mypy, pytest-cov"` | Media |
+| `external_integrations` | `ovd_project_profiles` | **Medio** — evita que el LLM invente integraciones. Ej: `"Oracle EBS 12.1 (honorarios), Active Directory (auth)"` | Media |
+| `ci_cd` | `ovd_project_profiles` | **Medio** — el agente devops genera workflows coherentes. Ej: `"GitHub Actions, deploy vía SSH"` | Media |
+| `additional_stack` | `ovd_project_profiles` | **Bajo** — librerías extra. Ej: `["Redis", "Celery"]` | Baja |
+
+**Acción:** Agregar estos campos al formulario `ProjectModal.tsx` (ya existen en la BD — es solo UI).
+
+#### Campos nuevos que habría que crear
+
+| Campo | Tipo | Impacto | Prioridad |
+|-------|------|---------|-----------|
+| `test_framework` | `str` | **Crítico para S58** — elimina la detección heurística de runner. El proyecto declara explícitamente `"pytest"`, `"vitest"`, `"jest"`, `"cargo"`, `"junit5"`. `_detect_test_runner()` usa esto como primera fuente antes de inspeccionar el filesystem | **Crítica** |
+| `min_test_coverage` | `int` (0-100) | **Medio** — el template de QA puede evaluar cobertura declarada. `0` = no requerido | Media |
+
+**`test_framework` es el campo más relevante para S58:** resuelve la ambigüedad de detección de runner en workspaces vacíos (primer ciclo de un proyecto nuevo). Con él, S58-D y S58-E tienen una fuente autoritativa en vez de heurística.
+
+#### Lo que NO agregar (análisis 2026-04-26)
+
+- `team_size` — campo existe en BD pero no tiene uso en ningún template actual
+- Templates custom por proyecto — feature de mayor envergadura (requiere tabla nueva + editor UI), documentada en punto 1 de esta deuda
+
+#### Plan de ejecución sugerido
+
+Puede integrarse en S58 como ítem S58-I, o separarse en un sprint de UX/perfil (S59-perfil):
+
+| Item | Descripción | Archivos | Estado |
+|------|-------------|---------|--------|
+| P-1 | Agregar `code_style`, `qa_tools`, `external_integrations`, `ci_cd` al formulario `ProjectModal.tsx` | `src/dashboard/src/components/ProjectModal.tsx` | ⬜ |
+| P-2 | Crear campo `test_framework` en `ovd_project_profiles` (migración) + formulario | `migrations/`, `ProjectModal.tsx`, `api_v1.py` | ⬜ |
+| P-3 | Usar `test_framework` como fuente primaria en `_detect_test_runner()` antes del filesystem scan | `graph.py` | ⬜ |
+| P-4 | Crear campo `min_test_coverage` en `ovd_project_profiles` + usarlo en template `system_qa.md` | `migrations/`, `system_qa.md` | ⬜ |
 
 ---
 

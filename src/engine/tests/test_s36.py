@@ -147,9 +147,10 @@ class TestS36BFloatInstructions:
     """S36-B: system_backend.md incluye instrucción sobre valores float en tests."""
 
     def _get_template_content(self) -> str:
-        import pathlib
-        tmpl = pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
-        return tmpl.read_text(encoding="utf-8")
+        # S58-pre: el contenido float-specific fue movido a stack/backend_python.md
+        import template_loader
+        template_loader.invalidate()
+        return template_loader.render_composed("system_backend", stack_language="python")
 
     def test_template_menciona_punto_flotante(self):
         """El template menciona el problema de punto flotante en tests."""
