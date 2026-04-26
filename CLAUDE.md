@@ -42,15 +42,15 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-25)
+## Estado actual (2026-04-26)
 
-- **Sprints completados:** S3 → S51 (retry automático tests + prioridad máxima TASK-004/005)
-- **Tests:** Python unit ~1040 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1119
-- **Rama activa:** `dev` (commits hasta S51 sin mergear a `main`)
-- **Próximo foco:** S52 (diagnóstico de archivos de producción no escritos al disco + optimización retry S51-C)
+- **Sprints completados:** S3 → S55 (pytest exit 0 histórico — 7/7 tests PASS, sin retries, 1m 35s)
+- **Tests:** Python unit ~1051 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1130
+- **Rama activa:** `dev` (commits hasta S55 sin mergear a `main`)
+- **Próximo foco:** S56 (QA contextualizado al FR del ciclo, logs de nodos a WARNING, constraints-contamination fix)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S51:** `8f04d629` — completed, 5m 04s, QA 65/100, tests/test_imc.py generado, pytest exit 2 (ImportError)
+- **Ciclo de validación S55:** `9d939f29` — completed, 1m 35s, QA 65/100, pytest exit 0 — 7/7 PASS (histórico)
 
 ### Bug conocido — `ovd_refresh_tokens` columna faltante
 - `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db
@@ -79,6 +79,48 @@ cd src/tui && cargo build && cargo run
 
 #### S52-D — Flush de log para diagnóstico
 - **Fix:** agregar `logging.basicConfig(force=True)` con `stream=sys.stdout` y `flush=True` al inicio de `api.py` para asegurar que los `log.info/_write_artifacts` aparezcan en tiempo real en el log del engine.
+
+### Novedades S55 (2026-04-26) — rama `dev`
+
+- **S55-A:** `graph.py` — `_log_runner_response()` cambia `log.info` → `log.warning` para el diagnóstico principal de `done_reason`/`eval_count` y el reporte de fences encontrados. Ahora son visibles en el log del engine sin configuración adicional.
+- **S55-B:** `graph.py` — `_write_artifacts()` acepta `preserve_nonempty: bool = False`. Cuando `True`, si un archivo ya existe con contenido y el nuevo contenido está vacío o es <50% del original, se preserva el existente. Activo en paths S49-C y S49-A cuando `retry_feedback` está presente. Previene sobreescritura destructiva en rondas de retry por efecto "Lost in the Middle".
+- **S55-C:** `graph.py` — `_build_single_task_sdd_content()` inyecta hint `[S55-C]` con instrucción `round()` cuando la tarea es de tests (keywords: `test`, `pytest`, `unitari`, `spec`). Elimina float literals hardcoded → todos los asserts usan `round(peso / altura**2, 2)`.
+- **S55-D:** `graph.py` — `update_test_retry` S54-D cambia `log.info` → `log.warning` para el reporte de archivos en disco antes del retry.
+- **11 tests nuevos** en `test_s55.py`. **1051 tests pasan** (1 flaky pre-existente: `test_s31.py::test_cycle_start_ts_reciente`).
+- **Resultado ciclo validación S55:** `9d939f29` — **1m 35s** (vs 3m 47s en S54), **pytest exit 0** (primer éxito histórico), 7/7 tests PASS, 30k tokens (vs 120k en S54 = -75%), 0 retries, 4 archivos en disco. Todos los asserts con `round()` — sin float mismatch.
+
+### Roadmap S56 — Próximo sprint
+
+#### S56-A — QA contextualizado al FR del ciclo (crítico)
+- **Síntoma:** QA score 65/100 persistente — el reviewer compara código IMC vs SDD del proyecto "contratos" (Oracle + RUT). `sdd_compliance=False` aunque el código implementa correctamente el FR.
+- **Fix:** En `qa_review`, pasar el SDD generado en el ciclo como contexto primario, no el perfil del proyecto legacy. El reviewer debe evaluar: ¿el código implementa *este* SDD?
+- **Impacto esperado:** QA 65 → 80+, `sdd_compliance=True`.
+
+#### S56-B — log.info → log.warning en nodos de flujo
+- **Síntoma:** `run_tests`, `qa_review`, `deliver` logs invisibles en engine log. Solo visibles vía SSE.
+- **Fix:** Elevar logs de diagnóstico clave a `log.warning()` o aplicar S52-D (basicConfig force=True nivel INFO).
+- **Impacto:** Diagnóstico completo offline sin dashboard.
+
+#### S56-C — Filtrar constraints del proyecto que no aplican al FR
+- **Síntoma:** SDD agrega constraints Oracle (`FETCH FIRST`, `python-oracledb thick`) a un FR de IMC puro.
+- **Fix:** En `generate_sdd`, filtrar constraints del perfil del proyecto si el FR no menciona BD.
+
+#### S56-D — Reducir tokens por tarea en SDD multi-tarea
+- **Síntoma:** `prompt_eval_count` crece de 6062 → 9415 entre tarea 1 y 4 en el mismo ciclo.
+- **Fix:** Incluir solo requirements relevantes a cada tarea en `_build_single_task_sdd_content`.
+- **Impacto esperado:** -20-30% tokens por tarea en SDDs con >4 tareas.
+
+### Línea base temporal de ciclos
+
+| Sprint | Ciclo | Duración | QA | Tests en disco | run_tests | Tokens in |
+|--------|-------|----------|----|----------------|-----------|-----------|
+| S48 | — | ~56 min | — | no | skip | — |
+| S49 | `232f864e` | 1m 18s | 65 | no | skip | ~156k |
+| S50 | `4cf452ca` | 1m 17s | 65 | no | skip | ~156k |
+| S51 | `8f04d629` | 5m 04s | 65 | **sí** | **exit 2** | 120k |
+| S54 | `4e2f7663` | 3m 47s | 65 | sí | exit 2 | 120k |
+| **S55** | `9d939f29` | **1m 35s** | **65** | **sí** | **exit 0** | **30k** |
+| S56 objetivo | — | ~1m 20s | **80+** | sí | exit 0 | ~25k |
 
 ### Novedades S51 (2026-04-25) — rama `dev`
 

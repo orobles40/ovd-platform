@@ -64,7 +64,7 @@ import github_helper
 import nats_client
 import telemetry  # Sprint 10 — GAP-A6
 import web_researcher  # Sprint 11 — S11.B
-from tools import make_file_tools, read_project_context  # S17T
+from tools import make_file_tools, read_project_context, calculate_expression  # S17T
 import mcp_client  # Fase A — MCP tools (context7)
 import lessons     # S41 — lecciones aprendidas por proyecto y agente
 
@@ -435,6 +435,11 @@ class OVDState(TypedDict):
     # S22 — run_tests: ejecución real de tests generados
     test_results: dict[str, Any]    # {passed, output, runner, retry_round, error}
     test_retry_count: int           # 0..2, máx 2 rondas de retry vía route_agents
+
+    # S53-B — Selective Send: agentes a re-ejecutar en retry de tests (subset de selected_agents)
+    # Si vacío o no definido → route_agents usa todos los agentes del SDD (comportamiento normal)
+    # Si definido → route_agents ejecuta solo estos agentes (reduce de N agentes a 1)
+    selective_retry_agents: list[str]
 
     # S22 — security scanning CLI (previo al LLM review)
     security_scan_results: dict[str, Any]  # {tools_run, findings, blocked}
@@ -1072,6 +1077,43 @@ async def request_approval(state: OVDState) -> dict:
     }
 
 
+def _log_runner_response(response: Any, agent_name: str) -> None:
+    """S54-A: Diagnóstico de done_reason, tokens reales y presencia de fence :path."""
+    meta = getattr(response, "response_metadata", {}) or {}
+    done_reason  = meta.get("done_reason", "unknown")
+    eval_count   = meta.get("eval_count", 0)
+    prompt_count = meta.get("prompt_eval_count", 0)
+    content_len  = len(response.content) if response.content else 0
+
+    log.warning(
+        "S54-A runner[%s]: done_reason=%s eval_count=%d prompt_eval_count=%d output_len=%d",
+        agent_name, done_reason, eval_count, prompt_count, content_len,
+    )
+    if done_reason == "length":
+        log.warning(
+            "S54-A runner[%s]: TRUNCADO — output cortado por num_predict. "
+            "Primeros 400 chars: %s",
+            agent_name, (response.content or "")[:400].replace("\n", "↵"),
+        )
+
+    # Verificar presencia de fence :path (indicador de que el modelo siguió el formato)
+    content = response.content or ""
+    has_path_fence = bool(
+        _re.search(r"```[\w+\-]*:[^\n`]+", content)
+    )
+    if not has_path_fence and content_len > 50:
+        log.warning(
+            "S54-A runner[%s]: output NO contiene fence con :path — "
+            "_write_artifacts no podrá escribir archivos. "
+            "Primeros 500 chars: %s",
+            agent_name, content[:500].replace("\n", "↵"),
+        )
+    else:
+        import re as _re2
+        paths_found = _re2.findall(r"```[\w+\-]*:([^\n`]+)", content)
+        log.warning("S54-A runner[%s]: fence :path encontrado en %d bloque(s): %s", agent_name, len(paths_found), paths_found)
+
+
 async def _run_frontend_agent(
     sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
 ) -> dict:
@@ -1091,6 +1133,7 @@ async def _run_frontend_agent(
             "Implementa los artefactos frontend definidos en el SDD."
         )),
     ])
+    _log_runner_response(response, "frontend")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "frontend")
     return {"agent": "frontend", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
 
@@ -1114,6 +1157,7 @@ async def _run_backend_agent(
             "Implementa los artefactos backend definidos en el SDD."
         )),
     ])
+    _log_runner_response(response, "backend")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "backend")
     return {"agent": "backend", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
 
@@ -1137,6 +1181,7 @@ async def _run_database_agent(
             "Implementa los artefactos de base de datos definidos en el SDD."
         )),
     ])
+    _log_runner_response(response, "database")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "database")
     return {"agent": "database", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
 
@@ -1160,6 +1205,7 @@ async def _run_devops_agent(
             "Implementa los artefactos de infraestructura definidos en el SDD."
         )),
     ])
+    _log_runner_response(response, "devops")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "devops")
     return {"agent": "devops", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
 
@@ -1209,6 +1255,26 @@ def _build_agent_sdd_content(sdd: dict, agent_name: str) -> str:
     )
 
 
+def _extract_expected_files_from_task(description: str) -> list[str]:
+    """S54-B: extrae rutas de archivos mencionados en la descripción de una tarea SDD.
+
+    Busca patrones tipo `src/imc/models.py`, `tests/test_imc.py`, etc.
+    Retorna lista de rutas únicas en orden de aparición.
+    """
+    paths = _re.findall(
+        r'\b(?:src|tests|app|lib|pkg)/[\w/\-\.]+\.(?:py|ts|tsx|js|jsx|sql|yaml|yml|json|toml|ini|cfg)\b',
+        description,
+    )
+    # Dedup preservando orden
+    seen: set[str] = set()
+    result: list[str] = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            result.append(p)
+    return result
+
+
 def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_index: int, total_tasks: int) -> str:
     """S39-D: construye el SDD para una sola tarea del agente.
 
@@ -1216,7 +1282,7 @@ def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_
     constraints) pero solo una tarea en 'Your Task'. Esto reduce el output de
     10-15K tokens (todas las tareas) a ~800 tokens (una tarea), eliminando timeouts.
     """
-    return (
+    base = (
         f"## Summary\n{sdd.get('summary', '')}\n\n"
         f"## Requirements\n{_json.dumps(sdd.get('requirements', []), ensure_ascii=False, indent=2)}\n\n"
         f"## Design\n{sdd.get('design', {}).get('overview', '')}\n\n"
@@ -1224,6 +1290,55 @@ def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_
         f"## Your Task ({agent_name}) — {task_index + 1}/{total_tasks}\n"
         f"{_json.dumps(task, ensure_ascii=False, indent=2)}"
     )
+
+    # S54-B: inyectar instrucción de fence con ruta exacta, extraída de la descripción de la tarea.
+    # Mismo mecanismo que S51-A para tests — instrucción a nivel de tarea, no solo en el system prompt.
+    task_desc = task.get("description", "") + " " + task.get("title", "")
+    expected_files = _extract_expected_files_from_task(task_desc)
+    if expected_files:
+        # Detectar extensión para el lang del fence
+        def _lang_for(path: str) -> str:
+            ext = path.rsplit(".", 1)[-1] if "." in path else ""
+            return {"py": "python", "ts": "typescript", "tsx": "typescript",
+                    "js": "javascript", "jsx": "javascript", "sql": "sql",
+                    "yaml": "yaml", "yml": "yaml", "toml": "toml",
+                    "json": "json", "ini": "ini", "cfg": "ini"}.get(ext, ext)
+
+        fence_examples = "\n".join(
+            f"```{_lang_for(f)}:{f}\n# tu implementación aquí\n```" for f in expected_files
+        )
+        fence_hint = (
+            f"\n\n[S54-B] FORMATO OBLIGATORIO — Genera EXACTAMENTE {len(expected_files)} archivo(s) "
+            f"con el fence :path correcto:\n\n"
+            f"{fence_examples}\n\n"
+            "CRÍTICO: El fence DEBE incluir la ruta exacta después de los backticks "
+            "(```python:src/imc/models.py). Sin esa ruta, el archivo NO se escribe al disco. "
+            "NO omitas la ruta bajo ninguna circunstancia."
+        )
+        log.debug(
+            "_build_single_task_sdd_content: S54-B inyectando fence hint para %d archivo(s): %s",
+            len(expected_files), expected_files,
+        )
+
+        # S55-C: para tareas de tests, agregar instrucción explícita de round() para floats.
+        # Previene que el LLM escriba valores float literales calculados de memoria (divergen
+        # del valor real calculado por la implementación → AssertionError inevitable).
+        _task_desc_lower = task_desc.lower()
+        _is_test_task = any(kw in _task_desc_lower for kw in ("test", "pytest", "unitari", "spec"))
+        if _is_test_task:
+            float_hint = (
+                "\n\n[S55-C] REGLA CRÍTICA PARA VALORES FLOAT EN TESTS:\n"
+                "NUNCA escribas valores float de memoria en los asserts. "
+                "SIEMPRE usa round() con la misma fórmula que la implementación:\n"
+                "  ✅ CORRECTO:  assert calcular_imc(70, 1.75) == (round(70/1.75**2, 2), 'Normal')\n"
+                "  ❌ PROHIBIDO: assert calcular_imc(70, 1.75) == (22.86, 'Normal')  # literal inventado\n"
+                "El valor hardcodeado DIVERGE del valor calculado. Usa round() para garantizar exactitud."
+            )
+            return base + fence_hint + float_hint
+
+        return base + fence_hint
+
+    return base
 
 
 async def route_agents(state: OVDState) -> dict:
@@ -1241,6 +1356,27 @@ async def route_agents(state: OVDState) -> dict:
     org_id = state.get("org_id", "")
     project_id = state.get("project_id", "")
     jwt_token = state.get("jwt_token", "")
+
+    # S53-B: Selective Send — si venimos de un retry de tests y se identificó el agente fallido,
+    # re-ejecutar solo ese agente en vez de todos los del SDD
+    selective_agents = state.get("selective_retry_agents", [])
+    test_retry_count = state.get("test_retry_count", 0)
+    if selective_agents and test_retry_count > 0:
+        log.info(
+            "route_agents: S53-B selective retry — solo ejecutar agentes=%s (test_retry_count=%d)",
+            selective_agents, test_retry_count,
+        )
+        return {
+            "agent_results": None,
+            "selected_agents": selective_agents,
+            "pending_agents": [],
+            "selective_retry_agents": [],  # limpiar para no interferir con ciclos siguientes
+            "status": "routing",
+            "messages": state.get("messages", []) + [{
+                "role": "agent",
+                "content": f"S53-B: re-ejecutando solo agente(s) {selective_agents} (test retry selectivo)...",
+            }],
+        }
 
     # GAP-007: si el SDD tiene tareas por agente, usarlas directamente
     tasks_from_sdd = sdd.get("tasks", [])
@@ -1441,8 +1577,13 @@ async def agent_executor(state: OVDState) -> dict:
     # Solo activar tool calling cuando hay directory real — sin directory el modelo
     # entra en bucle infinito de MCP calls sin producir output (ADR-002).
     if directory:
-        tools = make_file_tools(directory)
-        tools += mcp_client.pool.get_langchain_tools(agent_name)
+        _file_tools = make_file_tools(directory)
+        tools = _file_tools + mcp_client.pool.get_langchain_tools(agent_name)
+        # S53-A: calculate_expression disponible para agente backend (modelos Claude/OpenAI)
+        # Solo cuando el directorio existe en disco (_file_tools no vacío)
+        # Evita que tests con directory mock hagan a S39-D llamar _run_agent_with_tools innecesariamente
+        if agent_name == "backend" and _file_tools:
+            tools.append(calculate_expression)
     else:
         tools = []
 
@@ -1722,7 +1863,9 @@ async def _run_agent_with_tools(
         # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
         # Permite que run_tests detecte los test files correctamente via filesystem
         if directory and not runner_result.get("artifacts") and runner_result.get("output"):
-            written_arts = _write_artifacts(runner_result["output"], directory, agent_name)
+            # S55-B: en rondas de retry (retry_feedback presente) preservar archivos existentes
+            _preserve = bool(retry_feedback)
+            written_arts = _write_artifacts(runner_result["output"], directory, agent_name, preserve_nonempty=_preserve)
             if written_arts:
                 runner_result = dict(runner_result, artifacts=written_arts)
                 log.info("S50-A: agente '%s' S49-C — %d archivo(s) escritos al disco via runner", agent_name, len(written_arts))
@@ -1792,7 +1935,9 @@ async def _run_agent_with_tools(
                     # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
                     # Permite que run_tests detecte los test files correctamente via filesystem
                     if directory and not _runner_result.get("artifacts") and _runner_result.get("output"):
-                        _written = _write_artifacts(_runner_result["output"], directory, agent_name)
+                        # S55-B: en rondas de retry (retry_feedback presente) preservar archivos existentes
+                        _preserve = bool(retry_feedback)
+                        _written = _write_artifacts(_runner_result["output"], directory, agent_name, preserve_nonempty=_preserve)
                         if _written:
                             _runner_result = dict(_runner_result, artifacts=_written)
                             log.info("S50-A: agente '%s' S49-A — %d archivo(s) escritos al disco via runner", agent_name, len(_written))
@@ -3008,6 +3153,79 @@ def _extract_failed_test_blocks(output: str) -> str:
     return "\n\n".join(blocks[:3])  # máx 3 bloques para no inflar el feedback
 
 
+def _infer_failing_agent_from_test_output(test_output: str) -> str | None:
+    """S53-B: heurística para detectar qué agente debe re-ejecutarse a partir del output de pytest.
+
+    Analiza el output para identificar el agente responsable del fallo:
+    - ImportError con 'src.' → backend
+    - ModuleNotFoundError con un path conocido → backend o database
+    - AssertionError en un endpoint → backend
+    - Falla en un .tsx/.ts → frontend (no implementado aún)
+
+    Retorna el nombre del agente si se puede inferir con confianza, None si ambiguo.
+    """
+    if not test_output:
+        return None
+
+    lower = test_output.lower()
+
+    # ImportError / ModuleNotFoundError — casi siempre es backend
+    if "importerror" in lower or "modulenotfounderror" in lower:
+        # Si menciona 'from src.' o 'import src.' → backend
+        if "from src." in test_output or "import src." in test_output:
+            return "backend"
+        # Genérico — puede ser backend
+        return "backend"
+
+    # AssertionError con valores float o funciones de cálculo → backend
+    if "assertionerror" in lower:
+        if any(kw in lower for kw in ("imc", "bmi", "calculate", "round(", "assert")):
+            return "backend"
+
+    # Error de sintaxis Python → backend (el archivo .py tiene syntax error)
+    if "syntaxerror" in lower and ".py" in lower:
+        return "backend"
+
+    return None  # no podemos inferir con confianza
+
+
+def _build_module_contracts(agent_results: list[dict]) -> str:
+    """S53-C: construye un contrato inmutable de rutas de módulo a partir de los artifacts escritos en Round 1.
+
+    Extrae archivos .py que no sean tests y los convierte a importaciones canónicas.
+    Retorna un bloque de texto para inyectar en retry_feedback.
+
+    Ejemplo de salida:
+        CONTRATO INMUTABLE — NO cambiar rutas ni nombres de módulos entre rounds:
+        - src/imc/service.py  → from src.imc.service import ...
+        - src/imc/models.py   → from src.imc.models import ...
+        - src/imc/main.py     → from src.imc.main import ...
+    """
+    module_lines: list[str] = []
+    for result in agent_results:
+        for art in result.get("artifacts", []):
+            path = art.get("path", "")
+            if not path.endswith(".py"):
+                continue
+            # Excluir tests y conftest
+            basename = path.rsplit("/", 1)[-1]
+            if basename.startswith("test_") or basename == "conftest.py":
+                continue
+            # Convertir ruta a nombre de módulo: src/imc/service.py → src.imc.service
+            module_name = path.replace("/", ".").removesuffix(".py")
+            module_lines.append(f"  - {path}  → from {module_name} import ...")
+
+    if not module_lines:
+        return ""
+
+    lines_text = "\n".join(module_lines)
+    return (
+        "\n\n⚠️ CONTRATO INMUTABLE (S53-C) — NO cambiar rutas ni nombres de módulos entre rounds:\n"
+        f"{lines_text}\n"
+        "Usa EXACTAMENTE estas rutas de importación. NO renombres paquetes, NO muevas archivos."
+    )
+
+
 def update_test_retry(state: OVDState) -> dict:
     """S22 — Incrementa el contador de retries de tests e inyecta feedback al retry loop."""
     tr = state.get("test_results", {})
@@ -3053,12 +3271,18 @@ def update_test_retry(state: OVDState) -> dict:
         if duplicate_hint:
             log.warning("update_test_retry: S42-D duplicados detectados en %s", work_dir_for_dup)
 
+    # S53-C: contrato inmutable de rutas de módulo — previene que el modelo cambie nombres entre rounds
+    module_contract_hint = _build_module_contracts(state.get("agent_results", []))
+    if module_contract_hint:
+        log.info("update_test_retry: S53-C contrato de módulos inyectado en retry_feedback")
+
     # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
     _runner_for_msg = tr.get("runner", "")
     new_feedback = (
         _get_retry_no_modify_instruction(_runner_for_msg) + "\n\n"
         f"TESTS FALLIDOS (ronda {retry_round + 1}/2) — "
         f"runner: {tr.get('runner', '?')}\n"
+        + module_contract_hint  # S53-C
         + (f"\n{duplicate_hint}\n" if duplicate_hint else "")  # S42-D
         + failed_block_section
         + output_section
@@ -3068,15 +3292,56 @@ def update_test_retry(state: OVDState) -> dict:
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
     accumulated = _truncate(accumulated, 800)  # S39-C: 3000 → 800 chars (solo stderr exacto)
 
+    # S54-D: loguear archivos físicos en disco antes del retry — diagnóstico de persistencia
+    _work_dir = state.get("directory", "")
+    if _work_dir:
+        try:
+            _disk_files = sorted(
+                str(p.relative_to(pathlib.Path(_work_dir)))
+                for p in pathlib.Path(_work_dir).rglob("*.py")
+                if not any(x in str(p) for x in ("__pycache__", ".venv", ".pytest_cache"))
+            )
+            log.warning(
+                "S54-D update_test_retry: %d archivo(s) Python en disco antes del retry: %s",
+                len(_disk_files), _disk_files,
+            )
+            _src_files = [f for f in _disk_files if f.startswith("src/")]
+            _test_files = [f for f in _disk_files if f.startswith("tests/")]
+            if not _src_files:
+                log.warning(
+                    "S54-D update_test_retry: NO hay archivos src/ en disco — "
+                    "los archivos de producción no fueron escritos correctamente en el round anterior",
+                )
+            if not _test_files:
+                log.warning(
+                    "S54-D update_test_retry: NO hay archivos tests/ en disco",
+                )
+        except Exception as _e:
+            log.debug("S54-D update_test_retry: error leyendo disco — %s", _e)
+
+    # S53-B: detectar agente fallido para Selective Send
+    selective_agents: list[str] = []
+    failing_agent = _infer_failing_agent_from_test_output(test_output)
+    if failing_agent:
+        selective_agents = [failing_agent]
+        log.info(
+            "update_test_retry: S53-B agente fallido detectado → selective_retry_agents=%s",
+            selective_agents,
+        )
+    else:
+        log.info("update_test_retry: S53-B no se pudo inferir agente fallido — re-ejecutando todos")
+
     return {
         "test_retry_count": state.get("test_retry_count", 0) + 1,
         "retry_feedback": accumulated,
+        "selective_retry_agents": selective_agents,  # S53-B
         "status": "retrying_after_test_failure",
         "messages": state.get("messages", []) + [{
             "role": "agent",
             "content": (
                 f"Tests fallidos (reintento {state.get('test_retry_count', 0) + 1}/2). "
-                f"Runner: {tr.get('runner', '?')}. Regenerando implementación con feedback de tests..."
+                f"Runner: {tr.get('runner', '?')}. "
+                + (f"Reintentando solo agente '{failing_agent}' (S53-B)..." if failing_agent else "Regenerando implementación con feedback de tests...")
             ),
         }],
     }
@@ -3176,7 +3441,12 @@ async def generate_docs(state: OVDState) -> dict:
 
 import re as _re
 
-def _write_artifacts(agent_output: str, directory: str, agent: str) -> list[dict]:
+def _write_artifacts(
+    agent_output: str,
+    directory: str,
+    agent: str,
+    preserve_nonempty: bool = False,  # S55-B: preserva archivos existentes no-vacíos en retry
+) -> list[dict]:
     """Parsea bloques de código con ruta (```lang:path) y los escribe al disco.
 
     Formato esperado del agente:
@@ -3186,6 +3456,11 @@ def _write_artifacts(agent_output: str, directory: str, agent: str) -> list[dict
 
     Retorna lista de {path, size, lang} para cada archivo escrito.
     Si el directorio no existe o no tiene permisos, registra warning y continúa.
+
+    preserve_nonempty=True: si el archivo ya existe con contenido y el nuevo contenido
+    está vacío o tiene menos del 50% del tamaño original, se conserva el existente.
+    Previene sobreescritura destructiva en rondas de retry cuando el LLM no sigue el
+    formato de fence correctamente (efecto "Lost in the Middle").
     """
     if not directory or not agent_output:
         return []
@@ -3202,7 +3477,16 @@ def _write_artifacts(agent_output: str, directory: str, agent: str) -> list[dict
     )
 
     written = []
-    for match in pattern.finditer(agent_output):
+    all_matches = list(pattern.finditer(agent_output))
+    if not all_matches:
+        # S52-C: output presente pero sin bloques de código con ruta — diagnóstico para detectar truncación o formato incorrecto
+        log.warning(
+            "_write_artifacts[%s]: 0 matches de regex en output de %d chars — "
+            "posible truncación (num_ctx) o formato incorrecto (falta ruta en fence). "
+            "Primeros 300 chars: %s",
+            agent, len(agent_output), agent_output[:300].replace("\n", "↵"),
+        )
+    for match in all_matches:
         rel_path = match.group(1).strip()
         content  = match.group(2)
 
@@ -3219,13 +3503,58 @@ def _write_artifacts(agent_output: str, directory: str, agent: str) -> list[dict
 
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
+            content_bytes = content.encode("utf-8")
+
+            # S55-B: guard de no-sobreescritura en rondas de retry
+            if preserve_nonempty and target.exists():
+                existing_size = target.stat().st_size
+                if existing_size > 0:
+                    new_size = len(content_bytes)
+                    if new_size == 0:
+                        log.warning(
+                            "_write_artifacts[%s]: S55-B — '%s' ya existe (%d bytes), "
+                            "nuevo contenido VACÍO — preservando archivo existente",
+                            agent, rel_path, existing_size,
+                        )
+                        written.append({"path": rel_path, "size": existing_size, "lang": lang_name})
+                        continue
+                    elif new_size < existing_size // 2:
+                        log.warning(
+                            "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
+                            "nuevo contenido (%d bytes) es <50%% del original — preservando",
+                            agent, rel_path, existing_size, new_size,
+                        )
+                        written.append({"path": rel_path, "size": existing_size, "lang": lang_name})
+                        continue
+                    else:
+                        log.warning(
+                            "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
+                            "sobreescribiendo con nuevo contenido (%d bytes)",
+                            agent, rel_path, existing_size, new_size,
+                        )
+
             target.write_text(content, encoding="utf-8")
+            # S54-A: verificación post-write — confirmar que el archivo existe en disco
+            if not target.exists():
+                log.error(
+                    "_write_artifacts[%s]: VERIFICACIÓN FALLIDA — '%s' no existe en disco tras write_text",
+                    agent, rel_path,
+                )
+            elif target.stat().st_size == 0 and content_bytes:
+                log.warning(
+                    "_write_artifacts[%s]: archivo '%s' escrito pero 0 bytes en disco (content_len=%d)",
+                    agent, rel_path, len(content_bytes),
+                )
+            else:
+                log.info(
+                    "_write_artifacts[%s]: escrito %s (%d bytes) — verificado en disco ✓",
+                    agent, rel_path, len(content_bytes),
+                )
             written.append({
                 "path": rel_path,
-                "size": len(content.encode("utf-8")),
+                "size": len(content_bytes),
                 "lang": lang_name,
             })
-            log.info("_write_artifacts[%s]: escrito %s (%d bytes)", agent, rel_path, len(content.encode("utf-8")))
         except OSError as e:
             log.warning("_write_artifacts[%s]: no se pudo escribir '%s': %s", agent, rel_path, e)
 

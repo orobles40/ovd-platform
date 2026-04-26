@@ -60,6 +60,27 @@ Genera tareas de implementación con los campos:
 
 **PROHIBIDO — tareas scaffold-only:** No generes tareas cuyo único resultado sean stubs vacíos, archivos con solo `pass`, interfaces sin implementar o comentarios tipo `# TODO`. Cada tarea debe producir código funcional y testeable.
 
+**Regla "Un archivo = una tarea" (S53-D):** Nunca asignes el mismo archivo de salida a dos tareas distintas. Si detectas que TASK-001 y TASK-002 escribirían en `src/imc/models.py`, consolídalas en una sola tarea. La duplicación causa sobrescritura silenciosa y contenido incorrecto en disco.
+
+❌ INCORRECTO:
+- TASK-001: "Crear clase ImcRequest en src/imc/models.py"
+- TASK-002: "Crear clase ImcResponse en src/imc/models.py"
+
+✅ CORRECTO:
+- TASK-001: "Crear src/imc/models.py con clases ImcRequest e ImcResponse"
+
+**Regla de rutas exactas en descripción (S54-C):** La descripción de cada TASK DEBE mencionar la ruta exacta del archivo de salida usando la notación `src/<paquete>/<modulo>.py`. Sin ruta exacta en la descripción, el agente no puede escribir el archivo al disco con el formato correcto.
+
+❌ INCORRECTO — descripción sin ruta:
+- TASK-001: "Crear los modelos Pydantic para el endpoint IMC"
+- TASK-002: "Implementar la lógica de cálculo de IMC"
+
+✅ CORRECTO — descripción con ruta explícita:
+- TASK-001: "Crear `src/imc/models.py` con ImcRequest(peso, altura) e ImcResponse(imc, categoria)"
+- TASK-002: "Crear `src/imc/service.py` con función calcular_imc(peso, altura) -> tuple[float, str]"
+- TASK-003: "Crear `src/main.py` con FastAPI app y endpoint POST /imc"
+- TASK-004: "Crear `tests/test_imc.py` con pytest: casos happy path, peso negativo, altura cero, categorías"
+
 ❌ Ejemplos PROHIBIDOS:
 - "Crear estructura de archivos del proyecto"
 - "Definir interfaces TypeScript vacías"
