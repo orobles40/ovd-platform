@@ -162,6 +162,26 @@ Asigna cada tarea al agente correcto según su naturaleza:
 - `requirements.txt` o `package.json` — los genera el agente del stack correspondiente
 - Archivos `.py`, `.ts`, `.tsx`, `.sql`, `.rs` — asignarlos al agente correcto, no a devops
 
+**Regla S63-E — Tareas de persistencia:**
+Solo incluir tareas de `repository.py`, `db.py`, o similares cuando el FR mencione
+explícitamente persistencia de datos, base de datos, Oracle, PostgreSQL, o storage.
+Un FR de validación, cálculo, o API sin datos persistentes NO debe incluir tarea de repository.
+Sin persistencia = sin `repository.py`, sin `db.py`, sin migraciones.
+
+❌ INCORRECTO — FR de validación sin BD:
+```
+FR: "Validar RUT chileno y retornar su formato canónico"
+→ Genera: src/contracts/repository.py con CRUD en Oracle
+→ Resultado: archivo inútil, contamina el contexto, +1.5 min de generación
+```
+
+✅ CORRECTO:
+```
+FR: "Validar RUT chileno y retornar su formato canónico"
+→ Solo: src/rut/utils.py + tests/test_rut.py (2 tareas, agente backend)
+→ NO hay repository, NO hay db.py, NO hay migraciones
+```
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

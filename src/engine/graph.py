@@ -479,7 +479,7 @@ class OVDState(TypedDict):
 
     # Output
     deliverables: list[dict]
-    status: str                     # estado actual del ciclo
+    status: Annotated[str, lambda x, y: y]  # S63-A: last-write-wins, evita InvalidUpdateError
     messages: list[dict]            # historial de mensajes para el TUI
 
 
@@ -950,12 +950,14 @@ _DB_RESTRICTION_KEYWORDS = (
 )
 
 
-def _strip_db_restrictions(project_ctx: str) -> str:
-    """S56-C: elimina líneas con restricciones de BD cuando oracle_involved=False.
+def _strip_db_restrictions(project_ctx: str, oracle_involved: bool = False) -> str:
+    """S56-C / S63-C: elimina líneas con restricciones de BD cuando oracle_involved=False.
 
     Evita que restricciones Oracle (fetch_first, lateral join, etc.) contaminen
     el SDD de FRs que no tienen nada que ver con la BD. Filtra línea por línea
     para no afectar el contenido que sigue a una restricción.
+
+    S63-C: acepta parámetro oracle_involved para reusar con rag_context.
     """
     if not project_ctx:
         return project_ctx
@@ -996,8 +998,26 @@ async def generate_sdd(state: OVDState) -> dict:
     # S56-C: si el FR no involucra Oracle, limpiar restricciones de BD del contexto del proyecto
     # para evitar que contaminen el SDD con oracle_involved=False.
     fr_analysis = state.get("fr_analysis", {})
-    if not fr_analysis.get("oracle_involved", True) and project_ctx:
+    _oracle_involved = fr_analysis.get("oracle_involved", True)
+    if not _oracle_involved and project_ctx:
         project_ctx = _strip_db_restrictions(project_ctx)
+
+    # S63-C: también filtrar rag_context cuando oracle_involved=False.
+    # El RAG puede contener chunks de ciclos anteriores del proyecto que mencionan Oracle.
+    if not _oracle_involved and rag_ctx:
+        _rag_ctx_original_len = len(rag_ctx)
+        rag_ctx = _strip_db_restrictions(rag_ctx, oracle_involved=False)
+        log.warning(
+            "generate_sdd: S63-C rag_context filtrado (oracle_involved=False) — %d chars → %d chars",
+            _rag_ctx_original_len, len(rag_ctx),
+        )
+
+    # S63-C: instrucción afirmativa cuando oracle_involved=False — más robusta que negación
+    _sdd_oracle_note = (
+        "[S63-C] Este FR es Python puro sin base de datos. Sin Oracle, sin oracledb, sin thick mode.\n"
+        "Los únicos constraints aplicables son los de Python/FastAPI listados abajo.\n\n"
+        if not _oracle_involved else ""
+    )
 
     # Construir el bloque de revisión si corresponde
     revision_block = ""
@@ -1025,7 +1045,7 @@ async def generate_sdd(state: OVDState) -> dict:
         try:
             result: SDDOutput = await asyncio.wait_for(
                 invoke_structured(llm, [
-                    SystemMessage(content=template_loader.render(
+                    SystemMessage(content=_sdd_oracle_note + template_loader.render(
                         "system_sdd",
                         language=state.get("language", "es"),
                         project_context=project_ctx,
@@ -2970,16 +2990,14 @@ async def run_tests(state: OVDState) -> dict:
     # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
     work_dir = directory or tempfile.mkdtemp(prefix="ovd_tests_")
 
-    # S42-B / S60-C: en rounds de retry, limpiar archivos del round anterior.
-    # S60-C: pasar agents_to_retry y sdd para cleanup quirúrgico (solo los agentes que re-ejecutan).
+    # S63-B: cleanup S42-B/S60-C movido a update_test_retry.
+    # run_tests ya NO borra archivos — el cleanup ocurre en update_test_retry ANTES de despachar
+    # el retry, cuando los archivos del round anterior están en disco pero el nuevo retry
+    # AÚN no ha escrito nada. Timing correcto: evita borrar archivos del retry ACTUAL.
     if retry_round > 0 and directory:
-        cycle_ts = state.get("cycle_start_ts", 0)
-        _selective = state.get("selective_retry_agents", [])
-        _sdd_for_cleanup = state.get("sdd", {})
-        _cleanup_impl_files_from_prev_retry(
-            work_dir, cycle_ts,
-            agents_to_retry=_selective if _selective else None,
-            sdd=_sdd_for_cleanup if _selective else None,
+        log.warning(
+            "run_tests: S63-B — cleanup S42-B/S60-C movido a update_test_retry. "
+            "retry_round=%d, no se borran archivos aquí.", retry_round,
         )
 
     # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
@@ -3629,6 +3647,37 @@ def update_test_retry(state: OVDState) -> dict | Command:
 
     # S61-B: guardar error sin truncar para que S60-B pueda detectar repetición en siguiente ronda
     _new_last_error = test_output if _is_structural else ""
+
+    # S63-B: cleanup ANTES de despachar el próximo retry.
+    # En este punto los archivos del retry anterior ya están en disco pero el nuevo retry
+    # AÚN no ha escrito nada — timing correcto. Solo borra .py de los agentes que van a retry.
+    _cleanup_work_dir = state.get("directory", "")
+    if _cleanup_work_dir and selective_agents and retry_round >= 1:
+        _base = pathlib.Path(_cleanup_work_dir)
+        _prev_artifacts: list[str] = []
+        for r in state.get("agent_results", []):
+            if r.get("agent") in selective_agents:
+                for a in r.get("artifacts", []):
+                    _p = a.get("path", "") if isinstance(a, dict) else str(a)
+                    if _p:
+                        _prev_artifacts.append(_p)
+
+        _deleted_s63b: list[str] = []
+        for rel_path in _prev_artifacts:
+            _abs = _base / rel_path
+            if _abs.exists() and _abs.suffix == ".py":
+                try:
+                    _abs.unlink()
+                    _deleted_s63b.append(rel_path)
+                except OSError as _oe:
+                    log.debug("S63-B: no se pudo borrar %s — %s", rel_path, _oe)
+
+        if _deleted_s63b:
+            log.warning(
+                "update_test_retry: S63-B cleanup ANTES del retry — eliminados %d archivo(s) "
+                "del round anterior: %s",
+                len(_deleted_s63b), _deleted_s63b,
+            )
 
     return {
         "test_retry_count": state.get("test_retry_count", 0) + 1,

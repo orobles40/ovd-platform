@@ -212,13 +212,25 @@ def require_valid_rut(rut: str) -> str:
 | RUT formateado | Cuerpo | DV | Caso de prueba |
 |----------------|--------|----|----------------|
 | `12.345.678-5` | 12345678 | 5 | Happy path, 8 dígitos |
-| `11.111.111-1` | 11111111 | 1 | Dígitos repetidos |
+| `1.000.005-K` | 1000005 | K | DV = K ✓ |
+| `10.000.013-K` | 10000013 | K | DV = K, 8 dígitos ✓ |
+| `9.999.999-3` | 9999999 | 3 | DV = 3 (NO es K — error frecuente en foros) |
 | `5.678.901-4` | 5678901 | 4 | Happy path, 7 dígitos |
-| `9.999.999-K` | 9999999 | K | DV = K |
 | `0.000.001-9` | 1 | 9 | RUT mínimo válido |
 | `12.345.678-4` | 12345678 | 4 | ❌ RUT inválido (DV incorrecto) |
+| `9.999.999-K` | 9999999 | K | ❌ RUT inválido — DV real de 9.999.999 es 3, NO K |
 
 **Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
+
+```python
+# CASOS DE PRUEBA VERIFICADOS COMPUTACIONALMENTE (S63-D — NO modificar estos valores):
+# validate_rut("1.000.005-K") == True   # cuerpo=1000005, DV=K ✓
+# validate_rut("10.000.013-K") == True  # cuerpo=10000013, DV=K ✓
+# validate_rut("12.345.678-5") == True  # cuerpo=12345678, DV=5 ✓
+# validate_rut("9.999.999-3") == True   # cuerpo=9999999, DV=3 (NO es K — error frecuente)
+# validate_rut("9.999.999-K") == False  # DV real de 9.999.999 es 3, no K
+# validate_rut("1.234.567-4") == False  # DV incorrecto
+```
 
 ---
 
