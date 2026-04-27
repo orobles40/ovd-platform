@@ -111,56 +111,67 @@ def test_s66a_clean_imports_no_correction_block():
 
 
 # ---------------------------------------------------------------------------
-# S66-B: límite máx 5 tareas por agente en generate_sdd
+# S66-B / S67-B: límite dinámico de tareas por agente según complejidad
 # ---------------------------------------------------------------------------
 
 def _make_sdd_tasks(agent: str, n: int) -> list[dict]:
     return [{"id": f"T{i}", "agent": agent, "title": f"Tarea {i}", "description": ""} for i in range(1, n + 1)]
 
 
-def test_s66b_tasks_trimmed_to_5():
-    """S66-B: SDD con 11 tareas en backend debe quedar en 5."""
-    import graph as _g
-    import types
+def _apply_task_cap(tasks: list[dict], complexity: str) -> tuple[list[dict], list[str]]:
+    """Replica la lógica S66-B/S67-B de graph.py::generate_sdd."""
+    _TASK_CAPS = {"low": 5, "medium": 8, "high": 10, "critical": 12}
+    _MAX = _TASK_CAPS.get(complexity, 8)
+    by_agent: dict = {}
+    for t in tasks:
+        by_agent.setdefault(t["agent"], []).append(t)
+    trimmed: list[dict] = []
+    trimmed_agents: list[str] = []
+    for agent, agent_tasks in by_agent.items():
+        if len(agent_tasks) > _MAX:
+            trimmed_agents.append(f"{agent}({len(agent_tasks)}→{_MAX})")
+            trimmed.extend(agent_tasks[:_MAX])
+        else:
+            trimmed.extend(agent_tasks)
+    return trimmed, trimmed_agents
 
-    # Patch mínimo de generate_sdd para invocar solo el post-procesamiento
+
+def test_s66b_tasks_trimmed_low_complexity():
+    """S67-B: FR low → cap 5 tareas/agente."""
     tasks = _make_sdd_tasks("backend", 11) + _make_sdd_tasks("devops", 2)
-    sdd = {"tasks": tasks, "requirements": [], "design": {}, "constraints": [], "summary": ""}
+    result, trimmed = _apply_task_cap(tasks, "low")
+    backend = [t for t in result if t["agent"] == "backend"]
+    assert len(backend) == 5
+    assert len(trimmed) == 1
+    assert "backend(11→5)" in trimmed[0]
 
-    _MAX = 5
-    _tasks_by_agent: dict = {}
-    for t in sdd["tasks"]:
-        _tasks_by_agent.setdefault(t["agent"], []).append(t)
-    _tasks_trimmed = []
-    for agent, agent_tasks in _tasks_by_agent.items():
-        _tasks_trimmed.extend(agent_tasks[:_MAX])
-    sdd["tasks"] = _tasks_trimmed
 
-    backend_tasks = [t for t in sdd["tasks"] if t["agent"] == "backend"]
-    devops_tasks  = [t for t in sdd["tasks"] if t["agent"] == "devops"]
-    assert len(backend_tasks) == 5, f"backend debería tener 5, tiene {len(backend_tasks)}"
-    assert len(devops_tasks) == 2, f"devops debería tener 2, tiene {len(devops_tasks)}"
-    assert len(sdd["tasks"]) == 7
+def test_s67b_tasks_trimmed_medium_complexity():
+    """S67-B: FR medium → cap 8 tareas/agente."""
+    tasks = _make_sdd_tasks("backend", 13) + _make_sdd_tasks("devops", 3)
+    result, trimmed = _apply_task_cap(tasks, "medium")
+    backend = [t for t in result if t["agent"] == "backend"]
+    devops = [t for t in result if t["agent"] == "devops"]
+    assert len(backend) == 8
+    assert len(devops) == 3
+    assert "backend(13→8)" in trimmed[0]
+
+
+def test_s67b_tasks_trimmed_high_complexity():
+    """S67-B: FR high → cap 10 tareas/agente."""
+    tasks = _make_sdd_tasks("backend", 15)
+    result, trimmed = _apply_task_cap(tasks, "high")
+    backend = [t for t in result if t["agent"] == "backend"]
+    assert len(backend) == 10
+    assert "backend(15→10)" in trimmed[0]
 
 
 def test_s66b_tasks_under_limit_unchanged():
-    """S66-B: SDD con 3 tareas por agente no debe modificarse."""
+    """S66-B: SDD con 3 tareas no debe modificarse (bajo cualquier cap)."""
     tasks = _make_sdd_tasks("backend", 3) + _make_sdd_tasks("devops", 2)
-    _MAX = 5
-    original_len = len(tasks)
-    _tasks_by_agent: dict = {}
-    for t in tasks:
-        _tasks_by_agent.setdefault(t["agent"], []).append(t)
-    _tasks_trimmed = []
-    trimmed_agents = []
-    for agent, agent_tasks in _tasks_by_agent.items():
-        if len(agent_tasks) > _MAX:
-            trimmed_agents.append(agent)
-            _tasks_trimmed.extend(agent_tasks[:_MAX])
-        else:
-            _tasks_trimmed.extend(agent_tasks)
-    assert len(trimmed_agents) == 0
-    assert len(_tasks_trimmed) == original_len
+    result, trimmed = _apply_task_cap(tasks, "low")
+    assert len(trimmed) == 0
+    assert len(result) == 5
 
 
 # ---------------------------------------------------------------------------

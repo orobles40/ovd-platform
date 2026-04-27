@@ -1072,9 +1072,11 @@ async def generate_sdd(state: OVDState) -> dict:
             "tasks": [t.dict() for t in result.tasks],
         }
 
-        # S66-B: enforcement de máximo 5 tareas por agente (S49-B era solo en template).
-        # Si el LLM ignoró la restricción, recortamos en post-procesamiento.
-        _MAX_TASKS_PER_AGENT = 5
+        # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
+        # low→5, medium→8, high→10 — evita perder features en FRs complejos.
+        _complexity = state.get("fr_analysis", {}).get("complexity", "medium")
+        _TASK_CAPS = {"low": 5, "medium": 8, "high": 10, "critical": 12}
+        _MAX_TASKS_PER_AGENT = _TASK_CAPS.get(_complexity, 8)
         _tasks_by_agent: dict[str, list] = {}
         for _t in sdd["tasks"]:
             _tasks_by_agent.setdefault(_t["agent"], []).append(_t)
