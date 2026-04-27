@@ -205,20 +205,20 @@ def test_s64d1_routing_shows_example():
 
 
 def test_s64d2_orm_pydantic_prohibition():
-    """system_backend.md prohíbe session.add() con modelos Pydantic."""
-    content = _BACKEND_TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert "session.add" in content.lower() or "db.add" in content.lower()
+    """backend_python.md prohíbe session.add() con modelos Pydantic (D2 es Python-specific)."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "db.add" in content.lower() or "session.add" in content.lower()
     assert "PROHIBIDO" in content
 
 
 def test_s64d2_3layer_pattern_present():
-    """system_backend.md describe el patrón de 3 capas ORM/Pydantic."""
-    content = _BACKEND_TEMPLATE_PATH.read_text(encoding="utf-8")
+    """backend_python.md describe el patrón de 3 capas ORM/Pydantic."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "DeclarativeBase" in content or "from_attributes" in content
 
 
 def test_s64d3_sysdate_prohibition():
-    """system_backend.md prohíbe func.sysdate() y propone alternativa agnóstica."""
-    content = _BACKEND_TEMPLATE_PATH.read_text(encoding="utf-8")
+    """backend_python.md prohíbe func.sysdate() y propone alternativa agnóstica (D3 Python-specific)."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "sysdate" in content
     assert "datetime.now" in content or "current_timestamp" in content

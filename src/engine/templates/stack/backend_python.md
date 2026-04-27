@@ -245,6 +245,57 @@ Verificación en línea: `python3 -c "b='12345678'; d=[int(x) for x in reversed(
 
 ---
 
+### D2 — Separación ORM / Pydantic [S64-D2]
+
+`Session.add()` requiere un modelo ORM (`DeclarativeBase`), **nunca** un `BaseModel` Pydantic. Son incompatibles.
+
+```python
+# ❌ PROHIBIDO — TypeError en runtime:
+db.add(ContratoCreate(rut="12.345.678-5", ...))   # Pydantic, no ORM
+
+# ✅ CORRECTO — 3 tipos de objeto distintos:
+# 1. ORM model → session.add(), queries SQLAlchemy
+class ContratoORM(Base):
+    __tablename__ = "contratos"
+    id = Column(Integer, primary_key=True)
+    rut = Column(String)
+
+# 2. Pydantic schema entrada → request body FastAPI
+class ContratoCreate(BaseModel):
+    rut: str
+
+# 3. Pydantic schema respuesta → response_model FastAPI
+class ContratoResponse(BaseModel):
+    id: int
+    rut: str
+    model_config = {"from_attributes": True}  # Pydantic v2
+
+# En endpoint — conversión explícita Pydantic → ORM:
+db_obj = ContratoORM(**schema.model_dump())
+db.add(db_obj)
+db.commit()
+db.refresh(db_obj)
+return db_obj  # FastAPI serializa con ContratoResponse
+```
+
+### D3 — Datetime agnóstico al dialecto [S64-D3]
+
+`func.sysdate()` es Oracle-specific y falla en SQLite/PostgreSQL (usados en tests).
+
+```python
+# ❌ PROHIBIDO (Oracle-only):
+Column("created_at", DateTime, server_default=func.sysdate())
+
+# ✅ CORRECTO — Python-side, todos los dialectos:
+from datetime import datetime, timezone
+Column("created_at", DateTime, default=lambda: datetime.now(timezone.utc))
+
+# ✅ ALTERNATIVA — ANSI SQL (SQLite, PostgreSQL, Oracle, MySQL):
+Column("created_at", DateTime, server_default=func.current_timestamp())
+```
+
+---
+
 ### Conexión a base de datos externa (S45-E)
 
 Si el proyecto usa Oracle, PostgreSQL u otra BD externa, la URL **DEBE** tomarse de variables de entorno o del `{project_context}`. **NUNCA hardcodear** host, puerto, usuario ni contraseña.
