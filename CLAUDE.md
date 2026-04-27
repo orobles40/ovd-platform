@@ -44,13 +44,13 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-26)
 
-- **Sprints completados:** S3 → S55 (pytest exit 0 histórico — 7/7 tests PASS, sin retries, 1m 35s)
-- **Tests:** Python unit ~1051 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1130
-- **Rama activa:** `dev` (commits hasta S55 sin mergear a `main`)
-- **Próximo foco:** S56 (QA contextualizado al FR del ciclo, logs de nodos a WARNING, constraints-contamination fix)
+- **Sprints completados:** S3 → S58-pre (render_composed, 7 stack files, 48 tests nuevos — commit `a05258c31`)
+- **Tests:** Python unit ~1127 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1180
+- **Rama activa:** `dev` (commits hasta S58-pre sin mergear a `main`)
+- **Próximo foco:** S59 (diagnóstico fallos silenciosos, devops tarea duplicada, reconexión SSE)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S55:** `9d939f29` — completed, 1m 35s, QA 65/100, pytest exit 0 — 7/7 PASS (histórico)
+- **Ciclo de validación S58-pre:** `839f65d1` — failed (~17 min), backend/database OK, frontend nunca arrancó, excepción silenciada post-fan-out
 
 ### Bug conocido — `ovd_refresh_tokens` columna faltante
 - `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db

@@ -1054,8 +1054,8 @@ if proc.returncode == 1 and "collected 0 items" in output:  # verdadero collecti
 
 ## S58-pre — Refactoring arquitectura de templates (prerequisito de S58)
 
-**Última iteración:** 2026-04-26 — diseño definido en sesión de análisis de S58.
-**Estado:** ⬜ Pendiente — debe ejecutarse antes de S58.
+**Última iteración:** 2026-04-26 — implementado y validado con 1127/1128 tests PASS.
+**Estado:** ✅ Completado — commit `a05258c31` en rama `dev`.
 
 **Motivación:** El modelo actual de templates usa *overrides completos* por stack. Cada archivo stack-specific (`system_backend_python.md`, `system_backend_typescript.md`) es un template independiente que duplica las reglas universales. Esto genera dos problemas:
 
@@ -1969,6 +1969,85 @@ S58-pre  → Capa 2 robusta (templates v1 por stack)
 S48      → Capa 4 confiable (web_research multi-proveedor)
 S44      → Capa 5 extensible (MCP Server Manager)
 S60/C10  → Capa 3 automatizada (batch indexing docs del cliente)
+```
+
+---
+
+## S59 — Diagnóstico de fallos silenciosos + devops scope + reconexión SSE
+
+**Última iteración:** 2026-04-26 — gaps identificados en ciclo de validación S58-pre (`839f65d1`).
+**Estado:** ⬜ Pendiente
+
+**Motivación:** El ciclo S58-pre terminó con `status=failed` sin ningún traceback visible en los logs del engine. El agente devops duplicó su primera tarea en vez de generar docker-compose. La SSE se desconectó a los 10 min dejando al usuario sin visibilidad. Estos tres problemas son independientes de S58 y bloquean la validación end-to-end de cualquier ciclo complejo.
+
+---
+
+### S59-A — Diagnóstico de fallos silenciosos (CRÍTICO)
+
+**Síntoma:** `status=failed` en BD sin traceback. LOG_LEVEL=debug en `.env` no se propaga a uvicorn → los logs de nivel DEBUG/WARNING de LangGraph y `execute_agents` no aparecen en `/tmp/ovd_engine.log`.
+
+**Causa raíz:** El engine se inicia con `uvicorn api:app --log-level info`. La variable `LOG_LEVEL=debug` del `.env` la lee la app pero uvicorn ya filtró los logs a nivel INFO antes de pasarlos al handler.
+
+**Fix:**
+- En el script de arranque: `uvicorn api:app --port 8001 --log-level debug`
+- Agregar `try/except Exception as e: log.exception(...)` en `_run_graph_background` alrededor del fan-out completo
+- Guardar el mensaje de excepción en `ovd_cycles.error_message TEXT` (nueva columna)
+- En `_ensure_cycle_registered`: si status != completed, guardar el último nodo activo del checkpoint como `failed_at_node`
+
+**Tests:**
+- `test_s59.py::test_failed_cycle_logs_exception` — excepción en graph → aparece en log + BD
+- `test_s59.py::test_failed_cycle_stores_error_message` — columna `error_message` tiene el traceback
+
+---
+
+### S59-B — Devops: tarea duplicada (ALTA)
+
+**Síntoma:** TASK-010 (docker-compose) del agente devops genera `Dockerfile.api` de nuevo en vez de `docker-compose.yml`. La segunda tarea produce el mismo output que la primera.
+
+**Causa raíz:** `system_devops.md` no tiene ejemplos diferenciados de Dockerfile vs docker-compose. El modelo genera lo que ya generó (Dockerfile) porque es la instrucción más reciente en contexto.
+
+**Fix:**
+- En `system_devops.md`: agregar sección separada con template mínimo de `docker-compose.yml` con Oracle via `host.docker.internal`
+- Agregar verificación post-tarea en S39-D loop: si el archivo escrito es idéntico a un artefacto anterior del mismo agente, emitir `log.warning` y agregar al retry_feedback: "Generaste el mismo archivo dos veces. La tarea pendiente es: docker-compose.yml"
+
+**Tests:**
+- `test_s59.py::test_devops_template_has_compose_example` — template tiene ejemplo de docker-compose
+- `test_s59.py::test_duplicate_artifact_warning` — warning si dos artefactos del mismo agente tienen igual path
+
+---
+
+### S59-C — Reconexión SSE automática (MEDIA)
+
+**Síntoma:** SSE se desconecta a ~10 min. El ciclo continúa (S47-A) pero el usuario pierde visibilidad. El dashboard muestra el formulario vacío tras el reload.
+
+**Fix:**
+- `FrLauncher.tsx`: al detectar `EventSource onerror`, esperar 3s y reconectar con el `thread_id` del ciclo activo (guardado en localStorage `ovd_active_thread`)
+- Al reconectar, consumir los eventos pendientes de la queue (S47-A los mantiene hasta 10 min)
+- Mostrar banner "Reconectando..." durante la reconexión en vez de resetear el estado
+
+**Tests:**
+- `test_s59.py::test_sse_reconnect_delivers_pending_events` — reconexión después de 5s recibe eventos encolados
+
+---
+
+### S59-D — Puerto Oracle en SDD (BAJA)
+
+**Síntoma:** El SDD generó `host.docker.internal:1522` (puerto incorrecto, debe ser 1521). El analyzer tomó el puerto del `project_context` pero lo modificó.
+
+**Fix:**
+- En `system_sdd.md` sección constraints Oracle: hardcodear `host.docker.internal:1521` como constante con comentario `# NUNCA cambiar el puerto — Oracle XE usa 1521`
+- En `stack/database_oracle.md`: mismo refuerzo
+
+---
+
+### Criterio de éxito S59
+
+```bash
+# 1. Lanzar ciclo con FR complejo
+# 2. Verificar que si hay excepción → aparece en log y en ovd_cycles.error_message
+# 3. Verificar que devops genera Dockerfile.api Y docker-compose.yml (archivos distintos)
+# 4. Simular desconexión SSE → dashboard reconecta en <5s y recibe eventos pendientes
+# 5. Verificar que SDD usa host.docker.internal:1521 (no :1522)
 ```
 
 ---
