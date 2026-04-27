@@ -1975,79 +1975,247 @@ S60/C10  → Capa 3 automatizada (batch indexing docs del cliente)
 
 ## S59 — Diagnóstico de fallos silenciosos + devops scope + reconexión SSE
 
-**Última iteración:** 2026-04-26 — gaps identificados en ciclo de validación S58-pre (`839f65d1`).
+**Última iteración:** 2026-04-26 — plan detallado tras investigación profunda (LangGraph docs + FastAPI SSE + análisis de código).
 **Estado:** ⬜ Pendiente
 
-**Motivación:** El ciclo S58-pre terminó con `status=failed` sin ningún traceback visible en los logs del engine. El agente devops duplicó su primera tarea en vez de generar docker-compose. La SSE se desconectó a los 10 min dejando al usuario sin visibilidad. Estos tres problemas son independientes de S58 y bloquean la validación end-to-end de cualquier ciclo complejo.
+**Motivación:** El ciclo S58-pre (`839f65d1`) terminó con `status=failed` después de ~17 min sin ningún traceback visible. El agente devops duplicó su primera tarea. La SSE se desconectó a los 10 min. Investigación identificó **3 capas de silenciamiento apiladas** — sin S59-A no es posible diagnosticar ningún otro fallo.
+
+**Ciclo de referencia:** `839f65d1` — backend OK, database OK, devops duplicó Dockerfile.api, frontend nunca arrancó (excepción silenciada post-fan-out).
 
 ---
 
 ### S59-A — Diagnóstico de fallos silenciosos (CRÍTICO)
 
-**Síntoma:** `status=failed` en BD sin traceback. LOG_LEVEL=debug en `.env` no se propaga a uvicorn → los logs de nivel DEBUG/WARNING de LangGraph y `execute_agents` no aparecen en `/tmp/ovd_engine.log`.
+**Síntoma:** `status=failed` en BD sin traceback. Ciclos fallan en silencio — imposible distinguir timeout LLM, excepción en tool calling, o error de red.
 
-**Causa raíz:** El engine se inicia con `uvicorn api:app --log-level info`. La variable `LOG_LEVEL=debug` del `.env` la lee la app pero uvicorn ya filtró los logs a nivel INFO antes de pasarlos al handler.
+**Root cause — 3 capas confirmadas en el código:**
 
-**Fix:**
-- En el script de arranque: `uvicorn api:app --port 8001 --log-level debug`
-- Agregar `try/except Exception as e: log.exception(...)` en `_run_graph_background` alrededor del fan-out completo
-- Guardar el mensaje de excepción en `ovd_cycles.error_message TEXT` (nueva columna)
-- En `_ensure_cycle_registered`: si status != completed, guardar el último nodo activo del checkpoint como `failed_at_node`
+**Capa 1 — Logging sin handlers (`api.py:89-97`):**
+`_configure_app_loggers()` solo llama `getLogger(name).setLevel(numeric)` sin `addHandler()`. Si uvicorn no configuró previamente un handler para `ovd.api`/`ovd-graph`, los `log.warning()` / `log.error()` se descartan silenciosamente.
+
+**Capa 2 — Exception sin traceback (`graph.py:2091`):**
+En `_run_agent_with_tools`, `except Exception as e: log.warning(...)` sin `exc_info=True`. El mensaje aparece pero sin pila de llamadas.
+
+**Capa 3 — `asyncio.create_task()` sin `add_done_callback` (`api.py:708`, `graph.py:2535`):**
+Tareas fire-and-forget que fallan solo generan `RuntimeWarning` en el GC — sin thread_id ni contexto.
+
+**Capa adicional (LangGraph):** si `agent_executor` lanza excepción no capturada, LangGraph la propaga al `astream()` dentro de `_stream_graph_events()`, donde un `except BaseException` la silencia — el grafo termina sin log ni traceback.
+
+**Fixes:**
+
+**A1 — `_configure_app_loggers()` con `dictConfig` (`api.py:89`):**
+```python
+def _configure_app_loggers() -> None:
+    import logging.config
+    level_str = os.environ.get("OVD_LOG_LEVEL", os.environ.get("LOG_LEVEL", "WARNING")).upper()
+    numeric = getattr(logging, level_str, logging.WARNING)
+    logging.config.dictConfig({
+        "version": 1,
+        "disable_existing_loggers": False,   # no silencia loggers ya creados
+        "formatters": {"ovd": {"format": "%(asctime)s [%(name)s] %(levelname)s %(message)s"}},
+        "handlers": {"stderr": {"class": "logging.StreamHandler", "stream": "ext://sys.stderr", "formatter": "ovd"}},
+        "root": {"level": numeric, "handlers": ["stderr"]},
+        "loggers": {
+            "uvicorn": {"level": numeric, "propagate": True},
+            "ovd.api": {"level": numeric, "propagate": True},
+            "ovd.graph": {"level": numeric, "propagate": True},
+        },
+    })
+```
+`disable_existing_loggers: False` es crítico — preserva los handlers de uvicorn y garantiza que `log.warning()` de `ovd.api` llega al stderr independientemente del `--log-level` de uvicorn.
+
+**A2 — `exc_info=True` en `_run_agent_with_tools` (`graph.py:2091`):**
+```python
+except Exception as e:
+    log.error("S17T tool calling falló para %s — usando fallback sin tools", agent_name, exc_info=True)
+```
+Cambiar `log.warning` → `log.error` + `exc_info=True` para traceback completo.
+
+**A3 — `add_done_callback` en tareas fire-and-forget:**
+```python
+# api.py:708
+def _log_cleanup_error(t: asyncio.Task) -> None:
+    if not t.cancelled() and (exc := t.exception()):
+        log.error("_deferred_cleanup error para thread=%s: %s", thread_id[:8], exc)
+asyncio.create_task(_deferred_cleanup(thread_id, 600)).add_done_callback(_log_cleanup_error)
+
+# graph.py:2535
+def _log_lesson_error(t: asyncio.Task) -> None:
+    if not t.cancelled() and (exc := t.exception()):
+        log.error("lessons.index_security_finding error: %s", exc, exc_info=exc)
+asyncio.create_task(lessons.index_security_finding(...)).add_done_callback(_log_lesson_error)
+```
+
+**A4 — `try/except` total en nodo `agent_executor` (`graph.py`):**
+Capturar excepción en el nodo → retornar resultado degradado en vez de propagar a LangGraph.
+Decisión de diseño: **continuar con resultado de error** (vs abortar) porque los artefactos de otros agentes ya están escritos en disco y el usuario puede ver el error y relanzar solo el agente fallido.
+```python
+async def agent_executor(state: OVDState) -> dict:
+    agent_name = state.get("current_agent", "unknown")
+    try:
+        # ... código existente ...
+    except Exception as exc:
+        log.error("agent_executor[%s]: EXCEPCIÓN NO CAPTURADA", agent_name, exc_info=True)
+        return {
+            "agent_results": [{"agent": agent_name, "output": f"[S59-A ERROR]: {type(exc).__name__}: {exc}",
+                               "artifacts": [], "uncertainties": [], "tokens": {"input": 0, "output": 0}}],
+            "token_usage": {agent_name: {"input": 0, "output": 0}},
+        }
+```
+
+**A5 — Migración BD:**
+```sql
+ALTER TABLE ovd_cycles ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE ovd_cycles ADD COLUMN IF NOT EXISTS failed_at_node TEXT;
+```
+En `_ensure_cycle_registered`: si `status != 'completed'`, guardar el último error del checkpoint en `error_message` y el nodo activo en `failed_at_node`.
 
 **Tests:**
-- `test_s59.py::test_failed_cycle_logs_exception` — excepción en graph → aparece en log + BD
-- `test_s59.py::test_failed_cycle_stores_error_message` — columna `error_message` tiene el traceback
+- `test_s59.py::test_logging_has_handler` — `ovd.api` logger tiene al menos 1 handler post-configure
+- `test_s59.py::test_logging_warning_reaches_stderr` — `log.warning()` aparece en stderr capturado
+- `test_s59.py::test_tool_call_failure_logs_traceback` — `except Exception` emite `exc_info`
+- `test_s59.py::test_create_task_callback_on_error` — `_deferred_cleanup` que lanza excepción es capturada
+- `test_s59.py::test_agent_executor_exception_returns_error_dict` — excepción → dict con `[S59-A ERROR]`
+- `test_s59.py::test_agent_executor_other_agents_not_lost` — si backend falla, database+frontend siguen en `agent_results`
 
 ---
 
 ### S59-B — Devops: tarea duplicada (ALTA)
 
-**Síntoma:** TASK-010 (docker-compose) del agente devops genera `Dockerfile.api` de nuevo en vez de `docker-compose.yml`. La segunda tarea produce el mismo output que la primera.
+**Síntoma:** TASK-010 (docker-compose) genera `Dockerfile.api` de nuevo en vez de `docker-compose.yml`.
 
-**Causa raíz:** `system_devops.md` no tiene ejemplos diferenciados de Dockerfile vs docker-compose. El modelo genera lo que ya generó (Dockerfile) porque es la instrucción más reciente en contexto.
+**Root cause:** `system_devops.md` tiene las restricciones correctas pero no tiene un mapping explícito de "nombre de tarea → archivo de salida esperado". El modelo reutiliza el patrón del único ejemplo en contexto (Dockerfile de TASK-009). No hay validación en el engine que detecte paths duplicados entre tareas del mismo agente.
 
-**Fix:**
-- En `system_devops.md`: agregar sección separada con template mínimo de `docker-compose.yml` con Oracle via `host.docker.internal`
-- Agregar verificación post-tarea en S39-D loop: si el archivo escrito es idéntico a un artefacto anterior del mismo agente, emitir `log.warning` y agregar al retry_feedback: "Generaste el mismo archivo dos veces. La tarea pendiente es: docker-compose.yml"
+**Fix B1 — Tabla de mapping en `system_devops.md`:**
+```markdown
+**Mapping obligatorio: nombre de tarea → archivo de salida**
+| Si la tarea dice...                                    | Debes generar                        |
+|--------------------------------------------------------|--------------------------------------|
+| "Dockerfile", "imagen", "build", "containerizar"       | `Dockerfile` o `.docker/Dockerfile.<servicio>` |
+| "docker-compose", "orquestar servicios", "stack"       | `docker-compose.yml`                 |
+| "CI/CD", "pipeline", "GitHub Actions", "workflow"      | `.github/workflows/<nombre>.yml`     |
+| "nginx", "reverse proxy", "routing HTTP"               | `nginx.conf`                         |
+
+Si el SDD asigna MÚLTIPLES tareas al agente devops, cada tarea DEBE generar un archivo DIFERENTE.
+NUNCA generes el mismo archivo en dos tareas distintas.
+```
+
+**Fix B2 — Detección de paths duplicados en `deliver` (`graph.py`):**
+```python
+seen_paths: dict[str, str] = {}
+for result in agent_results:
+    for artifact in result.get("artifacts", []):
+        path = artifact.get("path", "")
+        agent = result.get("agent", "?")
+        if path in seen_paths:
+            log.warning("S59-B: path duplicado '%s' — agente '%s' y '%s'", path, seen_paths[path], agent)
+        else:
+            seen_paths[path] = agent
+```
 
 **Tests:**
-- `test_s59.py::test_devops_template_has_compose_example` — template tiene ejemplo de docker-compose
-- `test_s59.py::test_duplicate_artifact_warning` — warning si dos artefactos del mismo agente tienen igual path
+- `test_s59.py::test_devops_template_has_mapping_table` — `system_devops.md` contiene "Mapping obligatorio"
+- `test_s59.py::test_deliver_logs_duplicate_paths` — dos artefactos con mismo path → `log.warning`
 
 ---
 
 ### S59-C — Reconexión SSE automática (MEDIA)
 
-**Síntoma:** SSE se desconecta a ~10 min. El ciclo continúa (S47-A) pero el usuario pierde visibilidad. El dashboard muestra el formulario vacío tras el reload.
+**Síntoma:** SSE desconecta a ~10 min. Grafo continúa (S47-A) pero UI pierde visibilidad. Dashboard muestra formulario vacío tras reload.
 
-**Fix:**
-- `FrLauncher.tsx`: al detectar `EventSource onerror`, esperar 3s y reconectar con el `thread_id` del ciclo activo (guardado en localStorage `ovd_active_thread`)
-- Al reconectar, consumir los eventos pendientes de la queue (S47-A los mantiene hasta 10 min)
-- Mostrar banner "Reconectando..." durante la reconexión en vez de resetear el estado
+**Root cause:** El servidor no emite campo `id:` en los eventos SSE → el browser `EventSource` reconecta automáticamente (cada 3s por defecto) pero envía `Last-Event-ID` vacío → no hay forma de reproducir eventos perdidos. La queue de S47-A ya entregó los eventos y el stream está vacío para el cliente reconectado.
+
+**Fix C1 — Emitir `id:` en todos los eventos:**
+```python
+_sse_seq: dict[str, int] = {}
+
+def _make_sse_event(event_type: str, data: dict, thread_id: str = "") -> str:
+    if thread_id:
+        seq = _sse_seq.get(thread_id, 0) + 1
+        _sse_seq[thread_id] = seq
+        id_line = f"id: {thread_id[:8]}-{seq}\n"
+    else:
+        id_line = ""
+    return f"{id_line}event: {event_type}\ndata: {json.dumps(data)}\n\n"
+```
+
+**Fix C2 — Buffer de eventos por thread (ring buffer ~200 items):**
+```python
+_event_buffers: dict[str, list[tuple[int, str]]] = {}
+_EVENT_BUFFER_SIZE = 200
+```
+Al poner eventos en la queue, guardarlos también en el buffer. Al reconectar, reproducir desde `Last-Event-ID`.
+
+**Fix C3 — Replay al reconectar en `stream_session`:**
+```python
+last_event_id = request.headers.get("last-event-id", "")
+if last_event_id and thread_id in _event_buffers:
+    try:
+        last_seq = int(last_event_id.split("-")[-1])
+        for seq, event_str in _event_buffers[thread_id]:
+            if seq > last_seq:
+                yield event_str
+    except (ValueError, IndexError):
+        pass
+```
+No requiere cambios en `FrLauncher.tsx` — el `EventSource` nativo del browser maneja la reconexión con `Last-Event-ID` automáticamente. El buffer de 200 eventos cubre ~10 min de ciclo típico.
 
 **Tests:**
-- `test_s59.py::test_sse_reconnect_delivers_pending_events` — reconexión después de 5s recibe eventos encolados
+- `test_s59.py::test_sse_event_has_id_field` — `_make_sse_event()` retorna string con línea `id:`
+- `test_s59.py::test_sse_replay_from_last_event_id` — reconexión con `Last-Event-ID` reproduce eventos perdidos
 
 ---
 
 ### S59-D — Puerto Oracle en SDD (BAJA)
 
-**Síntoma:** El SDD generó `host.docker.internal:1522` (puerto incorrecto, debe ser 1521). El analyzer tomó el puerto del `project_context` pero lo modificó.
+**Síntoma:** SDD generó `host.docker.internal:1522` (debe ser 1521).
 
-**Fix:**
-- En `system_sdd.md` sección constraints Oracle: hardcodear `host.docker.internal:1521` como constante con comentario `# NUNCA cambiar el puerto — Oracle XE usa 1521`
-- En `stack/database_oracle.md`: mismo refuerzo
+**Root cause:** Los templates ya tienen 1521 correctamente (`stack/database_oracle.md:9`, `system_devops.md:22`). El problema es alucinación del LLM — 1522 aparece en training data de algunas configuraciones de Oracle Application Server. Sin una restricción explícita en `system_sdd.md`, el LLM puede generar el puerto incorrecto.
+
+**Fix — Restricción explícita en `system_sdd.md`:**
+```markdown
+**Puerto Oracle obligatorio:** Si el SDD define conectividad Oracle, el puerto SIEMPRE es 1521.
+El puerto 1522 es incorrecto para Oracle XE/19c estándar. No uses 1522 en ningún connection string.
+```
+
+**Tests:**
+- `test_s59.py::test_oracle_sdd_template_port_constraint` — `system_sdd.md` menciona "1521" y prohíbe "1522"
 
 ---
+
+### Orden de implementación S59
+
+```
+Fix A1 (dictConfig)         ← habilita que el resto de los logs sean visibles
+Fix A2 (exc_info=True)      ← traceback completo desde el primer restart
+Fix A3 (callbacks)          ← tareas fire-and-forget supervisadas
+Fix A4 (try/except total)   ← agentes fallidos reportan en vez de silenciar
+Fix A5 (migración BD)       ← columnas error_message + failed_at_node
+Fix B1 (devops template)    ← independiente, ~15 min
+Fix B2 (path duplicados)    ← independiente, ~30 min
+Fix C1+C2+C3 (SSE replay)   ← independiente, ~1h
+Fix D  (puerto 1521)        ← 1 línea en system_sdd.md
+Tests S59                   ← al final, 11 tests
+```
 
 ### Criterio de éxito S59
 
 ```bash
-# 1. Lanzar ciclo con FR complejo
-# 2. Verificar que si hay excepción → aparece en log y en ovd_cycles.error_message
-# 3. Verificar que devops genera Dockerfile.api Y docker-compose.yml (archivos distintos)
-# 4. Simular desconexión SSE → dashboard reconecta en <5s y recibe eventos pendientes
-# 5. Verificar que SDD usa host.docker.internal:1521 (no :1522)
+# 1. Migración aplicada
+docker exec postgres_db psql -U ovd_dev -d ovd_dev -c "\d ovd_cycles"
+# → columnas error_message y failed_at_node presentes
+
+# 2. Tests S59
+cd src/engine && .venv/bin/python -m pytest tests/test_s59.py -v
+
+# 3. Regresión
+.venv/bin/python -m pytest tests/ -m "not integration and not e2e and not docker" --timeout=60
+
+# 4. Smoke: lanzar ciclo, provocar fallo, verificar
+# → log del engine muestra traceback completo
+# → SELECT error_message, failed_at_node FROM ovd_cycles ORDER BY created_at DESC LIMIT 1
+# → devops genera Dockerfile.api Y docker-compose.yml (archivos distintos)
+# → desconectar SSE a los 3 min → reconectar → recibe eventos perdidos
 ```
 
 ---
