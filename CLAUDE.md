@@ -44,10 +44,10 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-27)
 
-- **Sprints completados:** S3 → S69 (commit `7c1543630`)
-- **Tests:** Python unit ~1221 (suite principal) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1264
-- **Rama activa:** `dev` (S69 commiteado, sin mergear a `main`)
-- **Próximo foco:** S70-A (session_create → grafo inmediato), S70-C (conftest oracledb mock), S70-B (routers fantasma)
+- **Sprints completados:** S3 → S70 (rama `dev`)
+- **Tests:** Python unit ~1240+ (suite principal, S70 agregó 14 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1280+
+- **Rama activa:** `dev` (S70 implementado, sin mergear a `main`)
+- **Próximo foco:** S71-A (nombres canónicos en inglés para utils), S71-B (verificar cobertura SDD post-execute)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
 - **Ciclo de validación S69:** `e3888513` — 6m 54s, QA 95/100, status=completed. S69-A/B validados. src/main.py generado por primera vez. Tests FAIL: `ModuleNotFoundError: oracledb` (diferente al bloqueador S68).
@@ -134,6 +134,57 @@ cd src/tui && cargo build && cargo run
 - **S68-D:** `system_backend_python.md` — agregadas `format_rut()`, `require_valid_rut()`, regla de almacenamiento RUT en BD, UNIQUE constraint por (org_id, rut_limpio).
 - **16 tests nuevos** en `test_s68.py`. **1208 tests pasan** (suite principal).
 - **Ciclo validación S68 (33b0ed21):** 7m 49s (-77% vs S65), QA 60/100, tests FAIL. Bloqueador: `src/main.py` nunca generado por el SDD — `from src import app` falla con ImportError.
+
+### Novedades S70 (2026-04-27) — rama `dev`
+
+- **S70-A:** `session_create` dispara `asyncio.create_task(_run_graph_background(...))` inmediatamente antes del `return 201`. Grafo inicia sin esperar SSE (~43ms). Elimina el bloqueo donde ciclos quedaban `started` indefinidamente.
+- **S70-B:** `_ensure_fastapi_main_task()` — solo genera `include_router()` para módulos con `router.py` explícito en el SDD. Si no hay router.py en tareas → description dice "no importes módulos router que no estén definidos en el SDD".
+- **S70-C:** `run_tests` — detecta `import oracledb` en archivos del workspace (excluye test_*.py y conftest.py). Si detecta → agrega `sys.modules['oracledb'] = MagicMock()` al conftest.py antes de pytest. Validado en ciclo `0209baf4`.
+- **S70-D:** `system_backend_python.md` — regla "NUNCA importes desde el mismo módulo que estás escribiendo". Ejemplo explícito de auto-import circular prohibido.
+- **S70-E:** `system_backend_python.md` — regla JWT library única: `python-jose[cryptography]`. No mezclar con PyJWT.
+- **14 tests nuevos** en `test_s70.py`. **Tests S69 actualizados** (`test_s69a_descripcion_contiene_include_router` → `test_s69a_descripcion_contiene_entry_point`).
+- **Ciclo validación S70 (`0209baf4`):** ~10 min, QA 60/100, status=`completed`. S70-A/B/C/D/E validados. Bloqueador restante: `validate_rut` vs `validar_rut` naming inconsistency → ImportError → pytest exit 4.
+- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_s39::test_usa_cap_800_en_truncate` (obsoleto), `test_s47::test_dispatch_frontend_despacha_pendientes`.
+
+### Roadmap S71 — Próximo sprint
+
+#### S71-A — Nombres canónicos en inglés para funciones de utilidad (CRÍTICO)
+En `system_backend_python.md`, agregar tabla de nombres canónicos:
+- `validate_rut(rut: str) -> bool` en `src/utils/rut_validator.py`
+- `clean_rut(rut: str) -> str`
+- `format_rut(rut: str) -> str`
+- `is_prime(n: int) -> bool` en `src/utils/prime_validator.py`
+**Impacto esperado:** pytest exit 0.
+
+#### S71-B — Verificar cobertura de tareas SDD post-execute (ALTO)
+Después de `execute_agents`, verificar que cada `task.file` del SDD exista en disco. Si falta alguno → retry selectivo solo para ese agente y esa tarea.
+`_check_sdd_coverage(sdd, work_dir) -> list[str]` → archivos faltantes.
+
+#### S71-C — Fix `_ensure_cycle_registered` con tokens (ALTO)
+Ciclo queda `status='started'` aunque archivos fueron generados. `_ensure_cycle_registered` debe leer tokens desde el checkpoint del grafo y actualizarlos en BD.
+
+#### S71-D — Forzar Pydantic v2 en templates (MEDIO)
+Prohibir `@validator` en `system_backend_python.md`. Solo mostrar `@field_validator` + `@classmethod`.
+
+#### S71-E — `valor_total` con trigger Oracle (MEDIO)
+En `system_sdd.md`, agregar ejemplo de trigger Oracle para campos calculados automáticamente: `valor_total = SUM(benefits.valor)`.
+
+#### Ciclo de validación S71
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S71:** duración <10 min, QA ≥80, pytest exit 0, status=`completed`.
 
 ### Novedades S69 (2026-04-27) — rama `dev`
 
