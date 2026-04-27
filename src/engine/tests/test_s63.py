@@ -142,18 +142,19 @@ def test_s63b_cleanup_uses_agent_results_not_rglob(tmp_path):
     assert not (src / "models.py").exists(), "models.py debe ser borrado por S63-B"
 
 
-def test_s63b_no_cleanup_when_retry_round_zero(tmp_path):
-    """S63-B: NO hay cleanup si retry_round == 0 (primera ejecución, no hay round anterior)."""
+def test_s63b_cleanup_in_retry_round_zero(tmp_path):
+    """S63-B: cleanup ocurre en retry_round==0 también — borra artefactos del round 0
+    antes de despachar retry ronda 1, evitando mezcla de archivos parciales con nuevos."""
     src = tmp_path / "src"
     src.mkdir()
     service = src / "main.py"
-    service.write_text("# primera ronda")
+    service.write_text("# primera ronda — debe ser borrado antes del retry")
 
     state = {
         "test_results": {"passed": False, "output": "AssertionError\n", "return_code": 1},
         "retry_feedback": "",
         "last_test_error": "",
-        "test_retry_count": 0,  # <-- ronda 0, NO debe limpiar
+        "test_retry_count": 0,  # ronda 0 — S63-B DEBE limpiar igual
         "directory": str(tmp_path),
         "sdd": {"tasks": []},
         "agent_results": [{"agent": "backend", "artifacts": [{"path": "src/main.py"}], "output": ""}],
@@ -164,8 +165,8 @@ def test_s63b_no_cleanup_when_retry_round_zero(tmp_path):
 
     graph.update_test_retry(state)
 
-    # El archivo NO debe ser borrado porque es ronda 0
-    assert service.exists(), "S63-B: NO debe borrar archivos en retry_round == 0"
+    # S63-B debe borrar el archivo del round 0 antes del retry ronda 1
+    assert not service.exists(), "S63-B: debe borrar artefactos del round 0 antes de retry ronda 1"
 
 
 def test_s63b_cleanup_not_in_run_tests(tmp_path):

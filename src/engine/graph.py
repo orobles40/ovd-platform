@@ -3652,7 +3652,7 @@ def update_test_retry(state: OVDState) -> dict | Command:
     # En este punto los archivos del retry anterior ya están en disco pero el nuevo retry
     # AÚN no ha escrito nada — timing correcto. Solo borra .py de los agentes que van a retry.
     _cleanup_work_dir = state.get("directory", "")
-    if _cleanup_work_dir and selective_agents and retry_round >= 1:
+    if _cleanup_work_dir and selective_agents and retry_round >= 0:
         _base = pathlib.Path(_cleanup_work_dir)
         _prev_artifacts: list[str] = []
         for r in state.get("agent_results", []):
