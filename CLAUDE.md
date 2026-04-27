@@ -42,15 +42,32 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-26)
+## Estado actual (2026-04-27)
 
-- **Sprints completados:** S3 → S61 (commit `fa52d7efa`)
-- **Tests:** Python unit ~1140 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1193
-- **Rama activa:** `dev` (commits hasta S61 sin mergear a `main`)
-- **Próximo foco:** validación S61 — ciclo prueba con FR contratos/RUT (target: pytest exit 0 ronda 1)
-- **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
+- **Sprints completados:** S3 → S66 (commit `03791b612`)
+- **Tests:** Python unit ~1192 (suite principal) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1235
+- **Rama activa:** `dev` (S65+S66 commiteados, sin mergear a `main`)
+- **Próximo foco:** reiniciar engine, lanzar ciclo de prueba con FR contratos/RUT para validar S66
+- **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S60:** `0db2b88a` — 25m 43s, QA 95/100, tests FAIL `ModuleNotFoundError: No module named 'src.main'` (3 retries, root cause: S27-A + pythonpath incompatible)
+- **Ciclo de validación S65:** `bc5bcba1` — 34m 4s, QA 65/100, status=completed (primer completed desde S63). S65-A detectó 7 phantom imports pero loop no se cortó — corregido en S66-C.
+- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp)
+
+### Novedades S66 (2026-04-27) — rama `dev`
+
+- **S66-A:** `_validate_artifacts_imports()` — escanea archivos en disco para construir mapa `export_name → módulo`. Cuando detecta import fantasma, sugiere corrección exacta: `→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'`. También lista "MÓDULOS DISPONIBLES EN DISCO" para que el agente sepa qué puede importar sin adivinar.
+- **S66-B:** `generate_sdd` — post-procesamiento limita máx 5 tareas/agente. Enforcement en código: si el LLM genera 11 tareas en backend, quedan 5. Registrado en `log.warning` con `backend(11→5)`.
+- **S66-C:** `run_tests` — detecta cuando S65-A genera el mismo feedback de imports rotos que el round anterior (líneas 1-3 idénticas). Si `retry_round ≥ 1`: `Command(goto=generate_docs)` directo. Elimina el loop de 34 min del ciclo bc5bcba1.
+- **10 tests nuevos** en `test_s66.py`. **1192 tests pasan** en suite completa.
+
+### Novedades S65 (2026-04-27) — rama `dev`
+
+- **S65-A:** `_validate_artifacts_imports()` — `ast.parse()` + `importlib.util.find_spec()` detecta phantom imports ANTES de pytest. Si módulo importado no está en disco ni stdlib ni instalado → retorna `(False, feedback)` y omite pytest.
+- **S65-B:** `_validate_orm_patterns()` — detecta `db.add(PydanticModel(...))` en lugar de `db.add(ORMModel(...))`.
+- **S65-C:** `_check_fastapi_route_ordering()` — detecta rutas parametrizadas (`{id}`) registradas antes que rutas estáticas con mismo prefijo.
+- **S65-D:** `_ensure_auth_dependencies()` — auto-genera `src/auth/dependencies.py` cuando el FR menciona JWT/auth y el archivo no existe.
+- **S65-E:** `_ensure_python_infrastructure()` — auto-crea `requirements.txt` si no existe en work_dir después de execute_agents.
+- **Ciclo validación bc5bcba1:** 34m 4s, QA=65/100, status=completed. S65-A detectó 7 phantom imports por ronda pero agentes no corrigieron porque feedback no indicaba ruta correcta → corregido en S66-A.
 
 ### Novedades S61 (2026-04-26) — rama `dev`
 
@@ -96,6 +113,43 @@ cd src/tui && cargo build && cargo run
 - **S55-D:** `graph.py` — `update_test_retry` S54-D cambia `log.info` → `log.warning` para el reporte de archivos en disco antes del retry.
 - **11 tests nuevos** en `test_s55.py`. **1051 tests pasan** (1 flaky pre-existente: `test_s31.py::test_cycle_start_ts_reciente`).
 - **Resultado ciclo validación S55:** `9d939f29` — **1m 35s** (vs 3m 47s en S54), **pytest exit 0** (primer éxito histórico), 7/7 tests PASS, 30k tokens (vs 120k en S54 = -75%), 0 retries, 4 archivos en disco. Todos los asserts con `round()` — sin float mismatch.
+
+### Roadmap S67 — Próximo sprint (validación S66)
+
+#### Acción inmediata: reiniciar engine y lanzar ciclo
+
+```bash
+# 1. Limpiar entrega anterior
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
+rm -f  /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+# 2. Iniciar engine con S66 activo
+cd /Users/omarrobles/Workspace/Proyectos\ Personales/agente\ de\ terminal/ovd-platform/src/engine
+set -a && source <(grep -v '^#' .env | grep '=' | sed 's/ *#.*//') && set +a
+env ANTHROPIC_API_KEY="" .venv/bin/uvicorn api:app --port 8001
+
+# 3. Lanzar ciclo desde dashboard o curl
+```
+
+#### S67-A — Validar S66-A corrección de imports (crítico)
+- **Target:** el agente recibe `→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'` y en ronda 1 corrige el import. `run_tests` pasa a ejecutar pytest real.
+- **Métrica:** ciclo completa sin import loop. QA ≥ 70/100.
+
+#### S67-B — Validar S66-C shortcut (crítico)
+- **Target:** si import loop persiste en ronda 1, `Command(goto=generate_docs)` debe disparar. Duración < 20 min (vs 34 min en S65).
+- **Métrica:** log muestra `S66-C import loop detectado (ronda=1)`.
+
+#### S67-C — Fix phantom router imports en main.py (alto)
+- **Síntoma:** `src/main.py` siempre importa `from src.auth.router import router` y `from src.contracts.router import router` aunque ningún agente genere `router.py`.
+- **Fix:** En `system_backend_python.md` agregar regla: "main.py solo importa routers que TÚ generas. Si no hay router.py en el SDD, NO lo importes."
+- **Alternativa:** S65-A detecta el phantom en main.py → S66-A sugiere omitirlo.
+
+#### S67-D — Actualizar línea base de ciclos
+| Sprint | Ciclo | Duración | QA | Tests | Tokens in |
+|--------|-------|----------|----|-------|-----------|
+| S55 | `9d939f29` | 1m 35s | 65 | exit 0 | 30k |
+| S65 | `bc5bcba1` | 34m 4s | 65 | 0/2 (col. error) | 687k |
+| **S67 objetivo** | — | **<20 min** | **≥70** | **exit 0** | **~200k** |
 
 ### Roadmap S56 — Próximo sprint
 
