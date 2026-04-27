@@ -182,7 +182,7 @@ def test_s60b_fires_using_last_test_error_not_truncated():
     from langgraph.types import Command
     assert isinstance(result, Command), "S60-B+S62-C debe retornar Command"
     assert result.update.get("test_retry_count") == 2
-    assert result.update.get("status") == "structural_error_no_retry"
+    assert "status" not in result.update  # S63-A: status removido del Command.update
     assert result.goto == "generate_docs"
 
 

@@ -3518,7 +3518,6 @@ def update_test_retry(state: OVDState) -> dict | Command:
                 "retry_feedback": existing,
                 "selective_retry_agents": [],
                 "last_test_error": test_output if _is_structural else "",
-                "status": "structural_error_no_retry",
                 "messages": state.get("messages", []) + [{
                     "role": "agent",
                     "content": (

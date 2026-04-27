@@ -35,9 +35,10 @@ def test_s62c_returns_command_on_repeated_structural_error():
     result = graph.update_test_retry(state)
     assert isinstance(result, Command), f"Debe retornar Command, no {type(result).__name__}"
     assert result.goto == "generate_docs"
-    assert result.update["status"] == "structural_error_no_retry"
     assert result.update["test_retry_count"] == 2
     assert result.update["selective_retry_agents"] == []
+    # S63-A: status removido del Command.update para evitar InvalidUpdateError
+    assert "status" not in result.update
 
 
 def test_s62c_returns_dict_on_first_structural_error():

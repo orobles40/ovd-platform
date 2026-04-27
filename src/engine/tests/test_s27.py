@@ -38,7 +38,7 @@ class TestConfTestInjection:
 
     @pytest.mark.asyncio
     async def test_injects_conftest_when_empty(self, tmp_path):
-        """conftest.py existente pero vacío → se sobreescribe con sys.path.insert."""
+        """conftest.py existente pero vacío → S62-A crea pytest.ini (preferido) o S27-A inyecta conftest."""
         (tmp_path / "conftest.py").write_text("")  # vacío
         state = _make_state_with_tests(tmp_path)
 
@@ -52,9 +52,16 @@ class TestConfTestInjection:
             import graph as g
             await g.run_tests(state)
 
-        content = (tmp_path / "conftest.py").read_text()
-        assert "sys.path.insert" in content
-        assert "src" in content
+        _ini = tmp_path / "pytest.ini"
+        _conftest = tmp_path / "conftest.py"
+        # S62-A crea pytest.ini con pythonpath (preferido sobre conftest injection)
+        # S27-A solo inyecta si no hay pytest.ini con pythonpath
+        if _ini.exists() and "pythonpath" in _ini.read_text():
+            assert "pythonpath" in _ini.read_text()
+        else:
+            content = _conftest.read_text()
+            assert "sys.path.insert" in content
+            assert "src" in content
 
     @pytest.mark.asyncio
     async def test_creates_conftest_when_missing(self, tmp_path):
