@@ -178,9 +178,12 @@ def test_s60b_fires_using_last_test_error_not_truncated():
         "status": "",
     }
     result = graph.update_test_retry(state)
-    # S60-B debe agotar los retries
-    assert result.get("test_retry_count") == 2  # máximo de retries de tests
-    assert result.get("status") == "structural_error_no_retry"
+    # S62-C: ahora retorna Command — acceder al update dict
+    from langgraph.types import Command
+    assert isinstance(result, Command), "S60-B+S62-C debe retornar Command"
+    assert result.update.get("test_retry_count") == 2
+    assert result.update.get("status") == "structural_error_no_retry"
+    assert result.goto == "generate_docs"
 
 
 def test_s60b_does_not_fire_on_first_structural_error():
@@ -213,10 +216,12 @@ def test_s60b_does_not_fire_on_first_structural_error():
 
 @pytest.mark.asyncio
 async def test_qa_review_returns_cached_in_selective_retry():
-    """S61-C: qa_review retorna el resultado previo sin llamar LLM cuando hay selective retry."""
+    """S62-B (ex S61-C): qa_review retorna QA previo sin llamar LLM en retry de tests."""
     prev_qa = {"score": 90, "passed": True, "issues": [], "sdd_compliance": True}
     state = {
-        "selective_retry_agents": ["backend"],
+        "selective_retry_agents": [],   # S62-B usa test_retry_count, no este campo
+        "test_retry_count": 1,          # señal correcta post-S62-B
+        "qa_retry_count": 0,
         "qa_result": prev_qa,
         "project_context": "ctx",
         "org_id": "", "project_id": "", "jwt_token": "",

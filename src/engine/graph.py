@@ -57,7 +57,7 @@ from langchain_openai import ChatOpenAI   # S21: usado en describe_image (visió
 from pydantic import BaseModel, Field, field_validator
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.types import interrupt, Send
+from langgraph.types import interrupt, Send, Command
 import model_router
 import template_loader
 import github_helper
@@ -2676,14 +2676,17 @@ def _build_qa_sdd_block(sdd: dict) -> str:
 
 async def qa_review(state: OVDState) -> dict:
     """Revisa calidad y cumplimiento del SDD (no seguridad — eso lo hace security_audit)."""
-    # S61-C: en selective test retry, reutilizar QA anterior para evitar score volátil.
-    # El agente solo regeneró el módulo fallido — QA del ciclo ya fue evaluado correctamente.
-    _selective = state.get("selective_retry_agents", [])
+    # S62-B: reutilizar QA anterior cuando hay retry de tests (no de QA).
+    # Señal: test_retry_count > 0 (persiste en estado) en vez de selective_retry_agents
+    # (que route_agents limpia antes de que qa_review lo lea — bug S61-C).
+    # Condición extra: qa_retry_count == 0 para no bloquear retries de QA legítimos.
     _prev_qa = state.get("qa_result", {})
-    if _selective and _prev_qa.get("score", 0) > 0:
+    _test_retry_count = state.get("test_retry_count", 0)
+    _qa_retry_count = state.get("qa_retry_count", 0)
+    if _test_retry_count > 0 and _qa_retry_count == 0 and _prev_qa.get("score", 0) > 0:
         log.info(
-            "qa_review: S61-C selective retry activo (%s) — reutilizando QA previo (score=%d)",
-            _selective, _prev_qa.get("score", 0),
+            "qa_review: S62-B test_retry_count=%d, qa_retry_count=%d — reutilizando QA previo (score=%d)",
+            _test_retry_count, _qa_retry_count, _prev_qa.get("score", 0),
         )
         return {"qa_result": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
 
@@ -2985,7 +2988,21 @@ async def run_tests(state: OVDState) -> dict:
     if work_dir and runner == "pytest":
         _conftest = pathlib.Path(work_dir) / "conftest.py"
         _pytest_ini = pathlib.Path(work_dir) / "pytest.ini"
+        _pyproject = pathlib.Path(work_dir) / "pyproject.toml"
         _is_retry_round = retry_round > 0
+
+        # S62-A: auto-crear pytest.ini cuando no existe y pyproject.toml tampoco tiene config pytest.
+        # El agente no siempre genera pytest.ini a pesar de las instrucciones del template.
+        # El engine garantiza que exista para evitar ModuleNotFoundError por sys.path incorrecto.
+        if not _pytest_ini.exists():
+            _pyproject_has_pytest = (
+                _pyproject.exists()
+                and "[tool.pytest.ini_options]" in _pyproject.read_text(encoding="utf-8", errors="replace")
+            )
+            if not _pyproject_has_pytest:
+                _pytest_ini.write_text("[pytest]\npythonpath = .\n", encoding="utf-8")
+                log.warning("run_tests: S62-A pytest.ini no encontrado — creado con pythonpath = .")
+
         _has_pytest_pythonpath = (
             _pytest_ini.exists()
             and "pythonpath" in _pytest_ini.read_text(encoding="utf-8", errors="replace")
@@ -3468,7 +3485,7 @@ def _build_module_contracts(agent_results: list[dict]) -> str:
     )
 
 
-def update_test_retry(state: OVDState) -> dict:
+def update_test_retry(state: OVDState) -> dict | Command:
     """S22 — Incrementa el contador de retries de tests e inyecta feedback al retry loop."""
     tr = state.get("test_results", {})
     test_output = tr.get("output", "")
@@ -3489,23 +3506,29 @@ def update_test_retry(state: OVDState) -> dict:
     if _same_error_repeated and retry_round >= 1:
         _err_lines = [l for l in test_output.splitlines() if "ModuleNotFoundError" in l or "ImportError" in l][:3]
         log.warning(
-            "update_test_retry: S60-B error estructural repetido (rc=%d, ronda=%d) — "
-            "omitiendo retry, pasando a deliver. Líneas: %s",
+            "update_test_retry: S60-B+S62-C error estructural repetido (rc=%d, ronda=%d) — "
+            "Command(goto=generate_docs), saltando route_agents. Líneas: %s",
             _rc, retry_round, _err_lines,
         )
-        return {
-            "test_retry_count": 2,  # S60-B: agota los retries disponibles (máx 2 = _route_after_tests)
-            "retry_feedback": existing,
-            "selective_retry_agents": [],
-            "status": "structural_error_no_retry",
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": (
-                    f"S60-B: Error estructural de imports (ronda {retry_round + 1}) — "
-                    "mismo error en rondas consecutivas. Pasando a deliver con diagnóstico."
-                ),
-            }],
-        }
+        # S62-C: Command(goto=...) sobrescribe el edge test_retry → route_agents.
+        # El grafo salta directamente a generate_docs sin despachar una ronda extra de agentes.
+        return Command(
+            update={
+                "test_retry_count": 2,
+                "retry_feedback": existing,
+                "selective_retry_agents": [],
+                "last_test_error": test_output if _is_structural else "",
+                "status": "structural_error_no_retry",
+                "messages": state.get("messages", []) + [{
+                    "role": "agent",
+                    "content": (
+                        f"S60-B: Error estructural de imports (ronda {retry_round + 1}) — "
+                        "mismo error en rondas consecutivas. Pasando a generate_docs con diagnóstico."
+                    ),
+                }],
+            },
+            goto="generate_docs",
+        )
 
     # S34-A: detectar si el mismo AssertionError se repite respecto al round anterior
     current_assert_errors = _extract_assert_errors(test_output)

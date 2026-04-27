@@ -72,9 +72,15 @@ class TestConfTestInjection:
             import graph as g
             await g.run_tests(state)
 
-        assert (tmp_path / "conftest.py").exists()
-        content = (tmp_path / "conftest.py").read_text()
-        assert "sys.path.insert" in content
+        # S62-A: cuando no hay pytest.ini, el engine lo crea con pythonpath = .
+        # (es preferible a conftest injection para evitar conflictos de doble prefijo)
+        _ini = tmp_path / "pytest.ini"
+        _conftest = tmp_path / "conftest.py"
+        assert _ini.exists() or _conftest.exists(), "debe existir pytest.ini o conftest.py"
+        if _ini.exists():
+            assert "pythonpath" in _ini.read_text()
+        else:
+            assert "sys.path.insert" in _conftest.read_text()
 
     @pytest.mark.asyncio
     async def test_does_not_overwrite_existing_conftest(self, tmp_path):

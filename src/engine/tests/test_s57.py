@@ -167,6 +167,9 @@ async def test_conftest_regenerated_in_retry_round(tmp_path, caplog):
     conftest = tmp_path / "conftest.py"
     conftest.write_text("import sys\nsys.path.insert(0, 'old/path')\n")
     old_content = conftest.read_text()
+    # S62-A: crear pytest.ini SIN pythonpath para que S62-A no lo sobreescriba
+    # y la lógica de conftest regeneration (S57-C) siga siendo alcanzable.
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -v\n")
 
     test_file = tmp_path / "tests" / "test_dummy.py"
     test_file.parent.mkdir()
