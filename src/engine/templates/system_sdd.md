@@ -182,6 +182,33 @@ FR: "Validar RUT chileno y retornar su formato canónico"
 → NO hay repository, NO hay db.py, NO hay migraciones
 ```
 
+**Regla S64-C — Infraestructura HTTP explícita:**
+Cuando el SDD incluye endpoints FastAPI con dependencias (Depends(get_db), JWT, org_id),
+SIEMPRE generar estas tareas de infraestructura PRIMERO (antes de models, services, main):
+
+1. `src/database.py` — SessionLocal, get_db(), Base = DeclarativeBase()
+   → Solo cuando el FR menciona persistencia de datos (Oracle, PostgreSQL, SQLite, BD).
+
+2. `src/auth/dependencies.py` — get_current_user() que retorna {"org_id": int, "rut": str, "rol": str}
+   → Solo cuando el FR menciona autenticación, JWT, roles, o login.
+   → Si oracle_involved=False Y el FR no menciona auth explícitamente: OMITIR esta tarea.
+
+Sin estas tareas, el agente backend generará imports a módulos inexistentes → ImportError en ronda 0.
+
+❌ INCORRECTO — FastAPI sin infraestructura:
+```
+TASK-001: src/contracts/service.py   ← importa get_db que no existe
+TASK-002: src/main.py                ← importa get_current_user que no existe
+```
+
+✅ CORRECTO — infraestructura primero:
+```
+TASK-001: src/database.py            ← define get_db, SessionLocal, Base
+TASK-002: src/auth/dependencies.py   ← define get_current_user
+TASK-003: src/contracts/service.py   ← puede importar de TASK-001 y TASK-002
+TASK-004: src/main.py                ← puede importar de todos los anteriores
+```
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

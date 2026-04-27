@@ -1381,17 +1381,69 @@ def _filter_requirements_for_task(requirements: list, task: dict) -> list:
     return filtered + must_reqs
 
 
-def _build_single_task_sdd_content(sdd: dict, agent_name: str, task: dict, task_index: int, total_tasks: int) -> str:
+def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> str:
+    """S64-B: inventario de módulos disponibles en este ciclo para groundear al LLM.
+
+    Fuentes:
+    - Tareas del SDD (módulos que se van a generar en este ciclo)
+    - written_files (módulos ya escritos por tareas anteriores del mismo ciclo)
+
+    El manifest se inyecta al INICIO del prompt de cada tarea para prevenir que el
+    LLM importe módulos fantasma (src.database, src.auth.middleware) que no existen.
+    Basado en De-Hallucinator: Iterative Grounding (arXiv:2401.01701).
+    """
+    from_sdd: set[str] = set()
+    for t in sdd.get("tasks", []):
+        f = t.get("file", "")
+        if f.endswith(".py") and not f.startswith("tests/") and f:
+            from_sdd.add(f)
+
+    from_written: list[str] = [
+        f for f in (written_files or [])
+        if f.endswith(".py") and not f.startswith("tests/")
+    ]
+
+    all_mods = sorted(from_sdd | set(from_written))
+    if not all_mods:
+        return ""
+
+    lines = "\n".join(
+        f"  {m}  →  from {m.replace('/', '.').removesuffix('.py')} import <nombre>"
+        for m in all_mods
+    )
+    return (
+        "[S64-B — MÓDULOS QUE EXISTEN O EXISTIRÁN EN ESTE PROYECTO]\n"
+        "Importa SOLO de estos módulos. Cualquier otro no existe en disco:\n"
+        f"{lines}\n"
+        "PROHIBIDO: importar src.database, src.auth, src.repository, ni ningún módulo no listado.\n"
+        "Si necesitas algo que no está en la lista, CRÉALO en este mismo archivo.\n\n"
+    )
+
+
+def _build_single_task_sdd_content(
+    sdd: dict,
+    agent_name: str,
+    task: dict,
+    task_index: int,
+    total_tasks: int,
+    written_files: list[str] | None = None,
+) -> str:
     """S39-D: construye el SDD para una sola tarea del agente.
 
     El agente recibe el contexto compartido completo (summary, requirements, design,
     constraints) pero solo una tarea en 'Your Task'. Esto reduce el output de
     10-15K tokens (todas las tareas) a ~800 tokens (una tarea), eliminando timeouts.
+
+    S64-B: acepta written_files para inyectar manifest de módulos disponibles.
     """
+    # S64-B: manifest de módulos al inicio del prompt — groundea al LLM con el inventario real
+    module_manifest = _build_sdd_module_manifest(sdd, written_files)
+
     # S56-D: filtrar requirements por depends_on de la tarea para reducir tokens
     task_requirements = _filter_requirements_for_task(sdd.get("requirements", []), task)
 
     base = (
+        f"{module_manifest}"
         f"## Summary\n{sdd.get('summary', '')}\n\n"
         f"## Requirements\n{_json.dumps(task_requirements, ensure_ascii=False, indent=2)}\n\n"
         f"## Design\n{sdd.get('design', {}).get('overview', '')}\n\n"
@@ -1729,8 +1781,10 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 if updated_ctx:
                     task_project_ctx = (project_ctx + "\n\n" + updated_ctx).strip() if project_ctx else updated_ctx
 
+            # S64-B: pasar archivos ya escritos en este ciclo para construir manifest de módulos
+            _written_so_far = [a.get("path", "") for a in all_artifacts if isinstance(a, dict)]
             task_sdd_content = _truncate(
-                _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks))
+                _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks), written_files=_written_so_far)
             )
             # S51-A: tarea de tests → instrucción de prioridad máxima
             _task_desc_lower = (task.get("description", "") + " " + task.get("id", "")).lower()
@@ -1804,7 +1858,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 "[PRIORIDAD MÁXIMA — S51-C SEGUNDO INTENTO] El intento anterior NO generó el archivo de tests. "
                 "DEBES generar ahora el archivo ```python:tests/test_<paquete>.py``` con al menos 3 casos de prueba. "
                 "Este es tu único objetivo en este turno.\n\n"
-            ) + _truncate(_build_single_task_sdd_content(sdd, agent_name, _s51_retry_task, 0, 1))
+            ) + _truncate(_build_single_task_sdd_content(sdd, agent_name, _s51_retry_task, 0, 1, written_files=[a.get("path", "") for a in all_artifacts if isinstance(a, dict)]))
             # Refrescar contexto con archivos ya escritos
             _s51_ctx = task_project_ctx
             if directory:

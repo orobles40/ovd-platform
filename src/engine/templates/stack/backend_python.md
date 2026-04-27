@@ -207,29 +207,40 @@ def require_valid_rut(rut: str) -> str:
 - **Unicidad:** constraint UNIQUE dentro del scope de org_id
 - **Tests obligatorios:** RUT válido, RUT con DV=K, RUT con formato (puntos/guión), RUT inválido, RUT con letras
 
-#### RUTs válidos para tests — NUNCA inventes RUTs
+#### RUTs válidos para tests — NUNCA inventes RUTs [S64-A]
 
-| RUT formateado | Cuerpo | DV | Caso de prueba |
-|----------------|--------|----|----------------|
-| `12.345.678-5` | 12345678 | 5 | Happy path, 8 dígitos |
-| `1.000.005-K` | 1000005 | K | DV = K ✓ |
-| `10.000.013-K` | 10000013 | K | DV = K, 8 dígitos ✓ |
-| `9.999.999-3` | 9999999 | 3 | DV = 3 (NO es K — error frecuente en foros) |
-| `5.678.901-4` | 5678901 | 4 | Happy path, 7 dígitos |
-| `0.000.001-9` | 1 | 9 | RUT mínimo válido |
-| `12.345.678-4` | 12345678 | 4 | ❌ RUT inválido (DV incorrecto) |
-| `9.999.999-K` | 9999999 | K | ❌ RUT inválido — DV real de 9.999.999 es 3, NO K |
+**PROHIBIDO inventar valores de DV.** Usar EXCLUSIVAMENTE la tabla siguiente, verificada
+computacionalmente con `python3` (algoritmo módulo 11, factores 2-7 cíclicos de derecha a izquierda):
 
-**Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
+| RUT formateado    | Cuerpo   | DV | Estado   | Verificación (total, %11, 11-r)       |
+|-------------------|----------|----|----------|---------------------------------------|
+| `12.345.678-5`    | 12345678 | 5  | válido   | total=138, 138%11=6, 11-6=**5**       |
+| `1.000.005-K`     | 1000005  | K  | válido   | total=12, 12%11=1, 11-1=10→**K**      |
+| `9.999.999-3`     | 9999999  | 3  | válido   | total=261, 261%11=8, 11-8=**3**       |
+| `11.111.111-1`    | 11111111 | 1  | válido   | total=32, 32%11=10, 11-10=**1**       |
+| `10.000.013-K`    | 10000013 | K  | válido   | total=12, 12%11=1, 11-1=10→**K**      |
+| `5.678.901-4`     | 5678901  | 4  | válido   | total=172, 172%11=7, 11-7=**4**       |
+| `1.234.567-4`     | 1234567  | 4  | válido   | total=106, 106%11=7, 11-7=**4**       |
+| `12.345.678-9`    | 12345678 | 9  | inválido | DV real=5, no 9                       |
+| `9.999.999-K`     | 9999999  | K  | inválido | DV real=3, no K                       |
+| `1.234.567-0`     | 1234567  | 0  | inválido | DV real=4, no 0                       |
+
+**NOTA CRÍTICA:** `"1.234.567-4"` es **válido** (DV=4). No lo uses como caso inválido.
+
+Verificación en línea: `python3 -c "b='12345678'; d=[int(x) for x in reversed(b)]; s=sum(d[i]*[2,3,4,5,6,7][i%6] for i in range(len(d))); r=11-(s%11); print('K' if r==10 else '0' if r==11 else str(r))"`
 
 ```python
-# CASOS DE PRUEBA VERIFICADOS COMPUTACIONALMENTE (S63-D — NO modificar estos valores):
-# validate_rut("1.000.005-K") == True   # cuerpo=1000005, DV=K ✓
-# validate_rut("10.000.013-K") == True  # cuerpo=10000013, DV=K ✓
-# validate_rut("12.345.678-5") == True  # cuerpo=12345678, DV=5 ✓
-# validate_rut("9.999.999-3") == True   # cuerpo=9999999, DV=3 (NO es K — error frecuente)
-# validate_rut("9.999.999-K") == False  # DV real de 9.999.999 es 3, no K
-# validate_rut("1.234.567-4") == False  # DV incorrecto
+# TABLA VERIFICADA COMPUTACIONALMENTE [S64-A] — NO modificar estos valores:
+# validate_rut("12.345.678-5") == True   # total=138, DV=5
+# validate_rut("1.000.005-K")  == True   # total=12,  DV=K
+# validate_rut("9.999.999-3")  == True   # total=261, DV=3
+# validate_rut("11.111.111-1") == True   # total=32,  DV=1
+# validate_rut("10.000.013-K") == True   # total=12,  DV=K
+# validate_rut("5.678.901-4")  == True   # total=172, DV=4
+# validate_rut("1.234.567-4")  == True   # total=106, DV=4  ← ES VÁLIDO
+# validate_rut("12.345.678-9") == False  # DV real=5, no 9
+# validate_rut("9.999.999-K")  == False  # DV real=3, no K
+# validate_rut("1.234.567-0")  == False  # DV real=4, no 0
 ```
 
 ---
