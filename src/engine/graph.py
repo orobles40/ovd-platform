@@ -1576,13 +1576,8 @@ def _dispatch_frontend(state: OVDState) -> list[Send]:
     return _make_agent_sends(pending, state)
 
 
-async def agent_executor(state: OVDState) -> dict:
-    """
-    GAP-002: Nodo que ejecuta un solo agente especializado.
-    Recibe current_agent del Send() emitido por _dispatch_agents.
-    Multiples instancias corren en paralelo; los resultados se acumulan
-    en agent_results via el reducer _list_reset_or_add.
-    """
+async def _agent_executor_impl(state: OVDState) -> dict:
+    """Implementación interna de agent_executor — envuelta por el wrapper S59-A/A4."""
     agent_name = state.get("current_agent", "backend")
     sdd = state["sdd"]
     comment = state.get("approval_comment", "")
@@ -1866,6 +1861,39 @@ async def agent_executor(state: OVDState) -> dict:
     }
 
 
+def _agent_executor_error_result(agent_name: str, exc: Exception) -> dict:
+    """S59-A/A4: resultado degradado cuando agent_executor lanza excepción no capturada."""
+    log.error(
+        "agent_executor[%s]: EXCEPCIÓN NO CAPTURADA — ciclo continúa con resultado degradado",
+        agent_name, exc_info=True,
+    )
+    return {
+        "agent_results": [{
+            "agent": agent_name,
+            "output": f"[S59-A ERROR]: {type(exc).__name__}: {exc}",
+            "artifacts": [],
+            "uncertainties": [],
+            "tokens": {"input": 0, "output": 0},
+            "error": "exception",
+        }],
+        "uncertainty_register": [],
+        "token_usage": {agent_name: {"input": 0, "output": 0}},
+    }
+
+
+async def agent_executor(state: OVDState) -> dict:
+    """
+    S59-A/A4: wrapper que captura excepciones no manejadas de _agent_executor_impl.
+    Si el agente falla inesperadamente, el ciclo continúa con resultado degradado
+    en vez de silenciar el error o abortar el superstep de LangGraph.
+    """
+    agent_name = state.get("current_agent", "backend")
+    try:
+        return await _agent_executor_impl(state)
+    except Exception as exc:
+        return _agent_executor_error_result(agent_name, exc)
+
+
 # ─── S49-C helpers ────────────────────────────────────────────────────────────
 
 def _get_chat_ollama_class():
@@ -2089,7 +2117,10 @@ async def _run_agent_with_tools(
                 final_output = response.content or ""
 
     except Exception as e:
-        log.warning("S17T tool calling falló para %s: %s — usando fallback sin tools", agent_name, e)
+        log.error(
+            "S17T tool calling falló para %s — usando fallback sin tools",
+            agent_name, exc_info=True,  # S59-A/A2: traceback completo
+        )
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         return await runner(  # S46-B: pasar rag_context y stack_language que faltaban
             sdd_content, comment, llm, project_ctx,
@@ -2532,7 +2563,8 @@ async def security_audit(state: OVDState) -> dict:
     # S41.A3: indexar findings de seguridad como lecciones (fire-and-forget)
     if security.get("vulnerabilities"):
         agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
-        asyncio.create_task(lessons.index_security_finding(
+        # S59-A/A3: add_done_callback para detectar errores en tarea fire-and-forget
+        _lesson_task = asyncio.create_task(lessons.index_security_finding(
             project_id=state.get("project_id", ""),
             org_id=state.get("org_id", ""),
             vulnerabilities=security.get("vulnerabilities", []),
@@ -2541,6 +2573,10 @@ async def security_audit(state: OVDState) -> dict:
             cycle_id=state.get("session_id", ""),
             agent_names=agent_names,
         ))
+        def _on_lesson_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and (exc := t.exception()):
+                log.error("S59-A: lessons.index_security_finding error: %s", exc, exc_info=exc)
+        _lesson_task.add_done_callback(_on_lesson_done)
 
     return {
         "security_result": security,

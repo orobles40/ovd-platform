@@ -104,15 +104,15 @@ def test_configure_app_loggers_sets_debug_from_env():
         assert lvl == logging.DEBUG, f"Esperado DEBUG (10), got {lvl}"
 
 
-def test_configure_app_loggers_emits_warning(caplog):
-    """S56-B: _configure_app_loggers emite WARNING de confirmación."""
+def test_configure_app_loggers_has_handler():
+    """S59-A/A1: _configure_app_loggers instala al menos un handler en el root logger."""
     with patch.dict(os.environ, {"OVD_LOG_LEVEL": "WARNING"}):
         import api as api_mod
-        with caplog.at_level(logging.WARNING, logger="ovd-graph"):
-            api_mod._configure_app_loggers()
-        warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("S56-B" in m for m in warning_msgs), \
-            f"No se encontró WARNING S56-B. Mensajes: {warning_msgs}"
+        api_mod._configure_app_loggers()
+        root = logging.getLogger()
+        assert len(root.handlers) > 0, "Root logger sin handlers después de dictConfig"
+        ovd_api = logging.getLogger("ovd.api")
+        assert ovd_api.level == logging.WARNING, f"ovd.api level inesperado: {ovd_api.level}"
 
 
 # ---------------------------------------------------------------------------

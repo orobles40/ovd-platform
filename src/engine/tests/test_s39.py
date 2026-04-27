@@ -96,7 +96,8 @@ class TestS39DAgentExecutorLoop:
 
     def _get_executor_source(self):
         import graph as g
-        return inspect.getsource(g.agent_executor)
+        # S59-A/A4: la lógica está en _agent_executor_impl (agent_executor es el wrapper)
+        return inspect.getsource(g._agent_executor_impl)
 
     def test_codigo_usa_loop_de_tareas(self):
         """agent_executor contiene el loop S39-D sobre agent_tasks."""

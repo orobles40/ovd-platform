@@ -371,7 +371,8 @@ class TestS41CTemplateLessonIntegration:
     def test_agent_executor_llama_query_lessons(self):
         """S41.C: agent_executor llama a lessons.query_lessons_context."""
         import inspect, graph as g
-        src = inspect.getsource(g.agent_executor)
+        # S59-A/A4: la lógica está en _agent_executor_impl (agent_executor es el wrapper)
+        src = inspect.getsource(g._agent_executor_impl)
         assert "lessons.query_lessons_context" in src
 
     def test_qa_review_llama_index_qa(self):

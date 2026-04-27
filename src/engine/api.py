@@ -87,13 +87,36 @@ _stream_done: dict[str, asyncio.Event] = {}           # thread_id → señal de 
 
 
 def _configure_app_loggers() -> None:
-    """S56-B: configura nivel de log para loggers de aplicación via OVD_LOG_LEVEL."""
+    """S59-A/A1: configura logging con dictConfig para garantizar handlers en todos los loggers de app."""
+    import logging.config as _lc
     level_str = os.environ.get("OVD_LOG_LEVEL", os.environ.get("LOG_LEVEL", "WARNING")).upper()
     numeric = getattr(logging, level_str, logging.WARNING)
-    for name in ("ovd-graph", "ovd.api", "ovd.startup", "ovd.heartbeat"):
-        logging.getLogger(name).setLevel(numeric)
-    logging.getLogger("ovd-graph").warning(
-        "S56-B: logging configurado — OVD_LOG_LEVEL=%s (numeric=%d)", level_str, numeric
+    _lc.dictConfig({
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "ovd": {"format": "%(asctime)s [%(name)s] %(levelname)s %(message)s"},
+        },
+        "handlers": {
+            "stderr": {
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+                "formatter": "ovd",
+            },
+        },
+        "root": {"level": numeric, "handlers": ["stderr"]},
+        "loggers": {
+            "uvicorn":          {"level": numeric, "propagate": True},
+            "uvicorn.error":    {"level": numeric, "propagate": True},
+            "ovd.api":          {"level": numeric, "propagate": True},
+            "ovd.graph":        {"level": numeric, "propagate": True},
+            "ovd-graph":        {"level": numeric, "propagate": True},
+            "ovd.startup":      {"level": numeric, "propagate": True},
+            "ovd.heartbeat":    {"level": numeric, "propagate": True},
+        },
+    })
+    logging.getLogger("ovd.api").warning(
+        "S59-A/A1: logging configurado via dictConfig — OVD_LOG_LEVEL=%s (numeric=%d)", level_str, numeric
     )
 
 
@@ -705,7 +728,12 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
         # S47-B: garantizar registro en ovd_cycles aunque deliver no haya corrido
         await _ensure_cycle_registered(thread_id, config)
         # Limpiar queue y done_event después de 10 min (evitar memory leak)
-        asyncio.create_task(_deferred_cleanup(thread_id, 600))
+        # S59-A/A3: add_done_callback para detectar errores en tarea fire-and-forget
+        _cleanup_task = asyncio.create_task(_deferred_cleanup(thread_id, 600))
+        def _on_cleanup_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and (exc := t.exception()):
+                log.error("S59-A: _deferred_cleanup error para thread=%s: %s", thread_id[:8], exc)
+        _cleanup_task.add_done_callback(_on_cleanup_done)
 
 
 async def _deferred_cleanup(thread_id: str, delay: float) -> None:
@@ -743,14 +771,21 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
                         v = snap.values
                         qa = v.get("qa_result", {})
                         fr_a = v.get("fr_analysis", {})
+                        # S59-A/A5: capturar error_message y failed_at_node del checkpoint
+                        last_error = v.get("_last_error", "")
+                        failed_node = ""
+                        if snap.metadata:
+                            failed_node = snap.metadata.get("source", "")
                         await _conn.execute(
                             """UPDATE ovd_cycles SET
-                                status      = 'failed',
-                                fr_analysis = %s,
-                                sdd         = %s,
-                                qa_score    = %s,
-                                complexity  = %s,
-                                fr_type     = %s
+                                status         = 'failed',
+                                fr_analysis    = %s,
+                                sdd            = %s,
+                                qa_score       = %s,
+                                complexity     = %s,
+                                fr_type        = %s,
+                                error_message  = %s,
+                                failed_at_node = %s
                             WHERE thread_id = %s AND status != 'completed'""",
                             (
                                 json.dumps(fr_a),
@@ -758,11 +793,16 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
                                 qa.get("score", 0) if isinstance(qa, dict) else 0,
                                 fr_a.get("complexity", ""),
                                 fr_a.get("type", ""),
+                                last_error or None,
+                                failed_node or None,
                                 thread_id,
                             ),
                         )
                         await _conn.commit()
-                        log.info("S47-B: ciclo %s marcado 'failed' con datos parciales", thread_id[:8])
+                        log.info(
+                            "S47-B: ciclo %s marcado 'failed' — nodo=%s error=%s",
+                            thread_id[:8], failed_node or "?", (last_error or "")[:120],
+                        )
                 except Exception as _snap_err:
                     log.warning("S47-B: error leyendo checkpoint para %s — %s", thread_id[:8], _snap_err)
     except Exception as _e:
