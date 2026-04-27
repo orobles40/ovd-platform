@@ -335,7 +335,7 @@ Oracle 12c requiere **thick mode**. Thin mode solo funciona en Oracle 18c+.
 import os
 import oracledb
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, declarative_base
+from sqlalchemy.orm import Session, DeclarativeBase
 
 # OBLIGATORIO para Oracle 12c — thin mode no soportado en 12c
 oracledb.init_oracle_client()  # thick mode
@@ -345,7 +345,10 @@ DATABASE_URL = os.environ.get(
     "oracle+oracledb://user:pass@host.docker.internal:1521/?service_name=XEPDB1"
 )
 engine = create_engine(DATABASE_URL, echo=False)
-Base = declarative_base()
+
+# S72-E: SQLAlchemy 2.x — DeclarativeBase clase (NO declarative_base() función)
+class Base(DeclarativeBase):
+    pass
 
 def get_session():
     """FastAPI dependency — una sesión por request, cleanup automático."""
@@ -356,16 +359,19 @@ def get_session():
 ### Modelos ORM — van en `models.py`, NO en `service.py`:
 
 ```python:src/contracts/models.py
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from typing import Optional
+from sqlalchemy import String, Float, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
 from src.database import Base
 
+# S72-E: SQLAlchemy 2.x — Mapped[] + mapped_column() (tipado estático)
 class Contrato(Base):
     __tablename__ = "contratos"
-    id         = Column(Integer, primary_key=True)
-    rut_empleado = Column(String(12), nullable=False)
-    org_id     = Column(Integer, nullable=False)
-    tipo_contrato = Column(Integer, nullable=False)
-    valor_total = Column(Float, default=0.0)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rut_empleado: Mapped[str] = mapped_column(String(12), nullable=False)
+    org_id: Mapped[int] = mapped_column(nullable=False)
+    tipo_contrato: Mapped[int] = mapped_column(nullable=False)
+    valor_total: Mapped[float] = mapped_column(Float, default=0.0)
 ```
 
 ### Dependency injection en endpoints:

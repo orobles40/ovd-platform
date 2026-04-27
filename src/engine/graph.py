@@ -991,6 +991,55 @@ def _is_infra_task(task: dict) -> bool:
     return any(p in combined for p in ("src/__init__", "src/database.py", "src/main.py", "src/auth/dependencies.py"))
 
 
+def _normalize_task_signatures(sdd: dict) -> dict:
+    """S72-A: inyecta firmas de función canónicas en task descriptions para evitar naming en español.
+
+    El modelo qwen3-coder tiene sesgo lingüístico (español) cuando el system prompt está en español.
+    Inyectar la firma exacta en la task description es 2.5x más efectivo que decirle en el system
+    prompt que use nombres en inglés (fuente: arxiv:2412.20545).
+    """
+    CANONICAL_HINTS: list[tuple[list[str], str]] = [
+        (
+            ["rut", "validar rut", "validate rut", "rut chileno"],
+            "[S72-A] USA EXACTAMENTE: `def validate_rut(rut: str) -> bool:` "
+            "en src/utils/rut_validator.py. NO uses 'validar_rut'.",
+        ),
+        (
+            ["primo", "prime", "es_primo", "is_prime"],
+            "[S72-A] USA EXACTAMENTE: `def is_prime(n: int) -> bool:` "
+            "en src/utils/prime_validator.py. NO uses 'es_primo'.",
+        ),
+        (
+            ["crear contrato", "create contract", "nuevo contrato", "new contract"],
+            "[S72-A] USA EXACTAMENTE: `def create_contract(data, db, user)`. NO uses 'crear_contrato'.",
+        ),
+        (
+            ["listar contrato", "list contract", "obtener contrato", "get contract"],
+            "[S72-A] USA EXACTAMENTE: `def get_contract(id, db, user)` / `def list_contracts(db, user)`. "
+            "NO uses 'obtener_contrato' ni 'listar_contratos'.",
+        ),
+        (
+            ["beneficio", "benefit"],
+            "[S72-A] USA EXACTAMENTE: `def list_benefits(contract_id, db)` / "
+            "`def create_benefit(data, db)`. NO uses nombres en español.",
+        ),
+        (
+            ["calcular imc", "calculate bmi", "imc", "bmi"],
+            "[S72-A] USA EXACTAMENTE: `def calculate_bmi(weight_kg: float, height_m: float) -> float:`. "
+            "NO uses 'calcular_imc'.",
+        ),
+    ]
+    for task in sdd.get("tasks", []):
+        desc_lower = (task.get("description", "") + " " + task.get("title", "")).lower()
+        injections: list[str] = []
+        for keywords, hint in CANONICAL_HINTS:
+            if any(kw in desc_lower for kw in keywords):
+                injections.append(hint)
+        if injections:
+            task["description"] = task.get("description", "") + "\n\n" + " | ".join(injections)
+    return sdd
+
+
 def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
     """S69-A: si el FR menciona FastAPI y no hay tarea para src/main.py, inyectarla como primera tarea backend."""
     fr_raw = fr_analysis.get("raw", "").lower()
@@ -1131,6 +1180,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S69-A: inyectar src/main.py si el FR menciona FastAPI y el LLM no lo incluyó
         sdd = _ensure_fastapi_main_task(sdd, state.get("fr_analysis", {}))
+
+        # S72-A: inyectar firmas canónicas en task descriptions para evitar naming en español
+        sdd = _normalize_task_signatures(sdd)
 
         # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
         # low→5, medium→8, high→10 — evita perder features en FRs complejos.
@@ -4500,6 +4552,11 @@ def _write_artifacts(
                             "sobreescribiendo con nuevo contenido (%d bytes)",
                             agent, rel_path, existing_size, new_size,
                         )
+
+            # S72-B/C: post-procesar código Python antes de escribir al disco
+            if rel_path.endswith(".py"):
+                from code_postprocessor import postprocess_python_file
+                content = postprocess_python_file(content, rel_path)
 
             target.write_text(content, encoding="utf-8")
             # S54-A: verificación post-write — confirmar que el archivo existe en disco
