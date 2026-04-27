@@ -191,9 +191,18 @@ Cuando el FR involucre RUT chileno, implementa la validación en el backend:
 import re
 
 def clean_rut(rut: str) -> str:
+    """Elimina puntos y guión. Retorna solo dígitos + DV en mayúscula. Ej: '12.345.678-5' → '123456785'"""
     return re.sub(r"[.\-]", "", rut.strip().upper())
 
+def format_rut(rut: str) -> str:
+    """Formatea RUT a notación chilena estándar. Ej: '123456785' → '12.345.678-5'"""
+    cleaned = clean_rut(rut)
+    body, dv = cleaned[:-1], cleaned[-1]
+    formatted_body = f"{int(body):,}".replace(",", ".")
+    return f"{formatted_body}-{dv}"
+
 def validate_rut(rut: str) -> bool:
+    """Valida RUT chileno usando módulo 11. Acepta '12.345.678-5', '12345678-5', '123456785'."""
     cleaned = clean_rut(rut)
     if not re.match(r"^\d{7,8}[0-9K]$", cleaned):
         return False
@@ -205,7 +214,19 @@ def validate_rut(rut: str) -> bool:
     remainder = 11 - (total % 11)
     expected = {10: "K", 11: "0"}.get(remainder, str(remainder))
     return dv == expected
+
+def require_valid_rut(rut: str) -> str:
+    """Valida y retorna el RUT limpio. Lanza ValueError si es inválido. Usar en @field_validator."""
+    if not validate_rut(rut):
+        raise ValueError(f"RUT inválido: {rut!r}")
+    return clean_rut(rut)
 ```
+
+**Regla de almacenamiento en BD (S68-D):**
+- La columna en BD debe ser `rut_limpio VARCHAR(10)` — sin puntos ni guión (ej: `123456785`)
+- Al recibir input del usuario, llamar `clean_rut()` antes de guardar
+- `@field_validator("rut")` en el schema Pydantic debe llamar `require_valid_rut(v)` para validar y limpiar en un solo paso
+- UNIQUE constraint por `(org_id, rut_limpio)` para multi-tenancy
 
 ### RUTs válidos para tests (S43-F / S45-B)
 

@@ -214,6 +214,19 @@ TASK-003: src/contracts/service.py   ← puede importar de TASK-001 y TASK-002
 TASK-004: src/main.py                ← puede importar de todos los anteriores
 ```
 
+**Regla S68-C — Infraestructura Python obligatoria (fuera del cap de tareas):**
+Para proyectos FastAPI + SQLAlchemy, las siguientes tareas de infraestructura son OBLIGATORIAS
+y NO cuentan contra el cap de 5 tareas/agente. SIEMPRE incluirlas cuando apliquen:
+
+| Archivo | Cuándo incluir | Contenido mínimo |
+|---------|---------------|-----------------|
+| `src/__init__.py` | Siempre (proyecto Python) | Archivo vacío — hace `src` un paquete |
+| `src/database.py` | FR menciona BD/ORM/persistencia | `engine`, `SessionLocal`, `get_db`, `Base = DeclarativeBase()` |
+| `src/main.py` | FR menciona FastAPI/API/endpoints | `app = FastAPI()`, `app.include_router(...)` para cada router generado |
+| `src/auth/dependencies.py` | FR menciona JWT/auth/login | `get_current_user()` con decode JWT |
+
+**Estas tareas van PRIMERO antes de cualquier tarea de negocio. Sin ellas, pytest no puede importar nada del proyecto.**
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

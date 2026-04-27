@@ -979,6 +979,18 @@ def _strip_db_restrictions(project_ctx: str, oracle_involved: bool = False) -> s
     return result
 
 
+_INFRA_FILE_PATTERNS = frozenset({
+    "src/__init__.py", "src/database.py", "src/main.py",
+    "src/auth/__init__.py", "src/auth/dependencies.py",
+})
+
+
+def _is_infra_task(task: dict) -> bool:
+    """S68-C: identifica tareas de infraestructura que no cuentan contra el cap de complejidad."""
+    combined = (task.get("description", "") + " " + task.get("title", "") + " " + task.get("file", "")).lower()
+    return any(p in combined for p in ("src/__init__", "src/database.py", "src/main.py", "src/auth/dependencies.py"))
+
+
 async def generate_sdd(state: OVDState) -> dict:
     """
     Genera el SDD con 4 artefactos separados usando structured output (GAP-007):
@@ -1074,6 +1086,7 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
         # low→5, medium→8, high→10 — evita perder features en FRs complejos.
+        # S68-C: tareas de infraestructura (database.py, main.py, __init__.py) NO cuentan contra el cap.
         _complexity = state.get("fr_analysis", {}).get("complexity", "medium")
         _TASK_CAPS = {"low": 5, "medium": 8, "high": 10, "critical": 12}
         _MAX_TASKS_PER_AGENT = _TASK_CAPS.get(_complexity, 8)
@@ -1083,9 +1096,12 @@ async def generate_sdd(state: OVDState) -> dict:
         _tasks_trimmed: list[dict] = []
         _trimmed_agents: list[str] = []
         for _agent, _agent_tasks in _tasks_by_agent.items():
-            if len(_agent_tasks) > _MAX_TASKS_PER_AGENT:
-                _trimmed_agents.append(f"{_agent}({len(_agent_tasks)}→{_MAX_TASKS_PER_AGENT})")
-                _tasks_trimmed.extend(_agent_tasks[:_MAX_TASKS_PER_AGENT])
+            # S68-C: separar infra (siempre pasan) de negocio (sujeto al cap)
+            _infra = [t for t in _agent_tasks if _is_infra_task(t)]
+            _business = [t for t in _agent_tasks if not _is_infra_task(t)]
+            if len(_business) > _MAX_TASKS_PER_AGENT:
+                _trimmed_agents.append(f"{_agent}({len(_business)}→{_MAX_TASKS_PER_AGENT})")
+                _tasks_trimmed.extend(_infra + _business[:_MAX_TASKS_PER_AGENT])
             else:
                 _tasks_trimmed.extend(_agent_tasks)
         if _trimmed_agents:
@@ -1402,6 +1418,21 @@ def _filter_requirements_for_task(requirements: list, task: dict) -> list:
     # Siempre incluir must-requirements para no perder criterios críticos
     must_reqs = [r for r in requirements if r.get("priority", "") == "must" and r not in filtered]
     return filtered + must_reqs
+
+
+def _extract_import_corrections(retry_feedback: str) -> str:
+    """S68-B: extrae correcciones de imports para inyectarlas al inicio del HumanMessage.
+
+    Posicionarlas al inicio maximiza la atención del modelo (Liu et al. 2023, Lost in the Middle).
+    """
+    if not retry_feedback or "[S65-A] IMPORTS ROTOS" not in retry_feedback:
+        return ""
+    lines = retry_feedback.splitlines()
+    corrections = [l for l in lines if "→ CORRECCIÓN:" in l or "módulo no existe" in l]
+    if not corrections:
+        return ""
+    header = "[S68-B] CORRECCIONES OBLIGATORIAS DE IMPORTS — APLICA ANTES DE ESCRIBIR CUALQUIER CÓDIGO:\n"
+    return header + "\n".join(corrections) + "\n\n"
 
 
 def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> str:
@@ -1854,6 +1885,14 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             task_sdd_content = _truncate(
                 _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks), written_files=_written_so_far)
             )
+            # S68-B: inyectar correcciones de imports al INICIO del HumanMessage (alta atención)
+            _correction_block = _extract_import_corrections(retry_feedback)
+            if _correction_block:
+                task_sdd_content = _correction_block + task_sdd_content
+                log.warning(
+                    "agent_executor[%s]: S68-B correcciones de imports inyectadas al inicio del prompt (tarea %d/%d)",
+                    agent_name, i + 1, len(agent_tasks),
+                )
             # S51-A: tarea de tests → instrucción de prioridad máxima
             _task_desc_lower = (task.get("description", "") + " " + task.get("id", "")).lower()
             if any(kw in _task_desc_lower for kw in ("test", "pytest", "spec", "unitari")):
@@ -4071,7 +4110,7 @@ def update_test_retry(state: OVDState) -> dict | Command:
         + repeat_hint
     )
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
-    accumulated = _truncate(accumulated, 800)  # S39-C: 3000 → 800 chars (solo stderr exacto)
+    accumulated = _truncate(accumulated, 2000)  # S68-B: 800→2000 para preservar correcciones S65-A (10 imports × ~120 chars)
 
     # S54-D: loguear archivos físicos en disco antes del retry — diagnóstico de persistencia
     _work_dir = state.get("directory", "")
@@ -4113,7 +4152,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
         log.info("update_test_retry: S53-B no se pudo inferir agente fallido — re-ejecutando todos")
 
     # S61-B: guardar error sin truncar para que S60-B pueda detectar repetición en siguiente ronda
-    _new_last_error = test_output if _is_structural else ""
+    # S68-A: incluir S65-A output (no contiene "collected 0 items" → _is_structural=False pero es loop)
+    _is_s65a_output = "[S65-A] IMPORTS ROTOS" in test_output
+    _new_last_error = test_output if (_is_structural or _is_s65a_output) else ""
 
     # S63-B: cleanup ANTES de despachar el próximo retry.
     # En este punto los archivos del retry anterior ya están en disco pero el nuevo retry
