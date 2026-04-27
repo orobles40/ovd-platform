@@ -38,6 +38,21 @@ Si generas múltiples archivos, incluye un bloque por archivo con su ruta. Nunca
 
 Devuelve SOLO código de implementación con comentarios claros.
 
+## Regla de entry point FastAPI [S60-A]
+
+Cuando el proyecto usa FastAPI con múltiples módulos, **DEBES** generar `src/main.py` como punto de entrada unificado. Sin este archivo, los tests fallan con `ModuleNotFoundError: No module named 'src.main'`.
+
+```python:src/main.py
+from fastapi import FastAPI
+# Importa routers de cada módulo del SDD:
+from src.auth.router import router as auth_router
+
+app = FastAPI()
+app.include_router(auth_router, prefix="/auth")
+```
+
+Cada módulo exporta `APIRouter` (no `FastAPI()`). Los tests importan `from src.main import app`.
+
 ## Metodología obligatoria
 
 ### TDD — Ley de hierro

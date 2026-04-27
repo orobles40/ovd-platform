@@ -478,13 +478,14 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
 
 def _interpolate(raw: str, **variables: str) -> str:
     """Aplica sustitución de variables a un string raw (helper interno)."""
-    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": "", "lessons_context": ""}
+    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": "", "lessons_context": "", "cycle_sdd_context": ""}
     defaults.update(variables)
-    ctx     = defaults.get("project_context", "")
-    rag     = defaults.get("rag_context", "")
-    fb      = defaults.get("retry_feedback", "")
-    ui      = defaults.get("ui_context", "")
-    lessons = defaults.get("lessons_context", "")
+    ctx      = defaults.get("project_context", "")
+    rag      = defaults.get("rag_context", "")
+    fb       = defaults.get("retry_feedback", "")
+    ui       = defaults.get("ui_context", "")
+    lessons  = defaults.get("lessons_context", "")
+    sdd_ctx  = defaults.get("cycle_sdd_context", "")
     return raw.replace(
         "{project_context}", f"\n\n{ctx}" if ctx else "",
     ).replace(
@@ -495,6 +496,8 @@ def _interpolate(raw: str, **variables: str) -> str:
         "{ui_context}", f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
     ).replace(
         "{lessons_context}", f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}" if lessons else "",
+    ).replace(
+        "{cycle_sdd_context}", sdd_ctx if sdd_ctx else "",  # S56-A: SDD del ciclo para QA reviewer
     ).strip()
 
 

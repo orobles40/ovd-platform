@@ -458,6 +458,12 @@ class OVDState(TypedDict):
     # Si definido → route_agents ejecuta solo estos agentes (reduce de N agentes a 1)
     selective_retry_agents: list[str]
 
+    # S61-B: último error estructural de tests (sin truncar) para detección de repetición en S60-B
+    last_test_error: str
+
+    # S61-D: resultados de agentes preservados durante selective retry (no reseteados)
+    _kept_agent_results: list[dict]
+
     # S22 — security scanning CLI (previo al LLM review)
     security_scan_results: dict[str, Any]  # {tools_run, findings, blocked}
 
@@ -1449,8 +1455,19 @@ async def route_agents(state: OVDState) -> dict:
             "route_agents: S53-B selective retry — solo ejecutar agentes=%s (test_retry_count=%d)",
             selective_agents, test_retry_count,
         )
+        # S61-D: preservar resultados de agentes NO retried (frontend, database si backend falla).
+        # Resetear solo los resultados del agente que se va a re-ejecutar.
+        _prev_results = state.get("agent_results", [])
+        _kept_results = [r for r in _prev_results if r.get("agent") not in selective_agents]
+        if _kept_results:
+            log.info("route_agents: S61-D preservando %d resultado(s) de agentes no-retried: %s",
+                     len(_kept_results), [r.get("agent") for r in _kept_results])
+        # Primero reseteamos (None), luego el reducer acumulará los _kept_results via Send()
+        # No podemos devolver lista directamente porque route_agents no es agent_executor.
+        # Solución: devolver None para resetear y guardar kept en campo temporal.
         return {
             "agent_results": None,
+            "_kept_agent_results": _kept_results,  # S61-D: rescatados antes del reset
             "selected_agents": selective_agents,
             "pending_agents": [],
             "_dispatch_now": [],
@@ -2659,6 +2676,17 @@ def _build_qa_sdd_block(sdd: dict) -> str:
 
 async def qa_review(state: OVDState) -> dict:
     """Revisa calidad y cumplimiento del SDD (no seguridad — eso lo hace security_audit)."""
+    # S61-C: en selective test retry, reutilizar QA anterior para evitar score volátil.
+    # El agente solo regeneró el módulo fallido — QA del ciclo ya fue evaluado correctamente.
+    _selective = state.get("selective_retry_agents", [])
+    _prev_qa = state.get("qa_result", {})
+    if _selective and _prev_qa.get("score", 0) > 0:
+        log.info(
+            "qa_review: S61-C selective retry activo (%s) — reutilizando QA previo (score=%d)",
+            _selective, _prev_qa.get("score", 0),
+        )
+        return {"qa_result": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
+
     project_ctx = state.get("project_context", "")
     llm = await model_router.get_llm_with_context(
         "qa", state.get("org_id", ""), state.get("project_id", ""),
@@ -2744,15 +2772,21 @@ async def qa_review(state: OVDState) -> dict:
     if qa_summary:
         log.info("qa_review: S39-B summary del workspace — %d líneas", qa_summary.count("\n"))
 
+    # S56-A-fix: SDD del ciclo en SystemMessage como referencia primaria.
+    # project_ctx se pasa como contexto secundario — previene que restricciones legacy
+    # (Oracle, RUT) contaminen la evaluación de features sin esas dependencias.
+    _qa_sdd_block = _build_qa_sdd_block(state.get("sdd", {}))
+    _project_ctx_filtered = _strip_db_restrictions(project_ctx)
+
     messages_qa = [
         SystemMessage(content=template_loader.render(
             "system_qa",
             language=state.get("language", "es"),
-            project_context=project_ctx,
+            project_context=_project_ctx_filtered,
+            cycle_sdd_context=_qa_sdd_block,
         )),
         HumanMessage(content=(
-            _build_qa_sdd_block(state["sdd"])  # S56-A: requirements completos al inicio
-            + f"\n\n## Código generado:\n{_truncate(agent_output, 18000)}"  # S38-B ajustado: 20k→18k para dar espacio al bloque SDD
+            f"## Código generado:\n{_truncate(agent_output, 20000)}"
             + (f"\n\n## Estructura workspace (S39-B):\n{_truncate(qa_summary, 3000)}" if qa_summary else "")
         )),
     ]
@@ -2933,22 +2967,37 @@ async def run_tests(state: OVDState) -> dict:
     # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
     work_dir = directory or tempfile.mkdtemp(prefix="ovd_tests_")
 
-    # S42-B: en rounds de retry, limpiar archivos de implementación del round anterior
-    # para que el agente empiece desde cero y no mezcle implementaciones parciales.
+    # S42-B / S60-C: en rounds de retry, limpiar archivos del round anterior.
+    # S60-C: pasar agents_to_retry y sdd para cleanup quirúrgico (solo los agentes que re-ejecutan).
     if retry_round > 0 and directory:
         cycle_ts = state.get("cycle_start_ts", 0)
-        _cleanup_impl_files_from_prev_retry(work_dir, cycle_ts)
+        _selective = state.get("selective_retry_agents", [])
+        _sdd_for_cleanup = state.get("sdd", {})
+        _cleanup_impl_files_from_prev_retry(
+            work_dir, cycle_ts,
+            agents_to_retry=_selective if _selective else None,
+            sdd=_sdd_for_cleanup if _selective else None,
+        )
 
     # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
-    # Para TypeScript, Rust u otros stacks no existe este mecanismo de resolución de imports.
+    # S61-A: Si pytest.ini ya tiene `pythonpath`, NO inyectar sys.path.insert(0, "src"):
+    #         causaría doble prefijo (busca src/src/main.py en vez de src/main.py).
     if work_dir and runner == "pytest":
         _conftest = pathlib.Path(work_dir) / "conftest.py"
+        _pytest_ini = pathlib.Path(work_dir) / "pytest.ini"
         _is_retry_round = retry_round > 0
+        _has_pytest_pythonpath = (
+            _pytest_ini.exists()
+            and "pythonpath" in _pytest_ini.read_text(encoding="utf-8", errors="replace")
+        )
         _conftest_content = (
             "import sys, os\n"
             'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n'
         )
-        if not _conftest.exists() or _conftest.stat().st_size == 0:
+        if _has_pytest_pythonpath:
+            # S61-A: pytest.ini ya gestiona pythonpath — no sobreescribir conftest
+            log.info("run_tests: S61-A pytest.ini tiene pythonpath — omitiendo inyección de conftest.py sys.path")
+        elif not _conftest.exists() or _conftest.stat().st_size == 0:
             _conftest.write_text(_conftest_content, encoding="utf-8")
             log.info("run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s", _conftest)
         elif _is_retry_round:
@@ -3243,13 +3292,19 @@ def _detect_duplicate_functions(work_dir: str) -> str:
     return "\n".join(lines)
 
 
-def _cleanup_impl_files_from_prev_retry(work_dir: str, cycle_start_ts: float) -> None:
-    """S42-B: Elimina archivos de implementación Python del ciclo actual (escritos después de cycle_start_ts)
-    que NO son tests. Se llama al inicio de cada retry round para que el agente empiece sin
-    archivos de implementación parciales o con duplicados del round anterior.
+def _cleanup_impl_files_from_prev_retry(
+    work_dir: str,
+    cycle_start_ts: float,
+    agents_to_retry: list[str] | None = None,
+    sdd: dict | None = None,
+) -> None:
+    """S42-B / S60-C: Elimina archivos de implementación del ciclo actual antes de un retry.
 
-    Solo elimina archivos Python con mtime > cycle_start_ts (del ciclo actual, no pre-existentes).
-    No toca archivos de test (test_*.py) ni archivos de infraestructura (conftest.py, pytest.ini).
+    S60-C: Si se pasan `agents_to_retry` y `sdd`, solo elimina los archivos que pertenecen
+    a los agentes que van a re-ejecutarse (paths del SDD para esos agentes).
+    Preserva archivos de agentes que NO están en retry (frontend, database, etc.).
+
+    Fallback al comportamiento original S42-B si no se pasan agentes o SDD.
     """
     if not work_dir or cycle_start_ts <= 0:
         return
@@ -3261,12 +3316,33 @@ def _cleanup_impl_files_from_prev_retry(work_dir: str, cycle_start_ts: float) ->
     _SAFE_NAMES = {"conftest.py", "pytest.ini", "setup.py", "pyproject.toml"}
     removed = []
 
+    # S60-C: construir conjunto de paths que pertenecen a los agentes en retry
+    retry_paths: set[str] = set()
+    if agents_to_retry and sdd:
+        for task in sdd.get("tasks", []):
+            if task.get("agent") in agents_to_retry:
+                for art in task.get("artifacts", []):
+                    p = art.get("path", "") if isinstance(art, dict) else str(art)
+                    if p:
+                        retry_paths.add(p.lstrip("/"))
+        log.info(
+            "run_tests: S60-C cleanup quirúrgico — agentes=%s, paths candidatos=%d",
+            agents_to_retry, len(retry_paths),
+        )
+
     for fp in sorted(base.rglob("*.py")):
         parts = fp.relative_to(base).parts
         if any(p in _SKIP_B or p.startswith(".") for p in parts):
             continue
         if fp.name.startswith("test_") or fp.name in _SAFE_NAMES:
             continue
+
+        # S60-C: si hay lista de paths del retry, preservar archivos que NO están en ella
+        if retry_paths:
+            rel = str(fp.relative_to(base))
+            if not any(rel == rp or rel.startswith(rp.rsplit("/", 1)[0] + "/") for rp in retry_paths):
+                continue  # este archivo no pertenece al agente en retry — preservar
+
         try:
             mtime = fp.stat().st_mtime
         except OSError:
@@ -3280,7 +3356,7 @@ def _cleanup_impl_files_from_prev_retry(work_dir: str, cycle_start_ts: float) ->
 
     if removed:
         log.info(
-            "run_tests: S42-B cleanup previo a retry — eliminados %d archivo(s): %s",
+            "run_tests: S42-B/S60-C cleanup previo a retry — eliminados %d archivo(s): %s",
             len(removed), removed[:10],
         )
 
@@ -3399,6 +3475,38 @@ def update_test_retry(state: OVDState) -> dict:
     existing = state.get("retry_feedback", "")
     retry_round = state.get("test_retry_count", 0)
 
+    # S60-B: detectar error estructural no-retryable.
+    # S61-B: usa last_test_error (sin truncar) en vez de existing (truncado a 800 chars).
+    _rc = tr.get("return_code", 0)
+    _is_structural = (
+        ("ModuleNotFoundError" in test_output or "ImportError" in test_output)
+        and "collected 0 items" in test_output
+    )
+    _last_test_error = state.get("last_test_error", "")
+    _same_error_repeated = _is_structural and (
+        "ModuleNotFoundError" in _last_test_error or "ImportError" in _last_test_error
+    )
+    if _same_error_repeated and retry_round >= 1:
+        _err_lines = [l for l in test_output.splitlines() if "ModuleNotFoundError" in l or "ImportError" in l][:3]
+        log.warning(
+            "update_test_retry: S60-B error estructural repetido (rc=%d, ronda=%d) — "
+            "omitiendo retry, pasando a deliver. Líneas: %s",
+            _rc, retry_round, _err_lines,
+        )
+        return {
+            "test_retry_count": 2,  # S60-B: agota los retries disponibles (máx 2 = _route_after_tests)
+            "retry_feedback": existing,
+            "selective_retry_agents": [],
+            "status": "structural_error_no_retry",
+            "messages": state.get("messages", []) + [{
+                "role": "agent",
+                "content": (
+                    f"S60-B: Error estructural de imports (ronda {retry_round + 1}) — "
+                    "mismo error en rondas consecutivas. Pasando a deliver con diagnóstico."
+                ),
+            }],
+        }
+
     # S34-A: detectar si el mismo AssertionError se repite respecto al round anterior
     current_assert_errors = _extract_assert_errors(test_output)
     repeat_hint = ""
@@ -3497,10 +3605,14 @@ def update_test_retry(state: OVDState) -> dict:
     else:
         log.info("update_test_retry: S53-B no se pudo inferir agente fallido — re-ejecutando todos")
 
+    # S61-B: guardar error sin truncar para que S60-B pueda detectar repetición en siguiente ronda
+    _new_last_error = test_output if _is_structural else ""
+
     return {
         "test_retry_count": state.get("test_retry_count", 0) + 1,
         "retry_feedback": accumulated,
         "selective_retry_agents": selective_agents,  # S53-B
+        "last_test_error": _new_last_error,  # S61-B
         "status": "retrying_after_test_failure",
         "messages": state.get("messages", []) + [{
             "role": "agent",
@@ -4293,7 +4405,18 @@ async def deliver(state: OVDState) -> dict:
 
     # Artefactos de implementacion de cada agente — S16T.A: escribir archivos al disco
     directory = state.get("directory", "")
-    for result in state.get("agent_results", []):
+    # S61-D: fusionar resultados de agentes preservados en selective retry
+    _kept = state.get("_kept_agent_results", [])
+    _current = state.get("agent_results", [])
+    if _kept:
+        # Merging: kept results first, then replace with current if same agent
+        _current_agents = {r.get("agent") for r in _current}
+        _merged = [r for r in _kept if r.get("agent") not in _current_agents] + _current
+        log.info("deliver: S61-D fusionando %d resultado(s) preservados + %d actuales = %d total",
+                 len(_kept), len(_current), len(_merged))
+    else:
+        _merged = _current
+    for result in _merged:
         agent_name       = result.get("agent", "unknown")
         agent_output     = result.get("output", "")
         existing_arts    = result.get("artifacts", [])

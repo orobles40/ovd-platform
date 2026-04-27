@@ -85,15 +85,61 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 ```
 
-### pytest.ini mínimo
+### pytest.ini mínimo [S60-A]
 
 ```ini:pytest.ini
 [pytest]
+pythonpath = .
+addopts = --import-mode=importlib
 testpaths = tests
 python_files = test_*.py
 python_classes = Test*
 python_functions = test_*
 ```
+
+Con `pythonpath = .` y `importmode = importlib`, los tests pueden importar directamente con `from src.main import app` sin `sys.path.insert` manual. IMPORTANTE: usar `pythonpath = .` (punto = raíz del proyecto), NO `pythonpath = src` (causaría doble prefijo `src/src/`).
+
+## Estructura FastAPI multi-módulo con entry point único [S60-A]
+
+Cuando el SDD define múltiples módulos (auth, contracts, users, etc.), **DEBES** generar `src/main.py` como punto de entrada unificado. Sin este archivo, `uvicorn src.main:app` y los imports en tests fallan.
+
+**PASO 1 — Entry point unificado (OBLIGATORIO, escríbelo PRIMERO):**
+```python:src/main.py
+from fastapi import FastAPI
+from src.auth.router import router as auth_router
+from src.contracts.router import router as contracts_router
+# Agrega aquí todos los routers definidos en el SDD
+
+app = FastAPI(title="OVD API")
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(contracts_router, prefix="/contracts", tags=["contracts"])
+```
+
+**PASO 2 — Cada módulo exporta `APIRouter`, NO `FastAPI()`:**
+```python:src/auth/router.py
+from fastapi import APIRouter
+router = APIRouter()
+
+@router.post("/login")
+async def login():
+    ...
+```
+
+**PASO 3 — Tests importan desde `src.main`:**
+```python:tests/test_auth.py
+from src.main import app
+from fastapi.testclient import TestClient
+client = TestClient(app)
+```
+
+> ❌ PROHIBIDO: `app = FastAPI()` en módulos individuales (`src/auth/main.py`, `src/contracts/main.py`).  
+> ✅ CORRECTO: UN SOLO `app` en `src/main.py` que registra todos los routers con `include_router()`.
+
+**CHECKLIST FastAPI antes de entregar:**
+- [ ] `src/main.py` existe con `app = FastAPI()` y todos los `include_router()`
+- [ ] Cada módulo del SDD tiene su `router.py` exportando `APIRouter`
+- [ ] `pytest.ini` incluye `pythonpath = .` y `addopts = --import-mode=importlib`
+- [ ] Tests usan `from src.main import app` (no `from src.auth.main import app`)
 
 ## Regla crítica de valores numéricos en tests (S42-C)
 
