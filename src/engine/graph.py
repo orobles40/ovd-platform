@@ -1072,6 +1072,27 @@ async def generate_sdd(state: OVDState) -> dict:
             "tasks": [t.dict() for t in result.tasks],
         }
 
+        # S66-B: enforcement de máximo 5 tareas por agente (S49-B era solo en template).
+        # Si el LLM ignoró la restricción, recortamos en post-procesamiento.
+        _MAX_TASKS_PER_AGENT = 5
+        _tasks_by_agent: dict[str, list] = {}
+        for _t in sdd["tasks"]:
+            _tasks_by_agent.setdefault(_t["agent"], []).append(_t)
+        _tasks_trimmed: list[dict] = []
+        _trimmed_agents: list[str] = []
+        for _agent, _agent_tasks in _tasks_by_agent.items():
+            if len(_agent_tasks) > _MAX_TASKS_PER_AGENT:
+                _trimmed_agents.append(f"{_agent}({len(_agent_tasks)}→{_MAX_TASKS_PER_AGENT})")
+                _tasks_trimmed.extend(_agent_tasks[:_MAX_TASKS_PER_AGENT])
+            else:
+                _tasks_trimmed.extend(_agent_tasks)
+        if _trimmed_agents:
+            log.warning(
+                "generate_sdd: S66-B máx %d tareas/agente aplicado — recortados: %s",
+                _MAX_TASKS_PER_AGENT, ", ".join(_trimmed_agents),
+            )
+            sdd["tasks"] = _tasks_trimmed
+
         n_req   = len(sdd["requirements"])
         n_tasks = len(sdd["tasks"])
         n_agents = len({t["agent"] for t in sdd["tasks"]})
@@ -3188,6 +3209,48 @@ def _validate_artifacts_imports(
             local_mods.add(mod)
             for i in range(1, len(mod.split(".")) + 1):
                 local_mods.add(".".join(mod.split(".")[:i]))
+    # S66-A: mapa de nombre exportado → módulo que lo define (para sugerir corrección)
+    # Escanea archivos .py en disco y extrae nombres definidos en top-level
+    export_map: dict[str, list[str]] = {}  # nombre → [módulo1, módulo2, ...]
+    if base.exists():
+        for py_file in base.rglob("*.py"):
+            rel = py_file.relative_to(base)
+            if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+                continue
+            mod_dotted = str(rel).replace("/", ".").removesuffix(".py")
+            if mod_dotted not in local_mods:
+                continue
+            try:
+                src_text = py_file.read_text(encoding="utf-8", errors="replace")
+                tree2 = ast.parse(src_text)
+                for node2 in ast.walk(tree2):
+                    if isinstance(node2, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        export_map.setdefault(node2.name, []).append(mod_dotted)
+                    elif isinstance(node2, ast.Assign):
+                        for t in node2.targets:
+                            if isinstance(t, ast.Name):
+                                export_map.setdefault(t.id, []).append(mod_dotted)
+            except (OSError, SyntaxError):
+                continue
+
+    def _suggest_correction(phantom_mod: str, names: list[str]) -> str:
+        """S66-A: intenta encontrar el módulo correcto para los nombres importados."""
+        # Busca por cada nombre individualmente en export_map
+        candidates: dict[str, set[str]] = {}
+        for name in names:
+            if name in export_map:
+                candidates[name] = set(export_map[name])
+        if not candidates:
+            # Fallback: truncar el último segmento del módulo fantasma
+            parent = ".".join(phantom_mod.split(".")[:-1])
+            if parent and parent in local_mods:
+                return f"  → CORRECCIÓN: usa `from {parent} import {', '.join(names)}`"
+            return ""
+        # Módulo común a todos los nombres importados
+        common = set.intersection(*candidates.values()) if candidates else set()
+        target = next(iter(common), None) or next(iter(next(iter(candidates.values()))))
+        return f"  → CORRECCIÓN: usa `from {target} import {', '.join(names)}`"
+
     broken: list[str] = []
     for result in (agent_results or []):
         for art in result.get("artifacts", []):
@@ -3215,18 +3278,28 @@ def _validate_artifacts_imports(
                         continue
                 except (ImportError, ValueError, ModuleNotFoundError):
                     pass
-                names = ", ".join(a.name for a in node.names)
-                broken.append(f"  {path}: from {node.module} import {names}  \u2190 módulo no existe")
+                names_list = [a.name for a in node.names]
+                names_str = ", ".join(names_list)
+                line = f"  {path}: from {node.module} import {names_str}  \u2190 módulo no existe"
+                correction = _suggest_correction(node.module, names_list)
+                if correction:
+                    line += f"\n{correction}"
+                broken.append(line)
     if not broken:
         return True, ""
+    # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
+    available = sorted(m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__"))[:20]
+    available_str = "\n".join(f"  - {m}" for m in available) if available else "  (ninguno detectado)"
     feedback = (
         "[S65-A] IMPORTS ROTOS \u2014 detectados ANTES de pytest:\n"
         + "\n".join(broken[:12])
+        + "\n\nMÓDULOS DISPONIBLES EN DISCO (solo estos son importables):\n"
+        + available_str
         + "\n\nACCIÓN: Solo puedes importar módulos que:\n"
         "  1. Son stdlib Python (os, sys, datetime, pathlib...)\n"
         "  2. Están instalados (fastapi, sqlalchemy, pydantic, pytest...)\n"
-        "  3. TÚ creaste en esta entrega (archivos listados en el SDD)\n"
-        "\nPROHIBIDO: src.auth.dependencies, src.core.security, src.utils.jwt"
+        "  3. TÚ creaste en esta entrega y aparecen en 'MÓDULOS DISPONIBLES' arriba\n"
+        "\nAJUSTA los imports rotos usando las CORRECCIONES indicadas arriba."
     )
     return False, feedback
 
@@ -3380,6 +3453,43 @@ async def run_tests(state: OVDState) -> dict:
             ],
         )
         if not _imports_ok:
+            _prev_import_error = state.get("last_test_error", "")
+            # S66-C: si S65-A detecta los mismos imports rotos que en el round anterior,
+            # los agentes no los están corrigiendo → saltar directamente a generate_docs
+            _import_loop = (
+                retry_round >= 1
+                and "[S65-A] IMPORTS ROTOS" in _prev_import_error
+                and _import_feedback.split("\n")[1:4] == _prev_import_error.split("\n")[1:4]
+            )
+            if _import_loop:
+                log.warning(
+                    "run_tests: S66-C import loop detectado (ronda=%d) — "
+                    "mismo S65-A feedback que round anterior. Command(goto=generate_docs).",
+                    retry_round,
+                )
+                from langgraph.types import Command as _Command
+                return _Command(
+                    update={
+                        "test_results": {
+                            "passed": False,
+                            "output": _import_feedback,
+                            "runner": "import_validator",
+                            "retry_round": retry_round,
+                        },
+                        "test_retry_count": 2,
+                        "retry_feedback": _import_feedback,
+                        "last_test_error": _import_feedback,
+                        "status": "tests_failed",
+                        "messages": state.get("messages", []) + [{
+                            "role": "agent",
+                            "content": (
+                                f"S66-C: imports rotos sin cambio en ronda {retry_round + 1} — "
+                                "mismo error que round anterior. Pasando a generate_docs."
+                            ),
+                        }],
+                    },
+                    goto="generate_docs",
+                )
             log.warning("run_tests: S65-A imports rotos detectados antes de pytest — omitiendo ejecución")
             return {
                 "test_results": {
