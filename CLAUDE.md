@@ -114,21 +114,38 @@ cd src/tui && cargo build && cargo run
 - **11 tests nuevos** en `test_s55.py`. **1051 tests pasan** (1 flaky pre-existente: `test_s31.py::test_cycle_start_ts_reciente`).
 - **Resultado ciclo validación S55:** `9d939f29` — **1m 35s** (vs 3m 47s en S54), **pytest exit 0** (primer éxito histórico), 7/7 tests PASS, 30k tokens (vs 120k en S54 = -75%), 0 retries, 4 archivos en disco. Todos los asserts con `round()` — sin float mismatch.
 
-### Roadmap S67 — Próximo sprint (validación S66)
+### Novedades S67 (parcial, 2026-04-27) — rama `dev`
 
-#### Acción inmediata: reiniciar engine y lanzar ciclo
+- **S67-B implementado:** `generate_sdd` — cap dinámico por complejidad del FR. `_TASK_CAPS = {low:5, medium:8, high:10, critical:12}`. Resuelve que el ciclo S66 (FR medium) solo generó auth (5 tasks) dejando contratos y beneficios sin código. Commit `ad59310b0`.
+- **Ciclo validación S66 (34f25350):** 2m 10s (**-94% vs S65**), tokens 20k (**-97%**), QA 50/100. S66-B funcionó (backend 13→5). Problema: `project_id` no enviado → `directory=''` → código en tmpdir, perdido. S66-A/C no pudieron activarse.
+- **Bug identificado S66:** curl de prueba sin `project_id` → artifacts van a tmpdir. Fix: siempre incluir `project_id` en el body de `session_create`.
+- **Telemetría acumulada (49 ciclos):** QA promedio 54%, 7 ciclos alta calidad (≥80, 14%), tokens totales 5.4M, costo total $0.
+
+### Roadmap S67 — Próximo ciclo de validación
+
+#### Acción inmediata: reiniciar engine con S67-B y lanzar ciclo CORRECTO
 
 ```bash
 # 1. Limpiar entrega anterior
 rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
 rm -f  /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
 
-# 2. Iniciar engine con S66 activo
+# 2. Iniciar engine con S66+S67-B activos
 cd /Users/omarrobles/Workspace/Proyectos\ Personales/agente\ de\ terminal/ovd-platform/src/engine
 set -a && source <(grep -v '^#' .env | grep '=' | sed 's/ *#.*//') && set +a
 env ANTHROPIC_API_KEY="" .venv/bin/uvicorn api:app --port 8001
 
-# 3. Lanzar ciclo desde dashboard o curl
+# 3. Lanzar ciclo — SIEMPRE incluir project_id (sin esto, código va a tmpdir)
+SECRET=$(grep OVD_SECRET .env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "omar",
+    "project_id": "contratos-beneficios",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
 ```
 
 #### S67-A — Validar S66-A corrección de imports (crítico)
