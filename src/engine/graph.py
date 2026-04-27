@@ -991,6 +991,45 @@ def _is_infra_task(task: dict) -> bool:
     return any(p in combined for p in ("src/__init__", "src/database.py", "src/main.py", "src/auth/dependencies.py"))
 
 
+def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
+    """S69-A: si el FR menciona FastAPI y no hay tarea para src/main.py, inyectarla como primera tarea backend."""
+    fr_raw = fr_analysis.get("raw", "").lower()
+    fr_type = fr_analysis.get("type", "").lower()
+    _fastapi_keywords = ("fastapi", "api rest", "endpoint", "router", "uvicorn", "api-rest")
+    if not any(kw in fr_raw or kw in fr_type for kw in _fastapi_keywords):
+        return sdd
+    has_main = any(
+        "main.py" in (t.get("file", "") + " " + t.get("title", "") + " " + t.get("description", "")).lower()
+        for t in sdd.get("tasks", [])
+    )
+    if not has_main:
+        # Detectar routers que el SDD ya tiene para generar include_router hints
+        _router_hints = []
+        for _t in sdd.get("tasks", []):
+            _f = _t.get("file", "")
+            if _f.endswith("router.py") or "/router" in _f:
+                _mod = _f.replace("/", ".").removesuffix(".py")
+                _router_hints.append(f"from {_mod} import router as {_f.split('/')[-2]}_router")
+        _router_hint_str = (
+            " Importa: " + ", ".join(_router_hints) + "."
+            if _router_hints else " Importa todos los routers definidos en el SDD."
+        )
+        sdd["tasks"].insert(0, {
+            "id": "TASK-INFRA-MAIN",
+            "agent": "backend",
+            "title": "Crear src/main.py con app FastAPI y todos los routers",
+            "description": (
+                "Crea src/main.py con app = FastAPI(), incluye app.include_router() "
+                f"para cada módulo del SDD.{_router_hint_str}"
+            ),
+            "file": "src/main.py",
+            "depends_on": [],
+            "estimated_complexity": "low",
+        })
+        log.warning("generate_sdd: S69-A src/main.py inyectado como TASK-INFRA-MAIN (no estaba en SDD del LLM)")
+    return sdd
+
+
 async def generate_sdd(state: OVDState) -> dict:
     """
     Genera el SDD con 4 artefactos separados usando structured output (GAP-007):
@@ -1083,6 +1122,9 @@ async def generate_sdd(state: OVDState) -> dict:
             "constraints": [c.dict() for c in result.constraints],
             "tasks": [t.dict() for t in result.tasks],
         }
+
+        # S69-A: inyectar src/main.py si el FR menciona FastAPI y el LLM no lo incluyó
+        sdd = _ensure_fastapi_main_task(sdd, state.get("fr_analysis", {}))
 
         # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
         # low→5, medium→8, high→10 — evita perder features en FRs complejos.
@@ -3328,6 +3370,40 @@ def _validate_artifacts_imports(
                 broken.append(line)
     if not broken:
         return True, ""
+
+    # S69-C: auto-generar src/main.py cuando el import roto es src.main y no existe en disco
+    _main_py = base / "src" / "main.py"
+    _broken_text = "\n".join(broken)
+    if "src.main" in _broken_text and not _main_py.exists():
+        # Detectar routers disponibles en disco para include_router automático
+        _router_imports: list[str] = []
+        _router_includes: list[str] = []
+        if base.exists():
+            for _rfile in sorted((base / "src").rglob("router.py") if (base / "src").exists() else []):
+                _rrel = _rfile.relative_to(base)
+                _rmod = str(_rrel).replace("/", ".").removesuffix(".py")
+                _ralias = _rrel.parts[-2] if len(_rrel.parts) >= 2 else "router"
+                _router_imports.append(f"from {_rmod} import router as {_ralias}_router")
+                _router_includes.append(f"app.include_router({_ralias}_router)")
+        _main_content = "from fastapi import FastAPI\n"
+        for _ri in _router_imports:
+            _main_content += f"{_ri}\n"
+        _main_content += "\napp = FastAPI()\n"
+        for _rc in _router_includes:
+            _main_content += f"{_rc}\n"
+        try:
+            _main_py.parent.mkdir(parents=True, exist_ok=True)
+            _main_py.write_text(_main_content, encoding="utf-8")
+            log.warning("_validate_artifacts_imports: S69-C src/main.py auto-generado con %d router(s)", len(_router_imports))
+            # Re-agregar src.main a local_mods para evitar falso positivo en esta ronda
+            local_mods.update({"src.main", "src"})
+            # Quitar broken lines que referenciaban src.main
+            broken = [b for b in broken if "src.main" not in b]
+            if not broken:
+                return True, ""
+        except OSError as _e:
+            log.warning("_validate_artifacts_imports: S69-C no pudo escribir src/main.py — %s", _e)
+
     # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
     available = sorted(m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__"))[:20]
     available_str = "\n".join(f"  - {m}" for m in available) if available else "  (ninguno detectado)"
