@@ -190,8 +190,13 @@ SIEMPRE generar estas tareas de infraestructura PRIMERO (antes de models, servic
    → Solo cuando el FR menciona persistencia de datos (Oracle, PostgreSQL, SQLite, BD).
 
 2. `src/auth/dependencies.py` — get_current_user() que retorna {"org_id": int, "rut": str, "rol": str}
-   → Solo cuando el FR menciona autenticación, JWT, roles, o login.
-   → Si oracle_involved=False Y el FR no menciona auth explícitamente: OMITIR esta tarea.
+   → **OMITIR a menos que el FR contenga EXPLÍCITAMENTE al menos una de estas palabras:**
+     "autenticación", "login", "JWT", "token de acceso", "usuarios registrados",
+     "roles", "permisos", "sesión de usuario", "sign in", "bearer", "autenticar"
+   → Un sistema puede validar RUTs, gestionar contratos y conectarse a Oracle SIN auth propia.
+   → Si oracle_involved=True pero el FR no menciona login/JWT/roles → OMITIR igualmente.
+   → **REGLA CRÍTICA [S65-D]:** Si incluyes esta tarea en el SDD, el agente DEBE generar
+     el archivo físicamente. Un import sin archivo = ImportError inmediato en ronda 0.
 
 Sin estas tareas, el agente backend generará imports a módulos inexistentes → ImportError en ronda 0.
 

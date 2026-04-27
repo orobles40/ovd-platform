@@ -1481,9 +1481,30 @@ def _build_single_task_sdd_content(
             len(expected_files), expected_files,
         )
 
+        # S65-B: ORM guard — calcular antes de combinar con los demás hints
+        _sdd_tasks_all_b = sdd.get("tasks", [])
+        _has_database_py_b = any(
+            "database.py" in (t.get("description", "") + t.get("file", ""))
+            for t in _sdd_tasks_all_b
+        )
+        _orm_hint_b = ""
+        if _has_database_py_b and agent_name == "backend":
+            _td_lower_b = task.get("description", "").lower() + task.get("title", "").lower()
+            _needs_orm_b = any(kw in _td_lower_b for kw in ("model", "service", "repositor", "contract", "entidad", "tabla"))
+            if _needs_orm_b:
+                _orm_hint_b = (
+                    "\n\n[S65-B] REGLA CRÍTICA — ORM OBLIGATORIO:\n"
+                    "El SDD incluye database.py con Base = DeclarativeBase(). "
+                    "DEBES crear clases ORM que hereden de Base para persistir en BD:\n"
+                    "  ✅ CORRECTO:  class ContratoORM(Base):  __tablename__ = 'contratos'\n"
+                    "                    id = mapped_column(Integer, primary_key=True)\n"
+                    "  ❌ PROHIBIDO: class Contrato(BaseModel):  # solo Pydantic, no persistible\n"
+                    "REGLA: db.add() requiere una instancia ORM (hereda de Base), "
+                    "NO una instancia Pydantic (hereda de BaseModel). "
+                    "Crea TANTO el modelo Pydantic (para la API) COMO el modelo ORM (para la BD)."
+                )
+
         # S55-C: para tareas de tests, agregar instrucción explícita de round() para floats.
-        # Previene que el LLM escriba valores float literales calculados de memoria (divergen
-        # del valor real calculado por la implementación → AssertionError inevitable).
         _task_desc_lower = task_desc.lower()
         _is_test_task = any(kw in _task_desc_lower for kw in ("test", "pytest", "unitari", "spec"))
         if _is_test_task:
@@ -1497,7 +1518,31 @@ def _build_single_task_sdd_content(
             )
             return base + fence_hint + float_hint
 
-        return base + fence_hint
+        return base + fence_hint + _orm_hint_b
+
+    # S65-B: si el SDD incluye database.py y esta tarea es de backend con models/service,
+    # inyectar recordatorio ORM (path sin fence_hint — tarea sin ruta explícita en descripción).
+    _sdd_tasks_all = sdd.get("tasks", [])
+    _has_database_py = any(
+        "database.py" in (t.get("description", "") + t.get("file", ""))
+        for t in _sdd_tasks_all
+    )
+    if _has_database_py and agent_name == "backend":
+        _td_lower = task.get("description", "").lower() + task.get("title", "").lower()
+        _needs_orm = any(kw in _td_lower for kw in ("model", "service", "repositor", "contract", "entidad", "tabla"))
+        if _needs_orm:
+            orm_hint = (
+                "\n\n[S65-B] REGLA CRÍTICA — ORM OBLIGATORIO:\n"
+                "El SDD incluye database.py con Base = DeclarativeBase(). "
+                "DEBES crear clases ORM que hereden de Base para persistir en BD:\n"
+                "  ✅ CORRECTO:  class ContratoORM(Base):  __tablename__ = 'contratos'\n"
+                "                    id = mapped_column(Integer, primary_key=True)\n"
+                "  ❌ PROHIBIDO: class Contrato(BaseModel):  # solo Pydantic, no persistible\n"
+                "REGLA: db.add() requiere una instancia ORM (hereda de Base), "
+                "NO una instancia Pydantic (hereda de BaseModel). "
+                "Crea TANTO el modelo Pydantic (para la API) COMO el modelo ORM (para la BD)."
+            )
+            return base + orm_hint
 
     return base
 
@@ -1894,6 +1939,33 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 )
             except asyncio.TimeoutError:
                 log.error("agent_executor[%s]: S51-C retry timeout — sin tests", agent_name)
+
+        # S65-D: verificar que cada archivo del SDD fue escrito en disco
+        _sdd_py_files = [
+            t.get("file", "") for t in agent_tasks
+            if t.get("file", "").endswith(".py") and t.get("file", "")
+        ]
+        _written_paths = {a.get("path", "") for a in all_artifacts if isinstance(a, dict)}
+        _missing_sdd = []
+        if directory:
+            import pathlib as _pathlib_s65d
+            _base_s65d = _pathlib_s65d.Path(directory)
+            for _expected in _sdd_py_files:
+                _full = _base_s65d / _expected
+                if not _full.exists() and _expected not in _written_paths:
+                    _missing_sdd.append(_expected)
+        if _missing_sdd:
+            _missing_msg = (
+                f"[S65-D] ARCHIVOS DEL SDD NO ESCRITOS EN DISCO:\n"
+                + "\n".join(f"  - {f}" for f in _missing_sdd)
+                + "\nEl SDD declaró estas tareas pero los archivos no existen en el workspace. "
+                "Deben generarse con el fence ```python:ruta/exacta.py``` correcto."
+            )
+            all_output_parts.append(_missing_msg)
+            log.warning(
+                "agent_executor[%s]: S65-D — %d archivos del SDD no escritos: %s",
+                agent_name, len(_missing_sdd), _missing_sdd,
+            )
 
         result = {
             "agent": agent_name,
@@ -2919,6 +2991,13 @@ async def qa_review(state: OVDState) -> dict:
         "summary": result.summary,
     }
 
+    # S65-C: detectar orden incorrecto de rutas FastAPI (estática eclipsada por paramétrica)
+    if qa_directory:
+        _route_issues = _check_fastapi_route_ordering(qa_directory)
+        if _route_issues:
+            log.warning("qa_review: S65-C — %d problema(s) de orden de rutas FastAPI detectados", len(_route_issues))
+            qa["issues"] = list(qa.get("issues", [])) + [f"[S65-C] {iss}" for iss in _route_issues]
+
     # S41.A2: indexar issues de QA como lecciones (fire-and-forget)
     all_issues = result.issues + result.missing_requirements + result.code_quality_issues
     if all_issues:
@@ -2998,6 +3077,191 @@ async def handle_escalation(state: OVDState) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# S65-C — Helper: verificación de orden de rutas FastAPI
+# ---------------------------------------------------------------------------
+
+def _check_fastapi_route_ordering(directory: str) -> list[str]:
+    """S65-C: detecta rutas FastAPI estáticas eclipsadas por rutas paramétricas.
+
+    Ejemplo problemático: GET /contratos/{rut} declarado ANTES de GET /contratos/vencimientos.
+    FastAPI usa FIFO — la ruta con parámetro captura 'vencimientos' como valor de {rut}.
+
+    Retorna lista de issues (vacía si todo está correcto).
+    """
+    import ast as _ast
+    from pathlib import Path as _Path
+    import re as _re
+
+    issues: list[str] = []
+    base = _Path(directory)
+    if not base.exists():
+        return issues
+
+    for py_file in base.rglob("*.py"):
+        rel = py_file.relative_to(base)
+        if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+            continue
+        try:
+            source = py_file.read_text(encoding="utf-8", errors="replace")
+            tree = _ast.parse(source)
+        except (OSError, SyntaxError):
+            continue
+
+        # Recopilar decoradores @app.<method>("/path") en orden de aparición
+        routes: list[tuple[int, str, str]] = []  # (lineno, method, path)
+        for node in _ast.walk(tree):
+            if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            for deco in node.decorator_list:
+                if not isinstance(deco, _ast.Call):
+                    continue
+                func = deco.func
+                method = ""
+                if isinstance(func, _ast.Attribute) and func.attr in ("get", "post", "put", "delete", "patch"):
+                    method = func.attr.upper()
+                if not method or not deco.args:
+                    continue
+                first_arg = deco.args[0]
+                if not isinstance(first_arg, _ast.Constant) or not isinstance(first_arg.value, str):
+                    continue
+                routes.append((node.lineno, method, first_arg.value))
+
+        # Verificar que rutas estáticas no estén eclipsadas
+        for i, (lineno_i, method_i, path_i) in enumerate(routes):
+            if "{" not in path_i:
+                continue  # path_i es paramétrica — buscar estáticas DESPUÉS
+            # path_i tiene parámetros, buscar rutas estáticas con el mismo prefijo que vengan después
+            param_prefix = path_i.split("{")[0].rstrip("/")
+            for j in range(i + 1, len(routes)):
+                lineno_j, method_j, path_j = routes[j]
+                if method_j != method_i:
+                    continue
+                if "{" in path_j:
+                    continue  # ambas paramétricas — no hay eclipsado
+                if not path_j.startswith(param_prefix + "/") and path_j != param_prefix:
+                    continue
+                issues.append(
+                    f"{rel}:{lineno_j}: ruta estática '{method_j} {path_j}' "
+                    f"eclipsada por '{method_i} {path_i}' (línea {lineno_i}). "
+                    "Mover las rutas estáticas ANTES de las paramétricas."
+                )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# S65-A — Helper: validación pre-pytest de imports
+# ---------------------------------------------------------------------------
+
+def _validate_artifacts_imports(
+    agent_results: list[dict],
+    directory: str,
+    written_files: list[str],
+) -> tuple[bool, str]:
+    """S65-A: parsea imports de archivos .py generados, detecta módulos fantasma."""
+    import ast
+    from importlib.util import find_spec
+    from pathlib import Path
+
+    _stdlib = getattr(sys, "stdlib_module_names", set()) | {
+        "os", "sys", "re", "json", "datetime", "pathlib", "typing",
+        "collections", "itertools", "functools", "logging", "asyncio",
+        "threading", "subprocess", "io", "abc", "dataclasses", "enum",
+        "math", "random", "time", "uuid", "hashlib", "hmac", "base64",
+        "urllib", "http", "email", "html", "xml", "csv", "sqlite3",
+        "tempfile", "shutil", "glob", "copy", "inspect", "importlib",
+    }
+    base = Path(directory)
+    local_mods: set[str] = set()
+    for f in (written_files or []):
+        if f.endswith(".py"):
+            mod = f.replace("/", ".").removesuffix(".py")
+            local_mods.add(mod)
+            for i in range(1, len(mod.split(".")) + 1):
+                local_mods.add(".".join(mod.split(".")[:i]))
+    if base.exists():
+        for py_file in base.rglob("*.py"):
+            rel = py_file.relative_to(base)
+            if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+                continue
+            mod = str(rel).replace("/", ".").removesuffix(".py")
+            local_mods.add(mod)
+            for i in range(1, len(mod.split(".")) + 1):
+                local_mods.add(".".join(mod.split(".")[:i]))
+    broken: list[str] = []
+    for result in (agent_results or []):
+        for art in result.get("artifacts", []):
+            path = art.get("path", "") if isinstance(art, dict) else str(art)
+            if not path.endswith(".py"):
+                continue
+            full_path = base / path
+            try:
+                source = full_path.read_text(encoding="utf-8", errors="replace")
+                tree = ast.parse(source)
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.level > 0 or not node.module:
+                    continue
+                root = node.module.split(".")[0]
+                if root in _stdlib:
+                    continue
+                if node.module in local_mods:
+                    continue
+                try:
+                    if find_spec(root) is not None:
+                        continue
+                except (ImportError, ValueError, ModuleNotFoundError):
+                    pass
+                names = ", ".join(a.name for a in node.names)
+                broken.append(f"  {path}: from {node.module} import {names}  \u2190 módulo no existe")
+    if not broken:
+        return True, ""
+    feedback = (
+        "[S65-A] IMPORTS ROTOS \u2014 detectados ANTES de pytest:\n"
+        + "\n".join(broken[:12])
+        + "\n\nACCIÓN: Solo puedes importar módulos que:\n"
+        "  1. Son stdlib Python (os, sys, datetime, pathlib...)\n"
+        "  2. Están instalados (fastapi, sqlalchemy, pydantic, pytest...)\n"
+        "  3. TÚ creaste en esta entrega (archivos listados en el SDD)\n"
+        "\nPROHIBIDO: src.auth.dependencies, src.core.security, src.utils.jwt"
+    )
+    return False, feedback
+
+
+# ---------------------------------------------------------------------------
+# S65-E — Helper: garantizar infraestructura mínima Python en el workspace
+# ---------------------------------------------------------------------------
+
+def _ensure_python_infrastructure(work_dir: str) -> list[str]:
+    """S65-E: garantiza que requirements.txt y conftest.py existan en el workspace.
+
+    No sobreescribe archivos que ya tienen contenido válido.
+    Retorna lista de archivos creados (para logging).
+    """
+    import pathlib as _pl
+
+    base = _pl.Path(work_dir)
+    if not base.exists():
+        return []
+
+    created: list[str] = []
+
+    # requirements.txt mínimo si no existe
+    req_txt = base / "requirements.txt"
+    if not req_txt.exists() or req_txt.stat().st_size == 0:
+        req_txt.write_text(
+            "fastapi\nuvicorn\nsqlalchemy\npydantic\npytest\nhttpx\n",
+            encoding="utf-8",
+        )
+        created.append("requirements.txt")
+
+    return created
+
+
+# ---------------------------------------------------------------------------
 # S22 — Nodo run_tests: ejecución real de tests generados
 # ---------------------------------------------------------------------------
 
@@ -3054,6 +3318,12 @@ async def run_tests(state: OVDState) -> dict:
             "retry_round=%d, no se borran archivos aquí.", retry_round,
         )
 
+    # S65-E: garantizar infraestructura mínima Python en el workspace
+    if runner == "pytest" and work_dir:
+        _infra_created = _ensure_python_infrastructure(work_dir)
+        if _infra_created:
+            log.warning("run_tests: S65-E infraestructura mínima creada: %s", _infra_created)
+
     # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
     # S61-A: Si pytest.ini ya tiene `pythonpath`, NO inyectar sys.path.insert(0, "src"):
     #         causaría doble prefijo (busca src/src/main.py en vez de src/main.py).
@@ -3095,6 +3365,37 @@ async def run_tests(state: OVDState) -> dict:
             # conftest viejo apunta a rutas incorrectas → ImportError inevitable.
             _conftest.write_text(_conftest_content, encoding="utf-8")
             log.warning("run_tests: S57-C conftest.py regenerado en retry_round=%d — %s", retry_round, _conftest)
+
+    # S65-A: validar imports antes de ejecutar el runner — detecta módulos fantasma
+    # Solo para Python/pytest — el AST parser trabaja sobre .py
+    if runner == "pytest" and work_dir:
+        _imports_ok, _import_feedback = _validate_artifacts_imports(
+            agent_results=state.get("agent_results", []),
+            directory=work_dir,
+            written_files=[
+                a.get("path", "")
+                for r in state.get("agent_results", [])
+                for a in r.get("artifacts", [])
+                if isinstance(a, dict) and a.get("path", "").endswith(".py")
+            ],
+        )
+        if not _imports_ok:
+            log.warning("run_tests: S65-A imports rotos detectados antes de pytest — omitiendo ejecución")
+            return {
+                "test_results": {
+                    "passed": False,
+                    "output": _import_feedback,
+                    "runner": "import_validator",
+                    "retry_round": retry_round,
+                },
+                "retry_feedback": _import_feedback,
+                "last_test_error": _import_feedback,
+                "status": "tests_failed",
+                "messages": state.get("messages", []) + [{
+                    "role": "agent",
+                    "content": f"S65-A: imports rotos detectados — {_import_feedback[:200]}",
+                }],
+            }
 
     # Ejecutar runner
     passed = False
