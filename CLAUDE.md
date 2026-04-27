@@ -44,13 +44,21 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-26)
 
-- **Sprints completados:** S3 → S58-pre (render_composed, 7 stack files, 48 tests nuevos — commit `a05258c31`)
-- **Tests:** Python unit ~1127 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1180
-- **Rama activa:** `dev` (commits hasta S58-pre sin mergear a `main`)
-- **Próximo foco:** S59 (diagnóstico fallos silenciosos, devops tarea duplicada, reconexión SSE)
+- **Sprints completados:** S3 → S61 (commit `fa52d7efa`)
+- **Tests:** Python unit ~1140 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1193
+- **Rama activa:** `dev` (commits hasta S61 sin mergear a `main`)
+- **Próximo foco:** validación S61 — ciclo prueba con FR contratos/RUT (target: pytest exit 0 ronda 1)
 - **Seguridad:** todos los hallazgos corregidos, incluyendo SEC-01 estructural (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S58-pre:** `839f65d1` — failed (~17 min), backend/database OK, frontend nunca arrancó, excepción silenciada post-fan-out
+- **Ciclo de validación S60:** `0db2b88a` — 25m 43s, QA 95/100, tests FAIL `ModuleNotFoundError: No module named 'src.main'` (3 retries, root cause: S27-A + pythonpath incompatible)
+
+### Novedades S61 (2026-04-26) — rama `dev`
+
+- **S61-A:** `pythonpath = .` (no `src`) en templates `system_backend_python.md` + `system_backend.md`. S27-A skip conftest.py injection cuando `pytest.ini` ya tiene `pythonpath` — evita doble prefijo `src/src/main.py`.
+- **S61-B:** `last_test_error: str` en `OVDState` (sin truncar). S60-B usa `last_test_error` en vez de `retry_feedback` (truncado a 800 chars) para detectar errores estructurales repetidos.
+- **S61-C:** `qa_review` retorna resultado previo sin llamar al LLM cuando `selective_retry_agents` no vacío. Evita score volátil (95→57→95) en retries selectivos.
+- **S61-D:** `_kept_agent_results` en `OVDState`. `route_agents` preserva resultados de agentes no-retried. `deliver` fusiona kept + current — informa todos los agentes (no solo el último retried).
+- **13 tests nuevos** en `test_s61.py`. **1138 tests pasan** (2 flaky pre-existentes: `test_s31`, `test_s47`).
 
 ### Bug conocido — `ovd_refresh_tokens` columna faltante
 - `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db
