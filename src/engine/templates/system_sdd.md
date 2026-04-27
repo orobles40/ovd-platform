@@ -93,8 +93,8 @@ Genera tareas de implementación con los campos:
 - TASK-002: "Implementar la lógica de cálculo de IMC"
 
 ✅ CORRECTO — descripción con ruta explícita:
-- TASK-001: "Crear `src/imc/models.py` con ImcRequest(peso, altura) e ImcResponse(imc, categoria)"
-- TASK-002: "Crear `src/imc/service.py` con función calcular_imc(peso, altura) -> tuple[float, str]"
+- TASK-001: "Crear `src/imc/models.py` con ImcRequest(weight_kg, height_m) e ImcResponse(bmi, category)"
+- TASK-002: "Crear `src/imc/service.py` con función `calculate_bmi(weight_kg: float, height_m: float) -> tuple[float, str]`"
 - TASK-003: "Crear `src/main.py` con FastAPI app y endpoint POST /imc"
 - TASK-004: "Crear `tests/test_imc.py` con pytest: casos happy path, peso negativo, altura cero, categorías"
 
@@ -115,6 +115,29 @@ Genera tareas de implementación con los campos:
 - La tarea de tests debe listarse al final de las tareas del agente y depender de las tareas de implementación
 
 **Hooks y componentes:** Cuando el frontend genere un hook (useXxx), debe existir una tarea que explícitamente describa conectarlo al componente que lo usa. No dejar hooks generados pero sin integrar.
+
+### IMPORTANTE — Nombres de funciones en inglés en las descripciones de tareas (S71-A)
+
+Los nombres de funciones, clases y módulos en las descripciones de tareas **DEBEN estar en inglés**.
+El agente backend copiará el nombre exacto de la task description — si usas español, el código generado usará español.
+
+**IMPORTANT — Use English for all code identifiers in task descriptions:**
+
+| Concepto | Nombre en task description | Archivo |
+|----------|---------------------------|---------|
+| Validar RUT | `validate_rut(rut: str) -> bool` | `src/utils/rut_validator.py` |
+| Limpiar RUT | `clean_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
+| Es número primo | `is_prime(n: int) -> bool` | `src/utils/prime_validator.py` |
+| Crear contrato | `create_contract(data, user)` | `src/contracts/service.py` |
+| Obtener por ID | `get_contract_by_id(id, user)` | `src/contracts/service.py` |
+| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/calculadora/service.py` |
+
+❌ PROHIBIDO en task descriptions: `validar_rut`, `calcular_imc`, `crear_contrato`, `es_primo`
+✅ CORRECTO: `validate_rut`, `calculate_bmi`, `create_contract`, `is_prime`
+
+Las descripciones y comentarios pueden estar en español — los **nombres de código** deben ser en inglés.
+
+---
 
 ## Regla de alcance: función pura vs API (S42-A)
 

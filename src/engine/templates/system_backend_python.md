@@ -183,11 +183,34 @@ Si la función `calculate_bmi` (o cualquier función de negocio) debe existir en
 
 ✅ **CORRECTO:** Una sola definición en `src/<paquete>/<modulo>.py`. Todos los tests importan desde ahí.
 
+## Nombres canónicos de funciones — OBLIGATORIO (S71-A)
+
+El nombre de la función que defines DEBE coincidir exactamente con el nombre en la task description del SDD.
+**Si la task dice `validate_rut` → el código genera `def validate_rut(...)`.**
+**NO adaptes el nombre al español aunque el sistema prompt esté en español.**
+
+| Concepto | Firma canónica OBLIGATORIA | Archivo |
+|----------|---------------------------|---------|
+| Validar RUT | `validate_rut(rut: str) -> bool` | `src/utils/rut_validator.py` |
+| Limpiar RUT | `clean_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
+| Formatear RUT | `format_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
+| Validar + retornar limpio | `require_valid_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
+| Es número primo | `is_prime(n: int) -> bool` | `src/utils/prime_validator.py` |
+| Crear contrato | `create_contract(data, user)` | `src/contracts/service.py` |
+| Obtener contrato | `get_contract_by_id(id, user)` | `src/contracts/service.py` |
+| Actualizar contrato | `update_contract(id, data, user)` | `src/contracts/service.py` |
+| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/<módulo>/service.py` |
+
+❌ `validar_rut`, `calcular_imc`, `es_primo`, `crear_contrato` — **PROHIBIDOS**
+✅ `validate_rut`, `calculate_bmi`, `is_prime`, `create_contract` — **OBLIGATORIOS**
+
+---
+
 ## Validación de RUT chileno
 
 Cuando el FR involucre RUT chileno, implementa la validación en el backend:
 
-```python:src/<paquete>/utils/rut.py
+```python:src/utils/rut_validator.py
 import re
 
 def clean_rut(rut: str) -> str:
@@ -247,6 +270,125 @@ Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribi
 | `12.345.678-4` | 12345678 | 4 | ❌ RUT inválido (DV incorrecto — caso negativo) |
 
 **Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
+
+## Pydantic v2 — Validadores obligatorios (S71-D)
+
+**NUNCA uses `@validator` (Pydantic v1 — deprecated). SIEMPRE usa `@field_validator` + `@classmethod`.**
+
+### Validador de campo individual:
+
+```python
+from pydantic import BaseModel, field_validator
+
+class BenefitCreate(BaseModel):
+    contract_id: int
+    clave: int   # debe ser número primo
+    valor: float
+
+    @field_validator('clave')          # ← field_validator, NO validator
+    @classmethod                        # ← @classmethod OBLIGATORIO en Pydantic v2
+    def clave_must_be_prime(cls, v: int) -> int:
+        if not is_prime(v):
+            raise ValueError('La clave debe ser un número primo')
+        return v
+```
+
+### Campos calculados automáticamente (`valor_total`):
+
+```python
+from pydantic import model_validator
+from typing_extensions import Self
+
+class Contrato(BaseModel):
+    beneficios: list[BenefitCreate] = []
+    valor_total: float = 0.0
+
+    @model_validator(mode='after')     # ← ejecuta DESPUÉS de validar todos los campos
+    def calculate_valor_total(self) -> Self:
+        """Suma automática — nunca calcular manualmente fuera de este método."""
+        self.valor_total = sum(b.valor for b in self.beneficios)
+        return self
+```
+
+### Tabla de equivalencias v1 → v2:
+
+| Pydantic v1 (PROHIBIDO) | Pydantic v2 (CORRECTO) |
+|------------------------|------------------------|
+| `@validator('field')` | `@field_validator('field')` + `@classmethod` |
+| `@validator(..., pre=True)` | `@field_validator(..., mode='before')` + `@classmethod` |
+| `@root_validator` | `@model_validator(mode='before'\|'after')` |
+| `orm_mode = True` en Config | `model_config = ConfigDict(from_attributes=True)` |
+| `class Config: orm_mode = True` | `model_config = ConfigDict(from_attributes=True)` |
+
+---
+
+## FastAPI + SQLAlchemy ORM + Oracle (S71-F)
+
+**PROHIBIDO:** `oracledb.connect()` o `psycopg.connect()` directamente en endpoints o services.
+**OBLIGATORIO:** SQLAlchemy ORM con `get_session()` generador y `Depends()`.
+
+### Oracle 12c — thick mode obligatorio
+
+Oracle 12c requiere **thick mode**. Thin mode solo funciona en Oracle 18c+.
+
+```python:src/database.py
+import os
+import oracledb
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, declarative_base
+
+# OBLIGATORIO para Oracle 12c — thin mode no soportado en 12c
+oracledb.init_oracle_client()  # thick mode
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "oracle+oracledb://user:pass@host.docker.internal:1521/?service_name=XEPDB1"
+)
+engine = create_engine(DATABASE_URL, echo=False)
+Base = declarative_base()
+
+def get_session():
+    """FastAPI dependency — una sesión por request, cleanup automático."""
+    with Session(engine) as session:
+        yield session
+```
+
+### Modelos ORM — van en `models.py`, NO en `service.py`:
+
+```python:src/contracts/models.py
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from src.database import Base
+
+class Contrato(Base):
+    __tablename__ = "contratos"
+    id         = Column(Integer, primary_key=True)
+    rut_empleado = Column(String(12), nullable=False)
+    org_id     = Column(Integer, nullable=False)
+    tipo_contrato = Column(Integer, nullable=False)
+    valor_total = Column(Float, default=0.0)
+```
+
+### Dependency injection en endpoints:
+
+```python:src/contracts/router.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from src.database import get_session
+from src.contracts.models import Contrato
+from src.auth.dependencies import get_current_user
+
+router = APIRouter()
+
+@router.get("/contratos/{id}")
+def get_contrato(
+    id: int,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user),
+):
+    return session.get(Contrato, id)
+```
+
+---
 
 ### Imports prohibidos — prevenir ciclos y auto-imports (S70-D)
 
