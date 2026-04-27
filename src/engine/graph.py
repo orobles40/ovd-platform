@@ -434,6 +434,8 @@ class OVDState(TypedDict):
 
     # S47: agentes client-side pendientes (esperan a que grupo server-side termine)
     pending_agents: list[str]
+    # S59-B: buffer interno — lista copiada por _dispatch_frontend_node antes de limpiar pending_agents
+    _dispatch_now: list[str]
 
     # GAP-001: resultado de la auditoria de seguridad independiente
     security_result: dict[str, Any]
@@ -1451,6 +1453,7 @@ async def route_agents(state: OVDState) -> dict:
             "agent_results": None,
             "selected_agents": selective_agents,
             "pending_agents": [],
+            "_dispatch_now": [],
             "selective_retry_agents": [],  # limpiar para no interferir con ciclos siguientes
             "status": "routing",
             "messages": state.get("messages", []) + [{
@@ -1568,10 +1571,11 @@ def _dispatch_agents(state: OVDState) -> list[Send]:
 
 def _dispatch_frontend(state: OVDState) -> list[Send]:
     """
-    S47: Fan-out del grupo 2 (client-side) después de que el grupo 1 terminó.
-    El código server-side ya está en disco — read_project_context lo inyectará.
+    S47/S59-B: Fan-out del grupo 2 (client-side) después de que el grupo 1 terminó.
+    Lee desde _dispatch_now (copiado por _dispatch_frontend_node antes de limpiar
+    pending_agents) para evitar que el edge vea la lista ya vacía.
     """
-    pending = state.get("pending_agents", [])
+    pending = state.get("_dispatch_now", [])
     log.info("S47 dispatch_frontend: despachando agentes client-side=%s", pending)
     return _make_agent_sends(pending, state)
 
@@ -4831,15 +4835,15 @@ def _route_after_agent_executor(state: OVDState) -> str:
 async def _dispatch_frontend_node(state: OVDState) -> dict:
     """
     S47: Nodo de transición antes del segundo fan-out.
-    Limpia pending_agents y resetea agent_results para que el fan-out frontend
-    no mezcle sus resultados con los del grupo server-side ya procesados.
+    Limpia pending_agents y copia la lista a _dispatch_now para que el edge
+    condicional _dispatch_frontend pueda leerla (el edge ve el estado post-nodo).
     No ejecuta ningún LLM — solo prepara el estado.
     """
     pending = state.get("pending_agents", [])
     log.info("S47 dispatch_frontend_node: preparando fan-out client-side=%s", pending)
     return {
-        "pending_agents": [],   # vaciar — ya se despachan ahora
-        # NO resetear agent_results — los resultados server-side se acumulan para QA y security
+        "pending_agents": [],    # vaciar — ya procesados en _dispatch_now
+        "_dispatch_now": list(pending),  # S59-B: buffer para el edge condicional
     }
 
 
