@@ -44,14 +44,14 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-27)
 
-- **Sprints completados:** S3 → S66 (commit `03791b612`)
-- **Tests:** Python unit ~1192 (suite principal) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1235
-- **Rama activa:** `dev` (S65+S66 commiteados, sin mergear a `main`)
-- **Próximo foco:** reiniciar engine, lanzar ciclo de prueba con FR contratos/RUT para validar S66
+- **Sprints completados:** S3 → S69 (commit `7c1543630`)
+- **Tests:** Python unit ~1221 (suite principal) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1264
+- **Rama activa:** `dev` (S69 commiteado, sin mergear a `main`)
+- **Próximo foco:** S70-A (session_create → grafo inmediato), S70-C (conftest oracledb mock), S70-B (routers fantasma)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S65:** `bc5bcba1` — 34m 4s, QA 65/100, status=completed (primer completed desde S63). S65-A detectó 7 phantom imports pero loop no se cortó — corregido en S66-C.
-- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp)
+- **Ciclo de validación S69:** `e3888513` — 6m 54s, QA 95/100, status=completed. S69-A/B validados. src/main.py generado por primera vez. Tests FAIL: `ModuleNotFoundError: oracledb` (diferente al bloqueador S68).
+- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
 
 ### Novedades S66 (2026-04-27) — rama `dev`
 
@@ -114,14 +114,158 @@ cd src/tui && cargo build && cargo run
 - **11 tests nuevos** en `test_s55.py`. **1051 tests pasan** (1 flaky pre-existente: `test_s31.py::test_cycle_start_ts_reciente`).
 - **Resultado ciclo validación S55:** `9d939f29` — **1m 35s** (vs 3m 47s en S54), **pytest exit 0** (primer éxito histórico), 7/7 tests PASS, 30k tokens (vs 120k en S54 = -75%), 0 retries, 4 archivos en disco. Todos los asserts con `round()` — sin float mismatch.
 
-### Novedades S67 (parcial, 2026-04-27) — rama `dev`
+### Novedades S67 (2026-04-27) — rama `dev`
 
-- **S67-B implementado:** `generate_sdd` — cap dinámico por complejidad del FR. `_TASK_CAPS = {low:5, medium:8, high:10, critical:12}`. Resuelve que el ciclo S66 (FR medium) solo generó auth (5 tasks) dejando contratos y beneficios sin código. Commit `ad59310b0`.
-- **Ciclo validación S66 (34f25350):** 2m 10s (**-94% vs S65**), tokens 20k (**-97%**), QA 50/100. S66-B funcionó (backend 13→5). Problema: `project_id` no enviado → `directory=''` → código en tmpdir, perdido. S66-A/C no pudieron activarse.
-- **Bug identificado S66:** curl de prueba sin `project_id` → artifacts van a tmpdir. Fix: siempre incluir `project_id` en el body de `session_create`.
-- **Telemetría acumulada (49 ciclos):** QA promedio 54%, 7 ciclos alta calidad (≥80, 14%), tokens totales 5.4M, costo total $0.
+- **S67-B implementado:** `generate_sdd` — cap dinámico por complejidad del FR. `_TASK_CAPS = {low:5, medium:8, high:10, critical:12}`. Confirmado: `backend(15→8)` en ciclo b3de3b92 (high complexity).
+- **Ciclo validación S67 (b3de3b92):** 22m 4s, QA 60/100, 12 archivos en disco, 68,763 tokens. Primer ciclo con `directory` correcto → S65-A y S66-A activados.
+- **S65-A ✅ VALIDADO:** detectó 10 phantom imports con correcciones exactas (`→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'`).
+- **S66-A ✅ VALIDADO:** lista de módulos disponibles en disco + correcciones por import.
+- **S66-C ❌ BUG:** `retry_round=0` en ambas pasadas por `run_tests` → S66-C nunca activa. Fix en S68-A.
+- **Bug org_id:** `org_id` correcto es `ORG_OMAR_ROBLES` (no `"omar"`). Curl de prueba corregido en CLAUDE.md.
+- **3 bugs críticos para S68:** (A) `retry_round=0` impide S66-C; (B) `retry_feedback` no llega a agentes en retry; (C) `src/database.py` + `src/main.py` no en SDD.
+- **Ciclo validación S66 (34f25350):** 2m 10s (**-94% vs S65**), tokens 20k (**-97%**), QA 50/100. S66-B funcionó. `directory=''` porque `org_id` incorrecto.
+- **Telemetría acumulada (~51 ciclos):** QA promedio ~55%, 7 ciclos alta calidad (≥80, 14%), costo total $0.
 
-### Roadmap S67 — Próximo ciclo de validación
+### Novedades S68 (2026-04-27) — rama `dev`
+
+- **S68-A:** `update_test_retry` — `_is_s65a_output` detecta `"[S65-A] IMPORTS ROTOS"` en `test_output` y preserva `last_test_error`. Corrige el bug donde `retry_round` siempre era 0 en S66-C.
+- **S68-B:** `_extract_import_corrections()` — extrae líneas `→ CORRECCIÓN:` del feedback S65-A e inyecta al inicio del HumanMessage (antes del SDD). Confirmado en log: 5/5 tareas inyectadas en todas las rondas.
+- **S68-C:** `_is_infra_task()` — separa tareas de infraestructura (`src/__init__.py`, `src/database.py`, `src/main.py`, `src/auth/dependencies.py`) del cap de complejidad. En `generate_sdd`: `infra + business[:MAX]`.
+- **S68-D:** `system_backend_python.md` — agregadas `format_rut()`, `require_valid_rut()`, regla de almacenamiento RUT en BD, UNIQUE constraint por (org_id, rut_limpio).
+- **16 tests nuevos** en `test_s68.py`. **1208 tests pasan** (suite principal).
+- **Ciclo validación S68 (33b0ed21):** 7m 49s (-77% vs S65), QA 60/100, tests FAIL. Bloqueador: `src/main.py` nunca generado por el SDD — `from src import app` falla con ImportError.
+
+### Novedades S69 (2026-04-27) — rama `dev`
+
+- **S69-A:** `_ensure_fastapi_main_task()` en `generate_sdd` — inyecta `TASK-INFRA-MAIN` si el FR menciona FastAPI y el LLM no incluyó `src/main.py`. Validado: src/main.py generado por primera vez.
+- **S69-B:** `system_sdd.md` — tabla VERIFICACIÓN OBLIGATORIA al inicio del template (posición 0%) con `src/main.py`, `src/database.py`, `src/auth/dependencies.py`. Combate "Lost in the Middle".
+- **S69-C:** `_validate_artifacts_imports` — auto-genera `src/main.py` mínimo cuando import roto es `src.main` y el archivo no existe en disco. Incluye `include_router()` para cada `router.py` detectado.
+- **13 tests nuevos** en `test_s69.py`. **1221 tests pasan** (suite principal).
+- **Ciclo validación S69 (e3888513):** 6m 54s (-12% vs S68), QA 95/100 (+58%), src/main.py generado ✅, sdd_compliance=True. Tests FAIL: `ModuleNotFoundError: oracledb` (nuevo error — ya no es `ImportError src.main`).
+- **Nota SSE:** El grafo S47-A solo inicia cuando se conecta al SSE. Sin conexión SSE, el ciclo queda `started`. Fix en S70-A.
+
+### Roadmap S70 — Próximo sprint
+
+#### S70-A — Iniciar grafo en session_create (CRÍTICO)
+En `session_create`, después de guardar el checkpoint inicial, disparar `asyncio.create_task(_run_graph_background(thread_id, config))` directamente. Elimina el requisito de SSE para iniciar la ejecución.
+
+#### S70-B — Router detection en _ensure_fastapi_main_task (ALTO)
+`src/main.py` importa `router.py` que no existe. En `_ensure_fastapi_main_task`, solo incluir `include_router()` para módulos que tienen `router.py` en el SDD. Si no hay router, usar import directo del service.
+
+#### S70-C — conftest.py con mock oracledb (ALTO)
+En `_ensure_python_infrastructure`, si detecta `oracledb` en database.py, crear/actualizar `conftest.py` con:
+```python
+import sys
+from unittest.mock import MagicMock
+sys.modules['oracledb'] = MagicMock()
+```
+Impacto esperado: pytest exit 0 sin Oracle instalado localmente.
+
+#### S70-D — Prohibir auto-import circular (ALTO)
+Agregar regla en `system_backend_python.md`: "NUNCA importes desde el mismo módulo que estás escribiendo. Los modelos ORM van en `models.py`, no en `service.py`."
+
+#### S70-E — Consistencia JWT library (MEDIO)
+Agregar regla: "Usa una sola librería JWT. Preferir `python-jose[cryptography]`."
+
+#### Ciclo de validación S70
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S70:** duración <8 min, QA ≥95, pytest exit 0, src/main.py ✅, grafo inicia sin SSE.
+
+### Roadmap S69 — COMPLETADO (2026-04-27)
+
+#### S69-A — Post-procesar SDD para inyectar src/main.py (CRÍTICO)
+
+En `generate_sdd`, después del parseo del JSON del LLM:
+```python
+def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
+    """S69-A: si el FR menciona FastAPI y no hay tarea para src/main.py, inyectarla."""
+    if not any(kw in fr_analysis.get("raw","").lower() for kw in ("fastapi","api rest","endpoint")):
+        return sdd
+    has_main = any("main.py" in (t.get("file","") + t.get("title","") + t.get("description","")).lower()
+                   for t in sdd.get("tasks", []))
+    if not has_main:
+        sdd["tasks"].insert(0, {
+            "id": "TASK-INFRA-MAIN", "agent": "backend",
+            "title": "Crear src/main.py con app FastAPI y todos los routers",
+            "description": "src/main.py con app = FastAPI(), include_router() para cada módulo del SDD",
+            "file": "src/main.py", "depends_on": [], "estimated_complexity": "low"
+        })
+        log.warning("S69-A: src/main.py inyectado como TASK-INFRA-MAIN")
+    return sdd
+```
+
+#### S69-B — QA contextual al SDD del ciclo (GAP-S56-A)
+
+QA score 60/100 persistente. El reviewer evalúa con el perfil del proyecto en vez del SDD del ciclo.
+Fix: pasar `sdd_json` al template `system_qa.md` como contexto primario.
+**Impacto esperado:** QA 60 → 75+.
+
+#### S69-C — Auto-generar src/main.py desde _validate_artifacts_imports
+
+Cuando S65-A detecta `from src.main import app ← módulo no existe` Y `src/main.py` no está en disco → generar un `src/main.py` mínimo con los routers detectados antes de lanzar el retry.
+
+#### Ciclo de validación S69
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S69:** duración <8 min, QA ≥70, pytest exit 0, src/main.py generado.
+
+### Roadmap S68 — COMPLETADO (2026-04-27)
+
+#### S68-A — Fix retry_round para S66-C (CRÍTICO)
+En `run_tests`, usar `last_test_error` para detectar import loop en lugar de `retry_round`:
+```python
+_retry_round_effective = 1 if "[S65-A] IMPORTS ROTOS" in state.get("last_test_error", "") else retry_round
+```
+
+#### S68-B — Propagar retry_feedback a agentes en retry (CRÍTICO)
+En `_build_single_task_sdd_content`, si `retry_feedback` contiene `→ CORRECCIÓN:`, inyectarlo al inicio del prompt.
+
+#### S68-C — Tareas infra obligatorias fuera del cap (CRÍTICO)
+En `system_sdd.md`: `src/database.py` y `src/main.py` son tareas obligatorias para backend Python, NO cuentan contra el cap de complejidad.
+
+#### S68-D — Completar clean_rut + format_rut en backend_python.md (ALTO)
+Agregar implementaciones completas en la tabla de RUTs.
+
+#### Ciclo de validación S68
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S68:** duración <15 min, QA ≥70, pytest exit 0, S66-C activa.
+
+### Roadmap S67 — COMPLETADO (2026-04-27)
 
 #### Acción inmediata: reiniciar engine con S67-B y lanzar ciclo CORRECTO
 
@@ -141,8 +285,8 @@ curl -s -X POST http://localhost:8001/session \
   -H "Content-Type: application/json" \
   -H "X-OVD-Secret: $SECRET" \
   -d '{
-    "org_id": "omar",
-    "project_id": "contratos-beneficios",
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
     "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
     "auto_approve": true
   }'
