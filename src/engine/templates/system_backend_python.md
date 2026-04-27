@@ -248,6 +248,54 @@ Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribi
 
 **Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
 
+### Imports prohibidos — prevenir ciclos y auto-imports (S70-D)
+
+**REGLA CRÍTICA:** NUNCA importes desde el mismo módulo que estás escribiendo.
+
+```python
+# ❌ PROHIBIDO — auto-import circular (service.py importando desde service.py)
+# En src/contracts/service.py:
+from src.contracts.service import ContractORM, BenefitORM  # ← ERROR: es el mismo archivo
+
+# ✅ CORRECTO — modelos ORM van en models.py, service.py los importa desde ahí
+# En src/contracts/models.py:
+class ContractORM(Base): ...
+
+# En src/contracts/service.py:
+from src.contracts.models import ContractORM, BenefitORM  # ← archivo diferente
+```
+
+Regla de separación de responsabilidades:
+- `models.py` — clases ORM (SQLAlchemy Base)
+- `schemas.py` — modelos Pydantic (request/response)
+- `service.py` — lógica de negocio, usa `models.py` y `schemas.py`
+- `router.py` — endpoints FastAPI, usa `service.py`
+
+Cada archivo importa SOLO desde archivos de nivel inferior. Nunca de sí mismo ni de niveles superiores.
+
+### JWT — librería única por proyecto (S70-E)
+
+**REGLA:** Usa UNA SOLA librería JWT en todo el proyecto. Mezclar `python-jose` con `PyJWT` en el mismo proyecto provoca incompatibilidades en el formato de tokens.
+
+**Librería preferida:** `python-jose[cryptography]`
+
+```python
+# ✅ CORRECTO — jose consistente en todo el proyecto
+from jose import jwt, JWTError
+token = jwt.encode({"sub": rut, "rol": rol}, SECRET_KEY, algorithm="HS256")
+payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+
+# ❌ PROHIBIDO — mezclar librerías
+# auth/dependencies.py usa: import jwt (PyJWT)
+# auth/service.py usa: from jose import jwt (python-jose)
+```
+
+En `requirements.txt` incluye SOLO una de las dos:
+```
+python-jose[cryptography]>=3.3.0   ← usa esta
+# NO incluir: PyJWT, jwt
+```
+
 ### Conexión a base de datos externa (S45-E)
 
 Si el proyecto usa una BD externa (Oracle, PostgreSQL, MySQL), la URL de conexión **DEBE** tomarse de variables de entorno o del `{project_context}`. **NUNCA hardcodear** host, puerto, usuario ni contraseña.

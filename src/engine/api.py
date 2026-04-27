@@ -644,6 +644,20 @@ async def start_session(
     except Exception as _db47_err:
         log.warning("S47-B: error registrando ciclo 'started' — %s", _db47_err)
 
+    # S70-A: disparar background task inmediatamente — no esperar SSE
+    if thread_id not in _event_queues:
+        _event_queues[thread_id] = asyncio.Queue(maxsize=2000)
+        _stream_done[thread_id] = asyncio.Event()
+    _s70_existing = _graph_tasks.get(thread_id)
+    if _s70_existing is None or _s70_existing.done():
+        _stream_done[thread_id].clear()
+        _s70_task = asyncio.create_task(
+            _run_graph_background(thread_id, config),
+            name=f"ovd_graph_{thread_id[:8]}",
+        )
+        _graph_tasks[thread_id] = _s70_task
+        log.info("S70-A: background task lanzada para thread=%s sin esperar SSE", thread_id[:8])
+
     return JSONResponse({
         "thread_id": thread_id,
         "session_id": session_id,

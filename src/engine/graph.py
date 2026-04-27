@@ -1010,18 +1010,24 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             if _f.endswith("router.py") or "/router" in _f:
                 _mod = _f.replace("/", ".").removesuffix(".py")
                 _router_hints.append(f"from {_mod} import router as {_f.split('/')[-2]}_router")
-        _router_hint_str = (
-            " Importa: " + ", ".join(_router_hints) + "."
-            if _router_hints else " Importa todos los routers definidos en el SDD."
-        )
+        # S70-B: solo incluir include_router() si hay router.py explícito en el SDD.
+        if _router_hints:
+            _main_desc = (
+                "Crea src/main.py con app = FastAPI() e include_router() para los routers del SDD."
+                " Importa SOLO estos routers que SÍ están en el SDD: " + ", ".join(_router_hints) + "."
+            )
+        else:
+            # S70-B: sin router.py en SDD → main.py mínimo sin imports de routers fantasma
+            _main_desc = (
+                "Crea src/main.py con SOLO app = FastAPI() y endpoints GET /health y GET /."
+                " IMPORTANTE: no importes módulos router que no estén definidos en el SDD."
+                " Este archivo es el entry point de la app; los routers se integrarán cuando el SDD los incluya."
+            )
         sdd["tasks"].insert(0, {
             "id": "TASK-INFRA-MAIN",
             "agent": "backend",
-            "title": "Crear src/main.py con app FastAPI y todos los routers",
-            "description": (
-                "Crea src/main.py con app = FastAPI(), incluye app.include_router() "
-                f"para cada módulo del SDD.{_router_hint_str}"
-            ),
+            "title": "Crear src/main.py — entry point FastAPI",
+            "description": _main_desc,
             "file": "src/main.py",
             "depends_on": [],
             "estimated_complexity": "low",
@@ -3543,9 +3549,38 @@ async def run_tests(state: OVDState) -> dict:
             "import sys, os\n"
             'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))\n'
         )
+        # S70-C: mock oracledb si algún archivo del workspace lo importa
+        _has_oracledb_import = False
+        _wdir_pl = pathlib.Path(work_dir) if work_dir else None
+        if _wdir_pl and _wdir_pl.exists():
+            for _pf in _wdir_pl.rglob("*.py"):
+                if _pf.name.startswith("test_") or _pf.name == "conftest.py":
+                    continue
+                try:
+                    if "oracledb" in _pf.read_text(encoding="utf-8", errors="replace"):
+                        _has_oracledb_import = True
+                        break
+                except OSError:
+                    pass
+        if _has_oracledb_import:
+            _conftest_content += (
+                "from unittest.mock import MagicMock\n"
+                "sys.modules['oracledb'] = MagicMock()\n"
+            )
+            log.warning("run_tests: S70-C oracledb detectado en workspace — mock inyectado en conftest.py")
+
         if _has_pytest_pythonpath:
-            # S61-A: pytest.ini ya gestiona pythonpath — no sobreescribir conftest
-            log.info("run_tests: S61-A pytest.ini tiene pythonpath — omitiendo inyección de conftest.py sys.path")
+            # S61-A: pytest.ini ya gestiona pythonpath — actualizar conftest solo con mock oracledb si aplica
+            if _has_oracledb_import:
+                _existing_conf = _conftest.read_text(encoding="utf-8", errors="replace") if _conftest.exists() else ""
+                if "oracledb" not in _existing_conf:
+                    _conftest.write_text(
+                        _existing_conf.rstrip() + "\nfrom unittest.mock import MagicMock\nsys.modules['oracledb'] = MagicMock()\n",
+                        encoding="utf-8",
+                    )
+                    log.warning("run_tests: S70-C oracledb mock añadido a conftest.py existente")
+            else:
+                log.info("run_tests: S61-A pytest.ini tiene pythonpath — omitiendo inyección de conftest.py sys.path")
         elif not _conftest.exists() or _conftest.stat().st_size == 0:
             _conftest.write_text(_conftest_content, encoding="utf-8")
             log.info("run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s", _conftest)

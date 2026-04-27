@@ -106,12 +106,18 @@ def test_s69a_detecta_keyword_endpoint():
     assert "src/main.py" in files
 
 
-def test_s69a_descripcion_contiene_include_router():
-    """S69-A: la tarea inyectada menciona include_router en la descripción."""
+def test_s69a_descripcion_contiene_entry_point():
+    """S69-A: la tarea inyectada crea src/main.py como entry point FastAPI.
+    S70-B: cuando no hay router.py en el SDD, description no genera include_router.
+    """
     sdd = _sdd_without_main()
     result = _ensure_fastapi_main_task(sdd, _fr_fastapi())
     main_task = next(t for t in result["tasks"] if t.get("id") == "TASK-INFRA-MAIN")
-    assert "include_router" in main_task["description"]
+    desc = main_task["description"].lower()
+    # La tarea debe generar src/main.py con app = FastAPI()
+    assert "fastapi" in desc or "main.py" in main_task["file"]
+    # Sin router.py en el SDD, no debe incluir routers fantasma (S70-B)
+    assert "include_router" not in desc
 
 
 # ---------------------------------------------------------------------------
