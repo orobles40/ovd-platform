@@ -4178,6 +4178,69 @@ def _validate_artifacts_imports(
         except OSError as _e:
             log.warning("_validate_artifacts_imports: S69-C no pudo escribir src/main.py — %s", _e)
 
+    # S89-A: auto-generar src/contracts/models.py cuando falta y causa imports rotos
+    _contracts_models_py = base / "src" / "contracts" / "models.py"
+    if "src.contracts.models" in _broken_text and not _contracts_models_py.exists():
+        _contracts_models_content = (
+            "from datetime import datetime\n"
+            "from typing import Optional\n"
+            "from pydantic import BaseModel\n"
+            "from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey\n"
+            "from sqlalchemy.orm import relationship\n"
+            "from src.database import Base\n\n\n"
+            "class ContractORM(Base):\n"
+            "    __tablename__ = 'contracts'\n"
+            "    id = Column(Integer, primary_key=True, index=True)\n"
+            "    rut_empleado = Column(String(12), nullable=False)\n"
+            "    tipo_contrato = Column(Integer, nullable=False)\n"
+            "    org_id = Column(Integer, nullable=False)\n"
+            "    activo = Column(Boolean, default=True)\n"
+            "    created_at = Column(DateTime, default=datetime.utcnow)\n"
+            "    benefits = relationship('BenefitORM', back_populates='contract')\n\n\n"
+            "class BenefitORM(Base):\n"
+            "    __tablename__ = 'benefits'\n"
+            "    id = Column(Integer, primary_key=True, index=True)\n"
+            "    contrato_id = Column(Integer, ForeignKey('contracts.id'), nullable=False)\n"
+            "    codigo = Column(Integer, nullable=False)\n"
+            "    valor = Column(Float, nullable=False)\n"
+            "    org_id = Column(Integer, nullable=False)\n"
+            "    contract = relationship('ContractORM', back_populates='benefits')\n\n\n"
+            "class ContractCreate(BaseModel):\n"
+            "    rut_empleado: str\n"
+            "    tipo_contrato: int\n"
+            "    org_id: Optional[int] = None\n\n\n"
+            "class ContractUpdate(BaseModel):\n"
+            "    tipo_contrato: Optional[int] = None\n"
+            "    activo: Optional[bool] = None\n\n\n"
+            "class Contract(BaseModel):\n"
+            "    id: int\n"
+            "    rut_empleado: str\n"
+            "    tipo_contrato: int\n"
+            "    activo: bool\n"
+            "    class Config:\n"
+            "        from_attributes = True\n\n\n"
+            "class BenefitCreate(BaseModel):\n"
+            "    codigo: int\n"
+            "    valor: float\n"
+            "    org_id: Optional[int] = None\n\n\n"
+            "class Benefit(BaseModel):\n"
+            "    id: int\n"
+            "    codigo: int\n"
+            "    valor: float\n"
+            "    class Config:\n"
+            "        from_attributes = True\n"
+        )
+        try:
+            _contracts_models_py.parent.mkdir(parents=True, exist_ok=True)
+            _contracts_models_py.write_text(_contracts_models_content, encoding="utf-8")
+            log.warning("_validate_artifacts_imports: S89-A src/contracts/models.py auto-generado")
+            local_mods.update({"src.contracts.models", "src.contracts"})
+            broken = [b for b in broken if "src.contracts.models" not in b]
+            if not broken:
+                return True, ""
+        except OSError as _e:
+            log.warning("_validate_artifacts_imports: S89-A no pudo escribir contracts/models.py — %s", _e)
+
     # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
     available = sorted(m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__"))[:20]
     available_str = "\n".join(f"  - {m}" for m in available) if available else "  (ninguno detectado)"

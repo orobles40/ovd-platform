@@ -721,6 +721,21 @@ def _fix_orm_phantom_module_import(content: str) -> str:
     )
 
 
+def _fix_phantom_repository_import(content: str) -> str:
+    """S89-B: elimina imports desde módulos *.repository que nunca existen.
+
+    El LLM a veces genera patrón Repository (ContractRepository, BenefitRepository)
+    pero nunca crea el archivo. La línea se elimina porque los mismos routers ya
+    importan las funciones CRUD directamente desde *.service.
+    """
+    return re.sub(
+        r'^from\s+src\.\w+\.repository\s+import[^\n]*\n?',
+        '',
+        content,
+        flags=re.MULTILINE,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
@@ -781,6 +796,10 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S88-A: fix import desde módulo fantasma *.orm → *.models
     if not is_conftest:
         content = _fix_orm_phantom_module_import(content)
+
+    # S89-B: eliminar imports desde módulos fantasma *.repository
+    if not is_conftest:
+        content = _fix_phantom_repository_import(content)
 
     # S81-A / S82-A: eliminar clases ORM duplicadas en service.py (solo si models.py existe en disco)
     if not is_conftest:
