@@ -5273,15 +5273,22 @@ def update_test_retry(state: OVDState) -> dict | Command:
                     if _p:
                         _prev_artifacts.append(_p)
 
+        # S94-fix: si pytest recolectó ≥1 test, preservar src/ — solo borrar tests/ con error
+        _last_err = state.get("last_test_error", "")
+        _collected_some = bool(re.search(r"collected \d+ items?", _last_err))
         _deleted_s63b: list[str] = []
         for rel_path in _prev_artifacts:
             _abs = _base / rel_path
-            if _abs.exists() and _abs.suffix == ".py":
-                try:
-                    _abs.unlink()
-                    _deleted_s63b.append(rel_path)
-                except OSError as _oe:
-                    log.debug("S63-B: no se pudo borrar %s — %s", rel_path, _oe)
+            if not (_abs.exists() and _abs.suffix == ".py"):
+                continue
+            # Si pytest recolectó tests OK, no borrar archivos de implementación (src/)
+            if _collected_some and rel_path.startswith("src/"):
+                continue
+            try:
+                _abs.unlink()
+                _deleted_s63b.append(rel_path)
+            except OSError as _oe:
+                log.debug("S63-B: no se pudo borrar %s — %s", rel_path, _oe)
 
         if _deleted_s63b:
             log.warning(
