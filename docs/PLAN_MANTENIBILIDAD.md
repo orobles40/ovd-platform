@@ -481,9 +481,35 @@ Al completar las tres fases, el engine debe cumplir:
 
 ---
 
+## Decisiones arquitectónicas registradas
+
+### Gunicorn + Uvicorn — decisión: NO implementar (2026-04-28)
+
+**Contexto:** Se evaluó agregar Gunicorn como process manager sobre Uvicorn para escalar el engine horizontalmente (múltiples workers).
+
+**Decisión:** mantener Uvicorn single-process (`workers=1`). Documentado en `main.py`.
+
+**Razones:**
+
+1. **Estado en memoria no compartible.** `_graph_tasks`, `_event_queues` y `_stream_done` en `api.py` son diccionarios Python en memoria. Con múltiples procesos Gunicorn, el proceso que recibe el SSE puede ser distinto al que creó la task del grafo — y no encontrará nada en su memoria local. El SSE se rompe irremediablemente.
+
+2. **El bottleneck no es CPU.** Cada ciclo pasa la mayor parte del tiempo esperando respuesta de Ollama o la API de Anthropic (I/O de red). `asyncio` maneja decenas de ciclos concurrentes en un solo proceso sin bloquear. Agregar workers de proceso no acelera las llamadas al LLM.
+
+3. **El grafo LangGraph es stateful vía PostgreSQL.** El checkpointer ya comparte estado entre sesiones a través de la BD — ese problema está resuelto. El problema es el estado efímero del SSE handler, no el del grafo.
+
+**Cuándo reevaluar:** si en el futuro se implementa el SSE handler con estado externo (Redis pub/sub o NATS JetStream en lugar de `asyncio.Queue`), el bloqueo desaparece y Gunicorn vuelve a ser una opción válida.
+
+**Prerrequisito para multi-process:**
+```
+Estado actual:  cliente SSE → asyncio.Queue (en memoria del proceso)
+Estado futuro:  cliente SSE → Redis pub/sub o NATS JetStream (externo al proceso)
+```
+
+---
+
 ## Notas de implementación
 
-- La Fase 1 (división de `graph.py`) debe hacerse en una rama separada (`refactor/graph-split`) con los ~1,477 tests actuales como red de seguridad
+- La Fase 1 (división de `graph.py`) debe hacerse en una rama separada (`refactor/graph-split`) con los ~1,507 tests actuales como red de seguridad
 - Los tests de `test_sXX.py` que prueban funciones privadas deberán actualizarse para importar desde el nuevo módulo
 - Cada commit de la Fase 1 debe mantener los tests en verde — no mezclar refactor con fix de comportamiento
 - La Fase 2 no requiere rama separada — es configuración, no cambia código productivo

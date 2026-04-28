@@ -20,4 +20,9 @@ if __name__ == "__main__":
         port=port,
         log_level=log_level,
         reload=os.environ.get("NODE_ENV") == "development",
+        # workers=1 es intencional: _graph_tasks, _event_queues y _stream_done
+        # son dicts en memoria. Multi-process (Gunicorn) rompería el SSE porque
+        # cada proceso tiene su propia copia. Migrar a Redis/NATS primero.
+        # Ver docs/PLAN_MANTENIBILIDAD.md — Decisiones arquitectónicas.
+        workers=1,
     )
