@@ -116,13 +116,76 @@ app.include_router(contracts_router, prefix="/contracts", tags=["contracts"])
 ```
 
 **PASO 2 — Cada módulo exporta `APIRouter`, NO `FastAPI()`:**
+
+> **S78-A — PROHIBIDO: stubs en endpoints de autenticación.**
+> `async def login(): pass` o `async def login(): ...` NO son implementaciones válidas.
+> El endpoint `/auth/login` DEBE implementarse completamente como se muestra abajo.
+
 ```python:src/auth/router.py
-from fastapi import APIRouter
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from src.database import get_db
+from src.models.contracts import UserORM  # ajusta al modelo ORM real
+
 router = APIRouter()
 
-@router.post("/login")
-async def login():
-    ...
+# Configuración JWT — leer siempre de variables de entorno
+_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "cambia-en-produccion-min-32-chars")
+_ALGORITHM = "HS256"
+_ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+class LoginRequest(BaseModel):
+    rut: str      # RUT chileno: "12.345.678-5"
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = _ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
+def _create_access_token(data: dict) -> str:
+    payload = data.copy()
+    payload["exp"] = datetime.now(timezone.utc) + timedelta(minutes=_ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(payload, _SECRET_KEY, algorithm=_ALGORITHM)
+
+
+# ✅ IMPLEMENTACIÓN OBLIGATORIA — NO usar pass ni ...
+@router.post("/login", response_model=TokenResponse)
+async def login(body: LoginRequest, db: Session = Depends(get_db)):
+    """Autentica con RUT + contraseña y retorna JWT."""
+    from src.utils.rut_validator import clean_rut, validate_rut
+    if not validate_rut(body.rut):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="RUT inválido")
+    rut_limpio = clean_rut(body.rut)
+    user = db.query(UserORM).filter(UserORM.rut == rut_limpio).first()
+    if not user or not _pwd_context.verify(body.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Credenciales inválidas")
+    if not getattr(user, "activo", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Usuario inactivo")
+    token = _create_access_token({
+        "sub": user.rut,
+        "org_id": str(getattr(user, "org_id", "")),
+        "role": getattr(user, "rol", "afiliado"),
+    })
+    return TokenResponse(access_token=token)
 ```
 
 **PASO 3 — Tests importan desde `src.main`:**
@@ -200,9 +263,34 @@ El nombre de la función que defines DEBE coincidir exactamente con el nombre en
 | Obtener contrato | `get_contract_by_id(id, user)` | `src/contracts/service.py` |
 | Actualizar contrato | `update_contract(id, data, user)` | `src/contracts/service.py` |
 | Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/<módulo>/service.py` |
+| Crear beneficio | `create_benefit(data, contract_id, db)` | `src/services/contract_service.py` |
+| Listar beneficios | `list_benefits(contract_id, db)` | `src/services/contract_service.py` |
+| Eliminar beneficio | `delete_benefit(benefit_id, db)` | `src/services/contract_service.py` |
 
 ❌ `validar_rut`, `calcular_imc`, `es_primo`, `crear_contrato` — **PROHIBIDOS**
 ✅ `validate_rut`, `calculate_bmi`, `is_prime`, `create_contract` — **OBLIGATORIOS**
+
+## Regla de módulos CRUD — sub-entidades (S78-C)
+
+**CRÍTICO:** Las funciones CRUD de entidades secundarias (beneficios, detalles, items) van en el **mismo `service.py`** de la entidad principal — NUNCA en `models.py`.
+
+| Función | Módulo CORRECTO ✅ | Módulo INCORRECTO ❌ |
+|---------|-------------------|---------------------|
+| `create_benefit(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
+| `list_benefits(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
+| `delete_benefit(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
+| `create_contract(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
+
+**Regla de imports en tests (S78-C) — SIEMPRE desde `services/`, NUNCA desde `models/`:**
+```python
+# ✅ CORRECTO:
+from src.services.contract_service import create_benefit, list_benefits, create_contract
+
+# ❌ PROHIBIDO — causa ImportError en tests:
+from src.models.contracts import create_benefit  # ← funciones CRUD no van en models
+```
+
+**Razón:** `models.py` contiene SOLO clases ORM (SQLAlchemy). La lógica CRUD va en `service.py`. Los tests importan desde el módulo de servicio, no desde el modelo.
 
 ---
 

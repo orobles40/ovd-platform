@@ -1135,6 +1135,49 @@ def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]
     return missing, fix_snippet
 
 
+def _verify_no_stub_endpoints(work_dir: str) -> tuple[bool, str]:
+    """S78-B: detecta endpoints de auth con cuerpo stub (pass/...) en main.py o router.py.
+
+    Retorna (ok, feedback_para_retry). Si ok=True, no hay stubs.
+    """
+    import re as _re
+    _wdir = pathlib.Path(work_dir)
+    _candidates = list(_wdir.glob("src/main.py")) + list(_wdir.glob("src/*/router.py"))
+    if not _candidates:
+        return True, ""
+
+    # Patrón: decorator HTTP + def nombre(...): \n         pass  o  ...
+    _stub_re = _re.compile(
+        r'@(?:app|router)\.\w+[^\n]*\n'
+        r'(?:[ \t]*(?:@[^\n]+\n))*'          # decoradores adicionales opcionales
+        r'[ \t]*(?:async\s+)?def\s+(\w+)[^\n]*:\n'
+        r'[ \t]+(pass|\.\.\.)\s*(?:\n|$)',
+        _re.MULTILINE,
+    )
+    found_stubs: list[str] = []
+    for _pyfile in _candidates:
+        try:
+            _content = _pyfile.read_text(encoding="utf-8", errors="replace")
+            for _m in _stub_re.finditer(_content):
+                found_stubs.append(f"{_pyfile.relative_to(_wdir)}::{_m.group(1)}")
+        except OSError:
+            continue
+
+    if not found_stubs:
+        return True, ""
+
+    log.warning("[S78-B] endpoints stub detectados: %s", found_stubs)
+    _feedback = (
+        "[S78-B] ⚠️ ENDPOINTS CON CUERPO VACÍO (stub) — CORREGIR OBLIGATORIAMENTE:\n"
+        + "\n".join(f"  - {s}" for s in found_stubs)
+        + "\n\nUn endpoint con 'pass' o '...' NO es funcional. "
+        "Si es /auth/login: implementar validación de credenciales + jwt.encode() "
+        "(ver plantilla en system_backend_python.md).\n"
+        "PROHIBIDO entregar endpoints de autenticación con cuerpo vacío."
+    )
+    return False, _feedback
+
+
 def _ensure_test_task(sdd: dict, fr_analysis: dict) -> dict:
     """S74-B: inyecta TASK-INFRA-TESTS si el SDD no tiene ninguna tarea de tests."""
     has_test_task = any(
@@ -3836,6 +3879,13 @@ async def run_tests(state: OVDState) -> dict:
         if _missing_routers:
             log.warning("run_tests: S77-C routers faltantes detectados y auto-inyectados: %s", _missing_routers)
 
+    # S78-B: detectar endpoints stub (pass/...) — agregar al retry_feedback antes de pytest
+    _stub_feedback_s78b = ""
+    if runner == "pytest" and work_dir and retry_round == 0:
+        _stubs_ok, _stub_feedback_s78b = _verify_no_stub_endpoints(work_dir)
+        if not _stubs_ok:
+            log.warning("run_tests: S78-B stubs detectados — se agregarán al retry_feedback")
+
     # Ejecutar runner
     passed = False
     output = ""
@@ -3987,6 +4037,10 @@ async def run_tests(state: OVDState) -> dict:
             cycle_id=state.get("session_id", ""),
             agent_names=agent_names,
         ))
+
+    # S78-B: si hay stubs detectados, prefijar el output para que update_test_retry lo incluya
+    if _stub_feedback_s78b and not passed:
+        output = _stub_feedback_s78b + "\n\n" + output
 
     status_msg = f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
     return {
@@ -4426,6 +4480,16 @@ def update_test_retry(state: OVDState) -> dict | Command:
                 )
         except Exception as _e:
             log.debug("S54-D update_test_retry: error leyendo disco — %s", _e)
+
+    # S78-D: extraer archivos fallidos del output pytest para retry selectivo por archivo
+    _re_failing = __import__("re")
+    _failing_files_pattern = _re_failing.compile(r'(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)')
+    _failing_files_s78d = list(set(_failing_files_pattern.findall(test_output or "")))
+    if _failing_files_s78d and retry_round >= 1:
+        log.warning(
+            "update_test_retry: S78-D archivos fallidos detectados: %s",
+            _failing_files_s78d,
+        )
 
     # S53-B: detectar agente fallido para Selective Send
     selective_agents: list[str] = []
