@@ -991,6 +991,12 @@ def _is_infra_task(task: dict) -> bool:
     return any(p in combined for p in ("src/__init__", "src/database.py", "src/main.py", "src/auth/dependencies.py"))
 
 
+def _is_test_task_sdd(task: dict) -> bool:
+    """S81-C: identifica tareas de tests — no cuentan contra el cap (equivalen a verification steps)."""
+    _text = (task.get("title", "") + " " + task.get("file", "") + " " + task.get("description", "")).lower()
+    return any(kw in _text for kw in ("test_", "tests/", "pytest", "unitari", "test suite", "test_"))
+
+
 def _normalize_task_signatures(sdd: dict) -> dict:
     """S72-A: inyecta firmas de función canónicas en task descriptions para evitar naming en español.
 
@@ -1059,10 +1065,11 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             if _f.endswith("router.py") or "/router" in _f:
                 _mod = _f.replace("/", ".").removesuffix(".py")
                 _router_hints.append(f"from {_mod} import router as {_f.split('/')[-2]}_router")
-        # S80-D: incluir auth_router SOLO si el SDD ya tiene src/auth/router.py en sus tareas.
-        # (Si no hay tarea de auth router, no lo inventamos — evita routers fantasma)
+        # S80-D / S81-D: incluir auth_router SOLO si el SDD tiene EXACTAMENTE src/auth/router.py.
+        # Verificación por path exacto — evita falsos positivos con auth/service.py u otros.
         _has_auth_router_in_sdd = any(
-            "auth" in _t.get("file", "") and "router" in _t.get("file", "")
+            _t.get("file", "").rstrip("/") == "src/auth/router.py"
+            or _t.get("file", "").endswith("/auth/router.py")
             for _t in sdd.get("tasks", [])
         )
         if _has_auth_router_in_sdd:
@@ -1094,10 +1101,11 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
         })
         log.warning("generate_sdd: S69-A src/main.py inyectado como TASK-INFRA-MAIN (no estaba en SDD del LLM)")
     else:
-        # S80-D: si main.py ya existe en SDD y el SDD tiene src/auth/router.py, garantizar que
-        # la descripción de main.py mencione auth_router
+        # S80-D / S81-D: si main.py ya existe en SDD y el SDD tiene src/auth/router.py exacto,
+        # garantizar que la descripción de main.py mencione auth_router
         _has_auth_router_in_sdd_else = any(
-            "auth" in _t2.get("file", "") and "router" in _t2.get("file", "")
+            _t2.get("file", "").rstrip("/") == "src/auth/router.py"
+            or _t2.get("file", "").endswith("/auth/router.py")
             for _t2 in sdd.get("tasks", [])
         )
         if _has_auth_router_in_sdd_else:
@@ -1519,13 +1527,17 @@ async def generate_sdd(state: OVDState) -> dict:
         _trimmed_agents: list[str] = []
         for _agent, _agent_tasks in _tasks_by_agent.items():
             # S68-C: separar infra (siempre pasan) de negocio (sujeto al cap)
+            # S81-C: tareas de tests también están protegidas del cap (son verification steps obligatorios)
             _infra = [t for t in _agent_tasks if _is_infra_task(t)]
-            _business = [t for t in _agent_tasks if not _is_infra_task(t)]
+            _tests = [t for t in _agent_tasks if _is_test_task_sdd(t) and not _is_infra_task(t)]
+            _business = [t for t in _agent_tasks if not _is_infra_task(t) and not _is_test_task_sdd(t)]
+            if _tests:
+                log.warning("generate_sdd: S81-C %d tarea(s) de tests protegidas del cap para agente=%s", len(_tests), _agent)
             if len(_business) > _MAX_TASKS_PER_AGENT:
                 _trimmed_agents.append(f"{_agent}({len(_business)}→{_MAX_TASKS_PER_AGENT})")
-                _tasks_trimmed.extend(_infra + _business[:_MAX_TASKS_PER_AGENT])
+                _tasks_trimmed.extend(_infra + _tests + _business[:_MAX_TASKS_PER_AGENT])
             else:
-                _tasks_trimmed.extend(_agent_tasks)
+                _tasks_trimmed.extend(_infra + _tests + _business)
         if _trimmed_agents:
             log.warning(
                 "generate_sdd: S66-B máx %d tareas/agente aplicado — recortados: %s",
@@ -4080,8 +4092,9 @@ async def run_tests(state: OVDState) -> dict:
 
     # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR
     # S80-B: sin restricción retry_round==0 — correr en todas las rondas
+    # S81-B: verificar independientemente del runner (runner=None no debe evadir la verificación)
     _db_url_feedback_s79c = ""
-    if runner == "pytest" and work_dir:
+    if work_dir:
         _fr_text = state.get("feature_request", "") or ""
         _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(work_dir, _fr_text)
         if not _db_ok:

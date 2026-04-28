@@ -687,6 +687,30 @@ def delete_benefit(benefit_id: int, db: Session) -> bool:
     return True
 ```
 
+### REGLA CRÍTICA S81-A — service.py NO define clases ORM
+
+**Las clases ORM (`ContractORM`, `BenefitORM`, `UserORM`) se definen UNA SOLA VEZ en `models.py`. NUNCA en `service.py`.**
+
+```python
+# ❌ ABSOLUTAMENTE PROHIBIDO en service.py
+from src.database import Base
+class ContractORM(Base):          # ← ERROR: duplica la clase de models.py
+    __tablename__ = 'contracts'   # ← SQLAlchemy lanza InvalidRequestError
+
+# ✅ CORRECTO en service.py — solo importar, nunca redefinir
+from src.contracts.models import ContractORM, BenefitORM
+from sqlalchemy.orm import Session
+
+def create_contract(data: ContractCreate, db: Session) -> ContractORM:
+    orm = ContractORM(**data.model_dump())
+    db.add(orm); db.commit(); db.refresh(orm)
+    return orm
+```
+
+**Causa del error si lo ignoras:** `sqlalchemy.exc.InvalidRequestError: Table 'contracts' is already defined for this MetaData instance.`
+
+---
+
 **NOMBRES ORM — consistencia obligatoria (S79-B):**
 
 El nombre de la clase ORM definida en `models.py` DEBE ser IDÉNTICO en `service.py` y `router.py`. Un solo proyecto usa UN solo nombre por entidad:

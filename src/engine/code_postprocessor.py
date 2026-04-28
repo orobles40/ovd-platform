@@ -542,6 +542,63 @@ def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S81-A — Elimina clases ORM definidas en service.py (duplicado de models.py)
+# ---------------------------------------------------------------------------
+
+def _fix_orm_in_service(content: str, rel_path: str) -> str:
+    """S81-A: detecta clases ORM en service.py y las elimina, agregando import desde models.py.
+
+    El LLM a veces define ContractORM(Base) tanto en models.py como en service.py.
+    SQLAlchemy lanza InvalidRequestError cuando se registran dos clases con el mismo __tablename__.
+    """
+    if "service.py" not in rel_path:
+        return content
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+
+    orm_class_names: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for base in node.bases:
+            base_id = getattr(base, "id", None) or getattr(base, "attr", None)
+            if base_id in ("Base", "DeclarativeBase"):
+                orm_class_names.append(node.name)
+                break
+
+    if not orm_class_names:
+        return content
+
+    # Construir import correcto: src/contracts/service.py → src.contracts.models
+    module_path = rel_path.replace("/", ".").removesuffix(".py")
+    models_module = module_path.rsplit(".", 1)[0] + ".models"
+    import_line = f"from {models_module} import {', '.join(sorted(orm_class_names))}\n"
+
+    class _OrmRemover(ast.NodeTransformer):
+        def visit_ClassDef(self, node: ast.ClassDef):
+            for base in node.bases:
+                base_id = getattr(base, "id", None) or getattr(base, "attr", None)
+                if base_id in ("Base", "DeclarativeBase"):
+                    return None
+            return node
+
+    new_tree = _OrmRemover().visit(tree)
+    ast.fix_missing_locations(new_tree)
+    try:
+        new_content = ast.unparse(new_tree)
+    except Exception:
+        return content
+
+    if import_line.strip() not in new_content:
+        new_content = import_line + new_content
+
+    log.warning("[S81-A] ORM classes %s eliminadas de service.py — reemplazadas con import de models.py", orm_class_names)
+    return new_content
+
+
+# ---------------------------------------------------------------------------
 # S72-C — Fix conftest.py oracledb mock order
 # ---------------------------------------------------------------------------
 
@@ -649,6 +706,10 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
 
     # S77-A: fix parámetros Oracle inválidos en create_engine
     content = _fix_sqlalchemy_oracle_params(content)
+
+    # S81-A: eliminar clases ORM duplicadas en service.py
+    if not is_conftest:
+        content = _fix_orm_in_service(content, rel_path)
 
     # S74-A: fix variable local que shadowea función del módulo
     if not is_conftest:
