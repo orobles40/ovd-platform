@@ -3769,7 +3769,9 @@ async def run_tests(state: OVDState) -> dict:
             _conftest_content += (
                 "import sys\n"
                 "from unittest.mock import MagicMock\n"
-                "sys.modules['oracledb'] = MagicMock()\n"
+                "_mock_oracledb = MagicMock()\n"
+                "_mock_oracledb.version = '8.3.0'\n"
+                "sys.modules['oracledb'] = _mock_oracledb\n"
             )
             log.warning("run_tests: S70-C oracledb detectado en workspace — mock inyectado en conftest.py")
 
@@ -3779,7 +3781,7 @@ async def run_tests(state: OVDState) -> dict:
                 _existing_conf = _conftest.read_text(encoding="utf-8", errors="replace") if _conftest.exists() else ""
                 if "oracledb" not in _existing_conf:
                     _conftest.write_text(
-                        _existing_conf.rstrip() + "\nimport sys\nfrom unittest.mock import MagicMock\nsys.modules['oracledb'] = MagicMock()\n",
+                        _existing_conf.rstrip() + "\nimport sys\nfrom unittest.mock import MagicMock\n_mock_oracledb = MagicMock()\n_mock_oracledb.version = '8.3.0'\nsys.modules['oracledb'] = _mock_oracledb\n",
                         encoding="utf-8",
                     )
                     log.warning("run_tests: S70-C oracledb mock añadido a conftest.py existente")

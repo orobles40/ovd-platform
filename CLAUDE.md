@@ -44,16 +44,17 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S77 (rama `dev`)
-- **Tests:** Python unit ~1372 (S77 agregó 22 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1372+
-- **Rama activa:** `dev` (S77 aplicado: postprocessors deterministas + fix BD auth)
-- **Próximo foco:** S78-A (login JWT en template), S78-B (verificar no-stub endpoints), S78-C (naming entre módulos), S78-D (retry selectivo por archivo)
+- **Sprints completados:** S3 → S78 (rama `dev`)
+- **Tests:** Python unit ~1390 (S78 agregó 18 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1390+
+- **Rama activa:** `dev` (S78 aplicado: login JWT template + stub detector + naming rules + oracledb mock fix)
+- **Próximo foco:** S79-A (ORM naming verifier), S79-B (service.py CRUD template refuerzo), S79-C (DATABASE_URL coherente con FR)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S77:** `fb7bbbd5` — ~11 min, **QA 57/100** (regresión LLM, no postprocessors), 7 tareas SDD, 9 archivos, pytest exit 2 (create_benefit en módulo equivocado), status=completed. S77-A ✅ S77-B ✅ activados en producción.
+- **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100** (+10 vs S77), 11 tareas SDD, 12 archivos, pytest exit 2 (naming mismatch ContratoORM vs ContractORM entre tareas), 175k tokens, status=completed. S78-A ✅ (JWT no-stub), S78-B ✅ (no disparó — stub ya no existe), S78-C ⚠️ (parcial — naming inconsistente entre archivos), Fix S70-C ✅ (oracledb.version="8.3.0").
+- **Ciclo de validación S77:** `fb7bbbd5` — ~11 min, **QA 57/100**, 7 tareas SDD, 9 archivos, pytest exit 2 (create_benefit en módulo equivocado), status=completed. S77-A ✅ S77-B ✅ activados en producción.
 - **Ciclo de validación S76:** `c0e2e71e` — ~13 min, **QA 93/100**, **SDD compliance: True**, 12 tareas, 13 archivos, status=completed. **OVD_MODEL_SDD cambiado a `qwen3-coder:30b`** (resolvió bug raíz del presupuesto de tokens 1024 de `ovd-arch-assistant`).
 - **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
-- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Diagnóstico profundo pendiente S78.
+- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Diagnóstico profundo pendiente S79.
 
 ### ADR-003 — Criterios de selección de modelos LLM (2026-04-28)
 
@@ -112,6 +113,70 @@ curl -s -X POST http://localhost:8001/session \
 - pytest exit 0 (con S78-A + S78-B + S78-C aplicados)
 - Login JWT completo (no stub)
 - QA ≥ 80 (promedio de ≥3 ciclos, ADR-003)
+
+---
+
+### Novedades S78 (2026-04-28) — rama `dev`
+
+- **S78-A — Template login JWT completo:** `system_backend_python.md` — sección "Endpoint POST /auth/login OBLIGATORIO" con `jwt.encode()`, `validate_rut()`, `CryptContext(bcrypt)`, `_create_access_token()`. Prohibición explícita de stubs. **Validado:** ciclo S78 generó `login_user()` con JWT real (no stub `pass`). QA subió de 57→67.
+- **S78-B — `_verify_no_stub_endpoints(work_dir)`:** en `graph.py` — detecta `async def xxx(): pass` o `...` en main.py/router.py. No disparó en S78 (S78-A previno el stub). Implementado y activo.
+- **S78-C — Regla CRUD en service.py:** `system_backend_python.md` — tabla canónica `create_benefit → contract_service.py`. **Resultado parcial:** tests importan de service.py (✅) pero ORM names inconsistentes entre tareas (ContractORM vs ContratoORM) → ImportError persiste.
+- **S78-D — Extracción archivos fallidos retry:** `update_test_retry` — regex `(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)`. Implementado.
+- **Fix S70-C — oracledb mock versión:** `_mock_oracledb.version = '8.3.0'` — SQLAlchemy Oracle dialect hace `re.match(pattern, oracledb.version)` → crasheaba con `MagicMock`. Fix aplicado en `graph.py`.
+- **18 tests nuevos** en `test_s78.py` — 18/18 PASS. **1390 tests PASS** (suite principal).
+- **Ciclo validación `88d06e0f`:** 13m 18s, **QA 67/100** (+10 vs S77), pytest exit 2 × 2 rondas, bloqueador: naming ORM inconsistente (ContratoORM vs ContractORM generados por tareas distintas).
+- **Bloqueadores para pytest exit 0:** ORM class names inconsistentes entre `models.py` y `service.py` → `ImportError` en import. También `User` vs `LoginRequest` en `auth/models.py`.
+
+#### Comparativa ciclos postprocessors (actualizada)
+
+| Sprint | Ciclo | QA | Tests | Duración | Tokens |
+|--------|-------|----|-------|----------|--------|
+| S55 | 9d939f29 | 65 | exit 0 | 1m 35s | 30k |
+| S76 | c0e2e71e | **93** | collection_error | 13m | 215k |
+| S77 | fb7bbbd5 | 57 | exit 2 × 3 | 11m | 118k |
+| **S78** | 88d06e0f | **67** | exit 2 × 2 | **13m 18s** | **175k** |
+
+---
+
+### Roadmap S79 — Próximo sprint
+
+#### S79-A — ORM naming verifier postprocessor (CRÍTICO)
+`_verify_orm_class_names(work_dir)` — escanea todos los `.py`, extrae clases ORM (heredan de `Base`), detecta cuando `service.py` importa nombre que no existe en `models.py`. Si detecta → inyecta al retry_feedback el mapping correcto: `ContratoORM → ContractORM`.
+
+#### S79-B — Template refuerzo CRUD en service.py (ALTO)
+En `system_backend_python.md`: agregar ejemplo completo de `create_benefit()` y `list_benefits()` EN `contract_service.py`. Incluir regla: `models.py` = SOLO clases ORM y Pydantic. NINGUNA función de negocio.
+
+#### S79-C — DATABASE_URL coherente con FR (ALTO)
+Si FR menciona PostgreSQL pero `database.py` tiene URL Oracle → `_verify_db_url_matches_fr(work_dir, fr_analysis)` corrige a `postgresql+psycopg://...`.
+
+#### S79-D — login_user verifica usuario en BD (MEDIO)
+Template S78-A tiene el ejemplo pero el LLM simplificó. Agregar nota: "OBLIGATORIO: consultar `UserORM` en BD. NO generar JWT sin verificar credenciales contra BD."
+
+#### Ciclo de validación S79
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S79:**
+- pytest exit 0 (con S79-A + S79-B)
+- QA ≥ 75 (mínimo en 1 ciclo; ≥80 promedio ≥3 ciclos per ADR-003)
+- DATABASE_URL PostgreSQL (no Oracle)
 
 ---
 
