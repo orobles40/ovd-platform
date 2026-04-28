@@ -280,6 +280,97 @@ assert validate_rut('12345678-4') == False   # DV incorrecto ❌
 # NUNCA escribas: assert validate_rut('12.345.678-5') == False  ← INCORRECTO
 ```
 
+**S74-A — Anti-patrón: variable local con mismo nombre que función del módulo:**
+```python
+# ❌ INCORRECTO — UnboundLocalError: Python trata clean_rut como variable local antes de asignar
+def validate_rut(rut: str) -> bool:
+    clean_rut = clean_rut(rut)   # ← falla en runtime
+    ...
+
+# ✅ CORRECTO — variable con nombre distinto al de la función
+def validate_rut(rut: str) -> bool:
+    cleaned = clean_rut(rut)     # ← llama a la función, asigna a variable diferente
+    if len(cleaned) < 2:
+        return False
+    ...
+```
+
+## Tests pytest obligatorios (S74-B) — ESTRUCTURA EXACTA A COPIAR
+
+Para **cada módulo** que implementes en `src/`, DEBES crear el archivo de test correspondiente en `tests/`.
+
+### Ejemplo 1 — Tests de función pura (validadores, utilidades)
+
+```python
+# tests/test_rut_validator.py
+import pytest
+from src.utils.rut_validator import validate_rut, clean_rut
+
+def test_validate_rut_con_puntos():
+    """RUT formateado con puntos — formato estándar chileno."""
+    assert validate_rut('12.345.678-5') == True
+
+def test_validate_rut_sin_puntos():
+    """RUT sin puntos también es válido."""
+    assert validate_rut('12345678-5') == True
+
+def test_validate_rut_dv_incorrecto():
+    """DV incorrecto debe retornar False."""
+    assert validate_rut('12.345.678-4') == False
+
+def test_validate_rut_dv_k():
+    """DV K es válido cuando corresponde."""
+    assert validate_rut('5.678.901-4') == True  # usa tabla de RUTs validados
+
+def test_clean_rut_elimina_puntos_y_guion():
+    """clean_rut elimina puntos, guión y espacios."""
+    cleaned = clean_rut('12.345.678-5')
+    assert cleaned == '123456785'
+```
+
+### Ejemplo 2 — Tests de endpoint FastAPI con TestClient
+
+```python
+# tests/test_auth.py
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from src.database import Base, get_db
+from src.main import app
+
+_engine = create_engine("sqlite:///./test_auth.db", connect_args={"check_same_thread": False})
+_TestSession = sessionmaker(bind=_engine)
+
+@pytest.fixture(autouse=True)
+def _setup_db():
+    Base.metadata.create_all(bind=_engine)
+    yield
+    Base.metadata.drop_all(bind=_engine)
+
+@pytest.fixture
+def db():
+    session = _TestSession()
+    yield session
+    session.close()
+
+@pytest.fixture
+def client(db):
+    app.dependency_overrides[get_db] = lambda: db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+def test_login_rut_invalido(client):
+    resp = client.post("/auth/login", json={"rut": "00000000-0", "password": "test"})
+    assert resp.status_code in (401, 422)
+
+def test_endpoint_protegido_sin_token(client):
+    resp = client.get("/contracts/")
+    assert resp.status_code == 401
+```
+
+**REGLA ABSOLUTA:** Si escribes `src/utils/rut_validator.py`, DEBES escribir `tests/test_rut_validator.py`. Si escribes `src/auth/router.py`, DEBES escribir `tests/test_auth.py`.
+
 ## Pydantic v2 — Validadores obligatorios (S71-D)
 
 **NUNCA uses `@validator` (Pydantic v1 — deprecated). SIEMPRE usa `@field_validator` + `@classmethod`.**
@@ -429,6 +520,34 @@ Regla de separación de responsabilidades:
 - `router.py` — endpoints FastAPI, usa `service.py`
 
 Cada archivo importa SOLO desde archivos de nivel inferior. Nunca de sí mismo ni de niveles superiores.
+
+### Hashing de contraseñas — passlib + bcrypt OBLIGATORIO (S74-E)
+
+**NUNCA uses `hashlib.sha256` para contraseñas** — no es resistente a brute-force (función rápida). Usa `passlib[bcrypt]`:
+
+```python
+# ✅ CORRECTO — passlib con bcrypt (lento por diseño, seguro)
+from passlib.context import CryptContext
+import os
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "")  # NUNCA hardcodear
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)  # constant-time comparison
+
+# ❌ INCORRECTO — hashlib.sha256 NO es seguro para passwords
+# hashlib.sha256(password.encode()).hexdigest()  ← PROHIBIDO para contraseñas
+```
+
+En `requirements.txt`:
+```
+passlib[bcrypt]>=1.7.4
+```
 
 ### JWT — librería única por proyecto (S70-E)
 

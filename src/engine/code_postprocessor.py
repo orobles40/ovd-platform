@@ -2,6 +2,8 @@
 S72-B: Post-procesador de código Python generado por LLM.
 S72-C: Fix orden mock oracledb en conftest.py.
 S73-A: SQLAlchemy v1 → v2 (declarative_base → DeclarativeBase).
+S74-A: Fix variable local que shadowea función del mismo módulo.
+S74-D: Detectar secretos hardcoded y SHA-256 para passwords (log only).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -10,6 +12,8 @@ Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Convierte orm_mode/allow_population_by_field_name → ConfigDict
 - Corrige orden de mock oracledb en conftest.py
 - Convierte declarative_base() → DeclarativeBase class (SQLAlchemy 2.x)
+- Renombra variable local que shadowea función del módulo (UnboundLocalError)
+- Advierte sobre secretos hardcoded y SHA-256 para passwords
 """
 
 from __future__ import annotations
@@ -210,6 +214,96 @@ def _fix_sqlalchemy_v1(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S74-A — Fix variable local que shadowea función del mismo módulo
+# ---------------------------------------------------------------------------
+
+def _fix_local_variable_shadowing(code: str) -> str:
+    """S74-A: renombra variables locales que shadowean funciones del mismo módulo."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    # Recolectar nombres de funciones/clases definidas en el módulo raíz (no anidadas)
+    module_fn_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module_fn_names.add(node.name)
+
+    if not module_fn_names:
+        return code
+
+    # Detectar asignaciones dentro de funciones que shadowean nombres del módulo
+    shadows: dict[str, str] = {}
+    for fn_node in ast.walk(tree):
+        if not isinstance(fn_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(fn_node):
+            if not isinstance(child, ast.Assign):
+                continue
+            for target in child.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id in module_fn_names
+                    and target.id != fn_node.name  # no renombrar la función a sí misma
+                ):
+                    shadows[target.id] = f"_{target.id}_val"
+
+    if not shadows:
+        return code
+
+    changed_code = code
+    for old, new in shadows.items():
+        # Solo reemplazar assignments: `old =` → `new =`, no los call sites
+        changed_code = re.sub(
+            rf'(?<![.\w]){re.escape(old)}\s*=\s*(?!=)',
+            f'{new} = ',
+            changed_code,
+        )
+        log.warning("[S74-A] local shadow fix: %s → %s", old, new)
+
+    return changed_code
+
+
+# ---------------------------------------------------------------------------
+# S74-D — Detección de secretos hardcoded (log only)
+# ---------------------------------------------------------------------------
+
+_SECRET_VAR_KEYWORDS = frozenset({'key', 'secret', 'password', 'token', 'api_key', 'passwd', 'auth'})
+_SHA256_PWD_RE = re.compile(r'hashlib\.sha256\([^)]+\.encode\(\)\)\.hexdigest\(\)')
+
+
+def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
+    """S74-D: detecta secretos hardcoded y SHA-256 para passwords (log only, no modifica)."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            name_lower = target.id.lower()
+            if not any(kw in name_lower for kw in _SECRET_VAR_KEYWORDS):
+                continue
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                val = node.value.value
+                if val and val not in ('', 'changeme', 'your-secret', 'your-secret-key-here'):
+                    log.warning(
+                        "[S74-D] %s:%d secret hardcoded '%s' — usar os.environ.get('%s')",
+                        rel_path, node.lineno, target.id, target.id.upper(),
+                    )
+
+    if _SHA256_PWD_RE.search(code):
+        log.warning("[S74-D] %s: SHA-256 para password detectado — usar passlib[bcrypt]", rel_path)
+
+    return code  # log only en S74 — no modifica el código
+
+
+# ---------------------------------------------------------------------------
 # S72-C — Fix conftest.py oracledb mock order
 # ---------------------------------------------------------------------------
 
@@ -305,6 +399,13 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
 
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)
+
+    # S74-A: fix variable local que shadowea función del módulo
+    if not is_conftest:
+        content = _fix_local_variable_shadowing(content)
+
+    # S74-D: advertir secretos hardcoded (log only)
+    _warn_hardcoded_secrets(content, rel_path)
 
     if content != original:
         log.warning(

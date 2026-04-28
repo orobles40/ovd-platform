@@ -1085,6 +1085,49 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
     return sdd
 
 
+def _ensure_test_task(sdd: dict, fr_analysis: dict) -> dict:
+    """S74-B: inyecta TASK-INFRA-TESTS si el SDD no tiene ninguna tarea de tests."""
+    has_test_task = any(
+        "test" in (t.get("file", "") + " " + t.get("title", "")).lower()
+        or t.get("file", "").startswith("tests/")
+        for t in sdd.get("tasks", [])
+    )
+    if has_test_task:
+        return sdd
+
+    # Identificar módulo principal del backend para nombrar el test
+    backend_tasks = [
+        t for t in sdd.get("tasks", [])
+        if t.get("agent") == "backend" and "src/" in t.get("file", "")
+        and not _is_infra_task(t)
+    ]
+    main_module = "main"
+    if backend_tasks:
+        main_file = backend_tasks[0].get("file", "src/main.py")
+        main_module = (
+            main_file.replace("src/", "").replace(".py", "").replace("/", "_")
+        )
+
+    test_depends = [t["id"] for t in backend_tasks[:3] if t.get("id")]
+    sdd["tasks"].append({
+        "id": "TASK-INFRA-TESTS",
+        "agent": "backend",
+        "title": "Tests pytest para módulos principales",
+        "description": (
+            f"Crear tests/test_{main_module}.py con pytest y conftest.py. "
+            "conftest.py: fixture db (SQLite en memoria), fixture client (TestClient + override get_db). "
+            "tests: test happy path endpoint principal, test validación de input inválido, "
+            "test sin autenticación retorna 401. "
+            "IMPORTANTE: importar solo módulos que existan en esta entrega."
+        ),
+        "file": f"tests/test_{main_module}.py",
+        "depends_on": test_depends,
+        "estimated_complexity": "low",
+    })
+    log.warning("generate_sdd: S74-B TASK-INFRA-TESTS inyectada — tests/test_%s.py", main_module)
+    return sdd
+
+
 async def generate_sdd(state: OVDState) -> dict:
     """
     Genera el SDD con 4 artefactos separados usando structured output (GAP-007):
@@ -1180,6 +1223,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S69-A: inyectar src/main.py si el FR menciona FastAPI y el LLM no lo incluyó
         sdd = _ensure_fastapi_main_task(sdd, state.get("fr_analysis", {}))
+
+        # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
+        sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
 
         # S72-A: inyectar firmas canónicas en task descriptions para evitar naming en español
         sdd = _normalize_task_signatures(sdd)
@@ -3089,11 +3135,23 @@ async def qa_review(state: OVDState) -> dict:
     _qa_sdd_block = _build_qa_sdd_block(state.get("sdd", {}))
     _project_ctx_filtered = _strip_db_restrictions(project_ctx)
 
+    # S74-C: determinar tipo de proyecto para contextualizar el QA
+    _fr_text_lower = (state.get("feature_request", "") + " " + state.get("fr_analysis", {}).get("raw", "")).lower()
+    _is_api_only = any(kw in _fr_text_lower for kw in ("api rest", "fastapi", "endpoint", "backend", "crud")) \
+                   and not any(kw in _fr_text_lower for kw in ("react", "vue", "svelte", "frontend", "angular", "ui"))
+    _project_type_hint = (
+        "\n\n[S74-C] CONTEXTO DEL PROYECTO: Este es un proyecto API REST (sin frontend).\n"
+        "- NO evalúes ausencia de componentes React/Vue/HTML — no aplica al FR\n"
+        "- SÍ evalúa: endpoints HTTP correctos, status codes, validaciones de entrada, JWT\n"
+        "- SÍ evalúa: tests pytest de endpoints con TestClient o tests de funciones puras\n"
+        "- NO marques como faltante el frontend si el FR no lo solicita"
+    ) if _is_api_only else ""
+
     messages_qa = [
         SystemMessage(content=template_loader.render(
             "system_qa",
             language=state.get("language", "es"),
-            project_context=_project_ctx_filtered,
+            project_context=_project_ctx_filtered + _project_type_hint,
             cycle_sdd_context=_qa_sdd_block,
         )),
         HumanMessage(content=(
