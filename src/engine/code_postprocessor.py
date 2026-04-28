@@ -545,14 +545,27 @@ def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
 # S81-A — Elimina clases ORM definidas en service.py (duplicado de models.py)
 # ---------------------------------------------------------------------------
 
-def _fix_orm_in_service(content: str, rel_path: str) -> str:
+def _fix_orm_in_service(content: str, rel_path: str, work_dir: str = "") -> str:
     """S81-A: detecta clases ORM en service.py y las elimina, agregando import desde models.py.
 
     El LLM a veces define ContractORM(Base) tanto en models.py como en service.py.
     SQLAlchemy lanza InvalidRequestError cuando se registran dos clases con el mismo __tablename__.
+
+    S82-A: verifica que models.py existe en disco antes de remover ORM.
+    Si models.py no existe, preserva ORM en service.py para evitar phantom imports.
     """
     if "service.py" not in rel_path:
         return content
+    # S82-A: verificar que models.py existe antes de crear phantom import
+    if work_dir:
+        import pathlib as _pl
+        _models_path = _pl.Path(work_dir) / _pl.Path(rel_path).parent / "models.py"
+        if not _models_path.exists():
+            log.warning(
+                "[S82-A] S81-A omitido — %s no existe: preservando ORM en %s para evitar phantom import",
+                _models_path, rel_path,
+            )
+            return content
     try:
         tree = ast.parse(content)
     except SyntaxError:
@@ -667,12 +680,14 @@ def _fix_conftest_mock_order(content: str) -> str:
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
 
-def postprocess_python_file(content: str, rel_path: str) -> str:
+def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> str:
     """
     S72-B/C: post-procesa un archivo Python generado por LLM.
 
     Para conftest.py: corrige orden mock oracledb (S72-C).
     Para otros .py:  renombra español→inglés + Pydantic v1→v2 (S72-B).
+
+    work_dir: directorio raíz del workspace — usado por S82-A para verificar models.py en disco.
 
     Retorna el contenido transformado (o el original si no hay cambios).
     """
@@ -707,9 +722,9 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
     # S77-A: fix parámetros Oracle inválidos en create_engine
     content = _fix_sqlalchemy_oracle_params(content)
 
-    # S81-A: eliminar clases ORM duplicadas en service.py
+    # S81-A / S82-A: eliminar clases ORM duplicadas en service.py (solo si models.py existe en disco)
     if not is_conftest:
-        content = _fix_orm_in_service(content, rel_path)
+        content = _fix_orm_in_service(content, rel_path, work_dir=work_dir)
 
     # S74-A: fix variable local que shadowea función del módulo
     if not is_conftest:

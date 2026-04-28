@@ -1122,6 +1122,47 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
     return sdd
 
 
+def _ensure_contracts_models_task(sdd: dict) -> dict:
+    """S82-B: si el SDD tiene tareas del módulo contracts pero falta src/contracts/models.py, inyectarla.
+
+    Sin models.py, service.py y router.py no tienen dónde importar ORM classes → phantom imports.
+    """
+    has_contracts_module = any(
+        "contracts" in t.get("file", "").lower()
+        for t in sdd.get("tasks", [])
+    )
+    if not has_contracts_module:
+        return sdd
+    has_contracts_models = any(
+        t.get("file", "").rstrip("/").endswith("contracts/models.py")
+        for t in sdd.get("tasks", [])
+    )
+    if has_contracts_models:
+        return sdd
+    _db_idx = next(
+        (i for i, t in enumerate(sdd["tasks"]) if "database.py" in t.get("file", "")),
+        -1,
+    )
+    _insert_at = _db_idx + 1 if _db_idx >= 0 else 0
+    sdd["tasks"].insert(_insert_at, {
+        "id": "TASK-INFRA-CONTRACTS-MODELS",
+        "agent": "backend",
+        "title": "Crear src/contracts/models.py con ORM classes y schemas Pydantic",
+        "description": (
+            "Crea src/contracts/models.py con EXACTAMENTE estas clases ORM (importa Base desde src.database):\n"
+            "- ContractORM(Base): __tablename__='contracts', columnas id, rut_empleado, tipo_contrato (int), org_id, activo (bool)\n"
+            "- BenefitORM(Base): __tablename__='benefits', columnas id, contrato_id (FK contracts.id), codigo (int), valor (float), org_id\n"
+            "Y estos schemas Pydantic: ContractCreate, ContractUpdate, ContractResponse, BenefitCreate, BenefitResponse.\n"
+            "NUNCA definas ContractORM ni BenefitORM en service.py — solo en este archivo."
+        ),
+        "file": "src/contracts/models.py",
+        "depends_on": [],
+        "estimated_complexity": "low",
+    })
+    log.warning("generate_sdd: S82-B src/contracts/models.py inyectado como TASK-INFRA-CONTRACTS-MODELS")
+    return sdd
+
+
 def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]:
     """S77-C: verifica que src/main.py incluya include_router() para CADA router.py en disco.
 
@@ -1507,6 +1548,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S69-A: inyectar src/main.py si el FR menciona FastAPI y el LLM no lo incluyó
         sdd = _ensure_fastapi_main_task(sdd, state.get("fr_analysis", {}))
+
+        # S82-B: inyectar src/contracts/models.py si el SDD tiene módulo contracts pero falta models.py
+        sdd = _ensure_contracts_models_task(sdd)
 
         # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
         sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
@@ -2161,6 +2205,7 @@ def _make_agent_sends(agents: list[str], state: OVDState) -> list[Send]:
         "stack_language":  state.get("stack_language", ""),  # S42-E
         "directory":       state.get("directory", ""),
         "session_id":      state.get("session_id", ""),
+        "feature_request": state.get("feature_request", ""),  # S82-F: necesario para parche Oracle→PG
     }
     return [Send("agent_executor", {**shared, "current_agent": agent}) for agent in agents]
 
@@ -2462,6 +2507,31 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 "agent_executor[%s]: S65-D — %d archivos del SDD no escritos: %s",
                 agent_name, len(_missing_sdd), _missing_sdd,
             )
+
+        # S82-F: si FR menciona PostgreSQL pero database.py tiene Oracle URL → parchear en disco
+        if directory:
+            _fr_for_db = state.get("feature_request", "")
+            _fr_lower_db = _fr_for_db.lower()
+            if any(kw in _fr_lower_db for kw in ("postgresql", "postgres", "psycopg")):
+                import pathlib as _pl_s82f
+                _db_file = _pl_s82f.Path(directory) / "src" / "database.py"
+                if _db_file.exists():
+                    _db_content = _db_file.read_text(encoding="utf-8", errors="replace")
+                    _has_oracle = "oracle+oracledb://" in _db_content or "oracledb" in _db_content
+                    _has_pg = "postgresql" in _db_content or "psycopg" in _db_content
+                    if _has_oracle and not _has_pg:
+                        import re as _re_s82f
+                        _fixed = _re_s82f.sub(
+                            r"oracle\+oracledb://[^\s'\"]+",
+                            "postgresql+psycopg://ovd_dev:changeme@localhost:5432/app_db",
+                            _db_content,
+                        )
+                        _fixed = _re_s82f.sub(r"import oracledb\n", "", _fixed)
+                        _db_file.write_text(_fixed, encoding="utf-8")
+                        log.warning(
+                            "agent_executor[%s]: S82-F — Oracle URL reemplazada con PostgreSQL en src/database.py (FR pide PostgreSQL)",
+                            agent_name,
+                        )
 
         result = {
             "agent": agent_name,
@@ -4966,7 +5036,7 @@ def _write_artifacts(
             # S72-B/C: post-procesar código Python antes de escribir al disco
             if rel_path.endswith(".py"):
                 from code_postprocessor import postprocess_python_file
-                content = postprocess_python_file(content, rel_path)
+                content = postprocess_python_file(content, rel_path, work_dir=str(base))
 
             target.write_text(content, encoding="utf-8")
             # S54-A: verificación post-write — confirmar que el archivo existe en disco

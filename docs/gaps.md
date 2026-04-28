@@ -827,3 +827,68 @@ Estimación: 2 sesiones.
 Send() fan-out + 4 artefactos SDD + Research Agent + LangSmith.
 Mejoras incrementales, menor urgencia operativa.
 Estimación: 2 sesiones.
+
+**Batch F — Task-level manifest accumulator (GAP-014)**
+Resolución arquitectónica del problema de aislamiento entre tareas del mismo agente.
+Requisito previo: S82-A/B/C resueltos (fixes de corto plazo que tapan síntomas del mismo problema).
+Estimación: 1 sesión (refactor del loop S39-D).
+
+---
+
+## GAP-014 — Task manifest accumulator (Send API a nivel de tarea)
+**Estado:** ⬜ Pendiente
+**Impacto:** Crítico
+**Complejidad:** Alta
+**Identificado:** 2026-04-28 (ciclo S81)
+**Archivo a modificar:** `src/engine/graph.py` — loop `S39-D` en `agent_executor`
+
+### Descripción del problema
+Cada tarea del SDD es una llamada LLM independiente y **ciega**: la tarea que genera `service.py` no sabe qué clases ORM definió la tarea que generó `models.py`. Este aislamiento es la causa raíz de todos los naming inconsistencies, phantom imports y ORM duplicados que los sprints S77–S81 intentan corregir con postprocessors.
+
+### Causa raíz arquitectónica
+El loop `S39-D` en `agent_executor` itera `for task in tasks` con llamadas LLM secuenciales. Cada llamada recibe el SDD + task description pero **no el código ya escrito por tareas anteriores**. El contexto LangGraph del nodo no acumula los artefactos generados entre iteraciones del loop.
+
+### Solución propuesta — manifest acumulador
+
+```python
+# graph.py — agent_executor refactorizado con manifest
+async def agent_executor(state: OVDState) -> dict:
+    manifest: dict[str, list[str]] = {}  # file → [class/function names]
+    
+    for task in tasks:
+        # Inyectar manifest de lo ya generado al prompt de esta tarea
+        manifest_hint = _build_manifest_hint(manifest)
+        prompt = task_prompt + manifest_hint
+        
+        # Ejecutar LLM
+        output = await _run_task_llm(prompt)
+        artifacts = _write_artifacts(output)
+        
+        # Actualizar manifest con lo generado
+        for path, content in artifacts:
+            manifest[path] = _extract_exports(content)  # clases, funciones públicas
+```
+
+### Alternativa con `Send()` nativo de LangGraph
+
+```python
+# Cada tarea como nodo independiente con estado compartido
+def dispatch_tasks(state) -> list[Send]:
+    return [Send("task_executor", {**state, "task": t, "manifest": {}}) 
+            for t in state["sdd"]["tasks"]]
+
+# task_executor lee y escribe en manifest compartido vía Annotated reducer
+class OVDState(TypedDict):
+    manifest: Annotated[dict, merge_manifest_reducer]  # reducer que merge dicts
+```
+
+### Impacto esperado
+- Elimina la necesidad de S79-A, S80-A, S81-A (naming verifiers reactivos)
+- `service.py` siempre importa nombres que existen porque los leyó del manifest
+- `contracts/models.py` se genera antes de `contracts/service.py` (depends_on en SDD)
+- QA score estructuralmente más alto sin postprocessors correctivos
+
+### Prerequisitos antes de implementar
+- S82-A: fix `_fix_orm_in_service()` (stop-gap inmediato)
+- S82-B: `_ensure_contracts_models_task()` (stop-gap inmediato)
+- Suite de regresión ≥ 1500 tests (cobertura suficiente para refactor de alto riesgo)
