@@ -271,6 +271,15 @@ Usa SOLO los de esta tabla o calcula con el algoritmo de arriba antes de escribi
 
 **Regla:** Si el FR pide un RUT con DV=K, calcula primero con el algoritmo antes de hardcodearlo. `remainder == 10` produce DV=K.
 
+**S73-E — Formatos válidos de RUT (OBLIGATORIO en tests):**
+```python
+# validate_rut acepta AMBOS formatos — con y sin puntos:
+assert validate_rut('12345678-5') == True    # sin puntos ✅
+assert validate_rut('12.345.678-5') == True  # CON puntos ✅ — formato chileno estándar
+assert validate_rut('12345678-4') == False   # DV incorrecto ❌
+# NUNCA escribas: assert validate_rut('12.345.678-5') == False  ← INCORRECTO
+```
+
 ## Pydantic v2 — Validadores obligatorios (S71-D)
 
 **NUNCA uses `@validator` (Pydantic v1 — deprecated). SIEMPRE usa `@field_validator` + `@classmethod`.**

@@ -1,6 +1,7 @@
 """
 S72-B: Post-procesador de código Python generado por LLM.
 S72-C: Fix orden mock oracledb en conftest.py.
+S73-A: SQLAlchemy v1 → v2 (declarative_base → DeclarativeBase).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -8,6 +9,7 @@ Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Convierte @root_validator → @model_validator
 - Convierte orm_mode/allow_population_by_field_name → ConfigDict
 - Corrige orden de mock oracledb en conftest.py
+- Convierte declarative_base() → DeclarativeBase class (SQLAlchemy 2.x)
 """
 
 from __future__ import annotations
@@ -173,6 +175,41 @@ def _fix_pydantic_v1(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S73-A — SQLAlchemy v1 → v2
+# ---------------------------------------------------------------------------
+
+def _fix_sqlalchemy_v1(code: str) -> str:
+    """S73-A: convierte patrones SQLAlchemy 1.x → 2.x via regex."""
+    if "declarative_base" not in code:
+        return code  # fast path
+
+    changed = False
+
+    # from sqlalchemy.ext.declarative import declarative_base → orm.DeclarativeBase
+    if "from sqlalchemy.ext.declarative import declarative_base" in code:
+        code = code.replace(
+            "from sqlalchemy.ext.declarative import declarative_base",
+            "from sqlalchemy.orm import DeclarativeBase",
+        )
+        changed = True
+
+    # Base = declarative_base() → class Base(DeclarativeBase): pass
+    if "declarative_base()" in code:
+        code = re.sub(
+            r"^(\s*)(\w+)\s*=\s*declarative_base\(\)\s*$",
+            lambda m: f"{m.group(1)}class {m.group(2)}(DeclarativeBase):\n{m.group(1)}    pass",
+            code,
+            flags=re.MULTILINE,
+        )
+        changed = True
+
+    if changed:
+        log.warning("[S73-A] SQLAlchemy v1→v2: declarative_base() → DeclarativeBase class")
+
+    return code
+
+
+# ---------------------------------------------------------------------------
 # S72-C — Fix conftest.py oracledb mock order
 # ---------------------------------------------------------------------------
 
@@ -265,6 +302,9 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
         content = _rename_functions(content)
 
     content = _fix_pydantic_v1(content)
+
+    # S73-A: SQLAlchemy v1 → v2
+    content = _fix_sqlalchemy_v1(content)
 
     if content != original:
         log.warning(

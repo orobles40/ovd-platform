@@ -3641,6 +3641,16 @@ async def run_tests(state: OVDState) -> dict:
             # S57-C: en rounds de retry, regenerar conftest.py para reflejar posible
             # reorganización del código por el agente. Si la estructura cambió, el
             # conftest viejo apunta a rutas incorrectas → ImportError inevitable.
+            # S73-B: preservar mock oracledb si ya está correcto — no sobreescribir con versión sin import sys
+            _existing_retry = _conftest.read_text(encoding="utf-8", errors="replace") if _conftest.exists() else ""
+            _mock_already_ok = (
+                "import sys" in _existing_retry
+                and ("sys.modules['oracledb']" in _existing_retry or 'sys.modules["oracledb"]' in _existing_retry)
+            )
+            if _mock_already_ok and "sys.modules['oracledb']" not in _conftest_content and 'sys.modules["oracledb"]' not in _conftest_content:
+                # Añadir el mock al contenido nuevo antes de escribir
+                _conftest_content = _conftest_content.rstrip() + "\nimport sys\nfrom unittest.mock import MagicMock\nsys.modules['oracledb'] = MagicMock()\n"
+                log.warning("run_tests: S73-B mock oracledb preservado en conftest regenerado retry_round=%d", retry_round)
             _conftest.write_text(_conftest_content, encoding="utf-8")
             log.warning("run_tests: S57-C conftest.py regenerado en retry_round=%d — %s", retry_round, _conftest)
 
