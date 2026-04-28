@@ -736,6 +736,19 @@ def _fix_phantom_repository_import(content: str) -> str:
     )
 
 
+def _fix_benefits_module_import(content: str) -> str:
+    """S90-B: redirige imports desde src.benefits.* → src.contracts.*.
+
+    El LLM a veces crea un paquete src/benefits/ separado pero los beneficios
+    siempre viven en src/contracts/service.py. Redirección determinística.
+    """
+    return re.sub(
+        r'\bfrom\s+src\.benefits\.(\w+)\s+import\b',
+        r'from src.contracts.\1 import',
+        content,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
@@ -800,6 +813,10 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S89-B: eliminar imports desde módulos fantasma *.repository
     if not is_conftest:
         content = _fix_phantom_repository_import(content)
+
+    # S90-B: redirigir imports src.benefits.* → src.contracts.*
+    if not is_conftest:
+        content = _fix_benefits_module_import(content)
 
     # S81-A / S82-A: eliminar clases ORM duplicadas en service.py (solo si models.py existe en disco)
     if not is_conftest:

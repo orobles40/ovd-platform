@@ -4241,6 +4241,47 @@ def _validate_artifacts_imports(
         except OSError as _e:
             log.warning("_validate_artifacts_imports: S89-A no pudo escribir contracts/models.py — %s", _e)
 
+    # S90-A: auto-generar src/auth/service.py cuando falta y router.py lo importa
+    _auth_service_py = base / "src" / "auth" / "service.py"
+    if "src.auth.service" in _broken_text and not _auth_service_py.exists():
+        _auth_service_content = (
+            "from datetime import datetime, timedelta\n"
+            "from typing import Optional\n"
+            "from passlib.context import CryptContext\n"
+            "from jose import jwt\n"
+            "from sqlalchemy.orm import Session\n"
+            "from src.auth.models import UserORM\n\n"
+            "SECRET_KEY = 'ovd-secret-key-2026'\n"
+            "ALGORITHM = 'HS256'\n"
+            "ACCESS_TOKEN_EXPIRE_MINUTES = 30\n\n"
+            "_pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')\n\n\n"
+            "def verify_password(plain_password: str, hashed_password: str) -> bool:\n"
+            "    return _pwd_context.verify(plain_password, hashed_password)\n\n\n"
+            "def get_password_hash(password: str) -> str:\n"
+            "    return _pwd_context.hash(password)\n\n\n"
+            "def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:\n"
+            "    to_encode = data.copy()\n"
+            "    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))\n"
+            "    to_encode.update({'exp': expire})\n"
+            "    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)\n\n\n"
+            "def login_user(rut: str, password: str, db: Session):\n"
+            "    user = db.query(UserORM).filter(UserORM.rut == rut).first()\n"
+            "    if not user or not verify_password(password, user.hashed_password):\n"
+            "        return None\n"
+            "    token = create_access_token({'sub': user.rut, 'org_id': user.org_id})\n"
+            "    return {'access_token': token, 'token_type': 'bearer'}\n"
+        )
+        try:
+            _auth_service_py.parent.mkdir(parents=True, exist_ok=True)
+            _auth_service_py.write_text(_auth_service_content, encoding="utf-8")
+            log.warning("_validate_artifacts_imports: S90-A src/auth/service.py auto-generado")
+            local_mods.update({"src.auth.service", "src.auth"})
+            broken = [b for b in broken if "src.auth.service" not in b]
+            if not broken:
+                return True, ""
+        except OSError as _e:
+            log.warning("_validate_artifacts_imports: S90-A no pudo escribir auth/service.py — %s", _e)
+
     # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
     available = sorted(m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__"))[:20]
     available_str = "\n".join(f"  - {m}" for m in available) if available else "  (ninguno detectado)"
