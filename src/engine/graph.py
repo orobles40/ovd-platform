@@ -3948,6 +3948,8 @@ def _validate_artifacts_imports(
         "urllib", "http", "email", "html", "xml", "csv", "sqlite3",
         "tempfile", "shutil", "glob", "copy", "inspect", "importlib",
     }
+    # S84-G: módulos mockeados por S70-C — S65-A no los reporta como rotos
+    _s70c_mocked = {"oracledb", "cx_Oracle", "cx_oracle"}
     base = Path(directory)
     local_mods: set[str] = set()
     for f in (written_files or []):
@@ -4026,6 +4028,8 @@ def _validate_artifacts_imports(
                     continue
                 root = node.module.split(".")[0]
                 if root in _stdlib:
+                    continue
+                if root in _s70c_mocked:  # S84-G: S70-C mockea estos módulos en conftest.py
                     continue
                 if node.module in local_mods:
                     continue
