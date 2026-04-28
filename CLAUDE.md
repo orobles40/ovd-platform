@@ -1,14 +1,13 @@
 # OVD Platform — Omar Robles
 
-Este repositorio es **ovd-platform**, un fork de OpenCode mantenido por Omar Robles como producto interno para acelerar el desarrollo y mantención de sistemas de sus clientes.
+Este repositorio es **ovd-platform**, un agente de desarrollo interno para acelerar la construcción y mantención de sistemas de clientes.
 
 ## Contexto del proyecto
 
 - **Producto:** OVD Platform (Oficina Virtual de Desarrollo)
 - **Empresa:** Omar Robles
-- **Usuarios:** desarrolladores y arquitectos de Omar Robles (no clientes finales)
 - **Repo:** `git@github.com:omarrobles/ovd-platform.git`
-- **Rama principal:** `main`
+- **Rama principal:** `main` | **Rama de desarrollo:** `dev`
 
 ## Estructura del código
 
@@ -17,23 +16,32 @@ src/
 ├── engine/         Python — FastAPI + LangGraph (puerto 8001)
 ├── tui/            Rust — TUI terminal (ratatui + crossterm)
 ├── dashboard/      TypeScript — React 19 + Vite (puerto 5173)
-├── finetune/       Pipeline de fine-tuning (pausado — créditos API)
+├── finetune/       Pipeline de fine-tuning (pausado)
 ├── knowledge/      Base de conocimiento RAG
 └── mcp/            MCP server
-docs/               SDD, ROADMAP, ADRs, security reports
+docs/
+├── adr/            ADRs (ADR-001, ADR-002, ADR-003)
+├── sprints/
+│   ├── CURRENT.md  Sprint activo (S96) — roadmap y ciclo de validación
+│   └── HISTORY.md  Historial S19–S95
+└── ...
 ```
 
 ## Para levantar el entorno
 
 ```bash
-# Engine (desde la raíz del repo)
-cd src/engine && uv sync && .venv/bin/uvicorn api:app --port 8001
+# Engine
+cd src/engine && uv sync
+env ANTHROPIC_API_KEY="" .venv/bin/uvicorn api:app --port 8001
 
 # Dashboard
 cd src/dashboard && bun dev
 
-# TUI (compilar primero)
+# TUI
 cd src/tui && cargo build && cargo run
+
+# PostgreSQL (si Docker Desktop reinició)
+docker start postgres_db
 ```
 
 ## Credenciales dev
@@ -41,1035 +49,87 @@ cd src/tui && cargo build && cargo run
 - Usuario: `omar@omarrobles.dev` / `ovd-dev-2026`
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
+- OVD_SECRET: ver `src/engine/.env`
 
 ## Estado actual (2026-04-28)
 
 - **Sprints completados:** S3 → S95 (rama `dev`)
-- **Tests:** Python unit ~1477 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1477+
-- **Rama activa:** `dev` (S95 aplicado: S88-A/B + S89-A/B + S90-A/B + S91-A + S80-C ext + S84-A f-string + S82-F cleanup + S63-B preserve-src)
-- **Próximo foco:** S96 (auto-generador general de stubs, fix prime_validator spurious import, pytest exit 0)
-- **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
+- **Tests:** Python unit ~1477 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26
+- **Próximo foco:** S96 — ver `docs/sprints/CURRENT.md`
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S94:** `5a17c6a2` — `collected 9 items / 1 error` (record: primer round con pytest ejecutando 9 tests), S63-B borraba src/ después — resuelto con S94-fix. Más cercano a pytest exit 0 alcanzado.
-- **Ciclo de validación S84:** `e98bf96e` — 5m 38s, 109k tokens, ORM naming consistente ✅. Bloqueador S65-A resuelto en S84-G.
-- **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100**, pytest exit 2 × 2 rondas.
-- **Ciclo de validación S76:** `c0e2e71e` — **QA 93/100**, **SDD compliance: True**. Baseline de referencia.
-- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B), `test_s63b_cleanup_in_retry_round_zero` (roto por S94-fix, pendiente corrección)
-- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET.
 
-### ADR-003 — Criterios de selección de modelos LLM (2026-04-28)
+### Ciclos de referencia
 
-`docs/adr/ADR-003-model-selection-criteria.md` — referencia obligatoria antes de:
-- Cambiar `OVD_MODEL_*` en `.env`
-- Migrar proyectos cliente a otro stack (Oracle→Postgres, Java→Python)
-- Generar frontend complejo con análisis visual (mockups, Figma → JSX)
-- Soportar issues en producción de sistemas legados (Java Struts, COBOL, Oracle 12c)
+| Sprint | Hash | QA | pytest | Duración |
+|--------|------|----|--------|----------|
+| S76 | c0e2e71e | **93** | collection_error | 13 min |
+| S84 | e98bf96e | — | exit 2 | 5m 38s |
+| S94 | 5a17c6a2 | — | **9 items / 1 error** | — |
+| S95 | 65ab6e7b | — | bloquea S65-A | — |
 
-**Reglas clave del ADR:**
-1. Verificar existencia del modelo en `ollama.com/library` antes de cualquier propuesta — propuestas externas suelen alucinar nombres (ej: `Qwen3.6-72B`, `Qwen3.6-27B-Vision` no existen)
-2. Apple Silicon serializa GPU — cargar 2 modelos pinned NO da paralelismo real
+### Fallos pre-existentes (no regresar)
+
+- `test_s31::test_cycle_start_ts_reciente` — flaky por timing
+- `test_s63b_cleanup_not_in_run_tests` — RuntimeError
+- `test_alembic_migrations::test_revision_actual_es_head` — timestamp
+- `test_s39::test_usa_cap_800_en_truncate` — obsoleto por S61-B
+- `test_s63b_cleanup_in_retry_round_zero` — roto por S94-fix (pendiente S96-D)
+
+### Issue abierto
+
+`POST /auth/login` retorna 500 — bloquea el dashboard. Workaround: curl + OVD_SECRET.
+
+## ADR-003 — Selección de modelos LLM
+
+Referencia obligatoria (`docs/adr/ADR-003-model-selection-criteria.md`) antes de cambiar modelos, migrar stacks, o trabajar con frontend visual.
+
+**Reglas clave:**
+1. Verificar existencia en `ollama.com/library` — propuestas externas suelen alucinar nombres
+2. Apple Silicon serializa GPU — 2 modelos pinned NO dan paralelismo real
 3. Q4_K_M es default — Q6/Q8 sobredimensionado para casos típicos
 4. NO migrar de LangGraph a Autogen/CrewAI — regresión arquitectural
 5. A/B test cuantitativo (mínimo 3 ciclos) antes de cambiar modelo en producción
 6. Baseline a superar: QA 93/100, duración 13 min, costo $0 (S76)
 
-Tabla de modelos candidatos verificados está en el ADR — incluye SDD, coder, vision, analyzer.
-
-### Roadmap S96 — Próximo sprint
-
-#### S96-A — Auto-generador general de stubs (CRÍTICO)
-En `_validate_artifacts_imports`, reemplazar los casos individuales S89-A/S90-A/S91-A por un mecanismo general: cuando S65-A detecta `src.X.Y ← módulo no existe`, generar automáticamente un stub mínimo `src/X/Y.py` con exports vacíos derivados del import statement. Reduce el mantenimiento de casos hard-coded. **Impacto esperado:** cualquier módulo local faltante se auto-genera sin código adicional.
-
-#### S96-B — Filtro de imports espurios de proyectos anteriores (CRÍTICO)
-En `code_postprocessor.py`, agregar `_fix_spurious_utility_imports()` que elimina imports de módulos de utilidad que no pertenecen al dominio actual: `src.utils.prime_validator`, `src.utils.imc_validator`, `src.calculadora.*`. Causa raíz: el LLM mezcla contexto de proyectos anteriores (calculadora IMC) con el proyecto actual (contratos). **Fix:** regex que elimina esas líneas de import de `service.py` y `router.py`.
-
-#### S96-C — Postprocessor ORM naming español→inglés (ALTO)
-`_fix_orm_class_names_es_to_en()` en `code_postprocessor.py`: renombra clases ORM en español a inglés: `ContratoORM→ContractORM`, `BeneficioORM→BenefitORM`, `UsuarioORM→UserORM`. S79-B (template) no es suficiente — el LLM sigue generando nombres en español. El postprocessor lo corrige determinísticamente con `re.sub()`.
-
-#### S96-D — Fix test_s63.py regresión (MEDIO)
-`test_s63b_cleanup_in_retry_round_zero` espera el comportamiento pre-S94 (borra todos los archivos). Actualizar el test para reflejar la nueva lógica: si `collected \d+ items` en el error → preserva `src/`. Agregar caso nuevo que verifica la preservación.
-
-#### S96-E — Verificación post-auto-gen (MEDIO)
-Después de S89-A/S90-A/S91-A auto-generar archivos, re-ejecutar `_validate_artifacts_imports` para verificar que los nuevos archivos resuelven los imports rotos. Actualmente se filtra el broken-list pero no se re-valida. Si el auto-gen tiene errores, se detectan tarde.
-
-#### Ciclo de validación S96
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S96:**
-- S65-A no bloquea (0 imports rotos en round 0)
-- pytest ejecuta real (exit 0 o exit 1 con fallos lógicos — no colección)
-- QA ≥ 70
-
----
-
-### Novedades S85–S95 (2026-04-28) — rama `dev`
-
-#### S85 — Validación del pipeline S84
-
-- **Objetivo:** pytest exit 0 con S84-A-v2 + S84-G activos.
-- **Resultado:** S65-A seguía bloqueando por `import oracledb` en casos edge (f-string URL).
-- **Diagnóstico:** S84-A detectaba `postgresql` literal pero no f-strings (`f'postgresql+psycopg://...'`). S82-F sólo reemplazaba Oracle→PostgreSQL pero no removía `oracledb.init_oracle_client()` cuando URL ya era PostgreSQL.
-
-#### S87 — Diagnóstico explícito en `_validate_artifacts_imports`
-
-- **S87-diag:** `_validate_artifacts_imports` ahora imprime `log.warning("[S65-A] imports rotos detectados (%d):\n%s", len(broken), "\n".join(broken[:10]))` — visible en logs del engine sin SSE.
-
-#### S88 — Fix imports `*.orm` (postprocessor)
-
-- **S88-A — `_fix_orm_phantom_module_import()`** en `code_postprocessor.py`: regex `from src.X.orm import` → `from src.X.models import`. El LLM genera sufijo `.orm` en lugar de `.models` en el 30% de los ciclos. Fix determinístico.
-- **Commit:** `c47ef25a0` — S88-A + S87-diag.
-
-#### S89 — Auto-gen `contracts/models.py` + fix `*.repository`
-
-- **S89-A:** `_validate_artifacts_imports` — cuando S65-A detecta `src.contracts.models ← no existe` y el archivo no está en disco, genera `src/contracts/models.py` con `ContractORM`, `BenefitORM`, `ContractCreate`, `BenefitCreate`, `Contract`, `Benefit` (Pydantic + ORM).
-- **S89-B — `_fix_phantom_repository_import()`** en `code_postprocessor.py`: elimina `from src.X.repository import ...` — módulo que el LLM inventa pero nunca genera.
-- **Commit:** `73fa1e5bf`.
-
-#### S90 — Auto-gen `auth/service.py` + fix `src.benefits.*`
-
-- **S90-A:** `_validate_artifacts_imports` — cuando `src.auth.service ← no existe`, genera `src/auth/service.py` con `verify_password()`, `create_access_token()`, `login_user()` (passlib + jose).
-- **S90-B — `_fix_benefits_module_import()`** en `code_postprocessor.py`: redirige `from src.benefits.X import` → `from src.contracts.X import`. El LLM a veces crea paquete `benefits/` separado en lugar de usar `contracts/`.
-- **Commit:** `7d5b38fe7`.
-
-#### S91 — Auto-gen `contracts/router.py`
-
-- **S91-A:** `_validate_artifacts_imports` — cuando `src.contracts.router ← no existe`, genera `src/contracts/router.py` con endpoints CRUD completos: `POST /contratos`, `GET /contratos/{rut}`, `POST /contratos/{id}/beneficios`, `GET /contratos/{id}/beneficios`. Usa try/except ImportError para evitar cascada si models/service también faltan.
-- **Commit:** `01c69cdb1`.
-
-#### S92 — Fix `DeclarativeBase` sin `class Base(DeclarativeBase)` (SQLAlchemy 2.0)
-
-- **S80-C extendido:** `_fix_declarative_base_import()` en `code_postprocessor.py` detecta el patrón: `from sqlalchemy.orm import DeclarativeBase` + clases ORM que heredan `Base` pero `class Base(DeclarativeBase): pass` no está definido en el mismo archivo. Reemplaza con `from src.database import Base`.
-- **S84-A f-string fix:** `_fix_oracle_init_in_postgres_db()` ahora detecta f-strings: `f'postgresql+psycopg://...'` además de strings literales. Regex actualizado con `f?`.
-- **Commit:** `10ebc69d5`.
-
-#### S93 — Fix `oracledb.init_oracle_client()` residual
-
-- **S82-F extendido:** en `agent_executor`, la limpieza de Oracle ahora tiene dos fases: (1) reemplazo Oracle URL → PostgreSQL si aplica; (2) **siempre** elimina `oracledb.init_oracle_client()` si aparece en el archivo, independientemente de la dirección de la URL. Resuelve el caso: URL ya era PostgreSQL (f-string) + init_oracle_client sin import.
-- **Commit:** `a359b166a` (junto con S92).
-
-#### S94 — Fix S63-B borraba src/ cuando pytest ya colectaba tests
-
-- **S63-B fix:** `update_test_retry` — antes de borrar artefactos en retry, verifica si `last_test_error` contiene `collected \d+ items?`. Si pytest colectó al menos 1 test, preserva todos los archivos `src/` y solo limpia tests con errores. Evita regresar a near-scratch cuando el código fuente es parcialmente correcto.
-- **Hito:** Ciclo `5a17c6a2` alcanzó `collected 9 items / 1 error` — el más cercano a pytest exit 0.
-- **Commit:** `a0102962c`.
-
-#### S95 — Diagnóstico bloqueador final
-
-- **Ciclo `65ab6e7b`:** S65-A detectó 1 import roto en round 0: `src/contracts/service.py: from src.utils.prime_validator import is_prime ← módulo no existe`. El LLM confundió el proyecto contratos con el proyecto calculadora IMC anterior. No bloqueado por ORM/database — bloqueado por import espurio de proyecto distinto.
-- **Diagnóstico:** raíz del problema es contaminación de contexto LLM entre proyectos. Fix: S96-B postprocessor.
-- **Estado tests:** ~1477 PASS (regresión en `test_s63b_cleanup_in_retry_round_zero` por S94-fix — pendiente corrección en S96-D).
-
-#### Comparativa ciclos S85–S95
-
-| Ciclo | Hash | S65-A | pytest | Bloqueador |
-|-------|------|-------|--------|------------|
-| S85 | — | bloquea | no ejecuta | oracledb f-string |
-| S88 | f8a16d77 | bloquea | no ejecuta | `src.contracts.orm` (`.orm` suffix) |
-| S89 | 3c5dad50 | bloquea | no ejecuta | contracts/models.py no existe en disco |
-| S90 | fa795201 | bloquea | no ejecuta | auth/service.py + src.benefits.* |
-| S91 | 214aef2f | bloquea | no ejecuta | contracts/router.py no existe |
-| S92 | 5ab8e3f5 | bloquea | no ejecuta | `Base` no definido (DeclarativeBase 2.0) |
-| S93 | 2fc0ba7c | bloquea | no ejecuta | oracledb.init sin import |
-| S94 | 5a17c6a2 | **pasa** | **9 items / 1 error** | S63-B borraba src/ |
-| S95 | 65ab6e7b | bloquea | no ejecuta | `prime_validator` import espurio |
-
----
-
-### Roadmap S78 — Próximo sprint
-
-#### S78-A — Template login JWT obligatorio (CRÍTICO)
-En `system_backend_python.md`, agregar sección "Endpoint POST /auth/login OBLIGATORIO" con implementación de referencia completa: generar JWT con `python-jose`, aceptar RUT+contraseña, retornar access_token. Prohibir stubs (`pass`) en endpoints de autenticación.
-
-#### S78-B — Verificar no-stub endpoints post-execute (ALTO)
-`_verify_no_stub_endpoints(work_dir)` — escanea `main.py` buscando `async def xxx(): pass`. Si detecta → log warning + agregar al retry_feedback.
-
-#### S78-C — Regla de naming entre módulos en template (ALTO)
-En `system_backend_python.md`: "Las funciones CRUD van en `service.py`, NO en `models.py`. Los tests importan de `services/`, no de `models/`." Evita el error `create_benefit` en módulo equivocado.
-
-#### S78-D — Retry selectivo por archivo (MEDIO)
-Extraer archivos fallidos del output pytest y regenerar SOLO esos archivos. Reduce retry de ~2.5 min → ~1 min.
-
-#### Ciclo de validación S78
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S78:**
-- pytest exit 0 (con S78-A + S78-B + S78-C aplicados)
-- Login JWT completo (no stub)
-- QA ≥ 80 (promedio de ≥3 ciclos, ADR-003)
-
----
-
-### Novedades S78 (2026-04-28) — rama `dev`
-
-- **S78-A — Template login JWT completo:** `system_backend_python.md` — sección "Endpoint POST /auth/login OBLIGATORIO" con `jwt.encode()`, `validate_rut()`, `CryptContext(bcrypt)`, `_create_access_token()`. Prohibición explícita de stubs. **Validado:** ciclo S78 generó `login_user()` con JWT real (no stub `pass`). QA subió de 57→67.
-- **S78-B — `_verify_no_stub_endpoints(work_dir)`:** en `graph.py` — detecta `async def xxx(): pass` o `...` en main.py/router.py. No disparó en S78 (S78-A previno el stub). Implementado y activo.
-- **S78-C — Regla CRUD en service.py:** `system_backend_python.md` — tabla canónica `create_benefit → contract_service.py`. **Resultado parcial:** tests importan de service.py (✅) pero ORM names inconsistentes entre tareas (ContractORM vs ContratoORM) → ImportError persiste.
-- **S78-D — Extracción archivos fallidos retry:** `update_test_retry` — regex `(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)`. Implementado.
-- **Fix S70-C — oracledb mock versión:** `_mock_oracledb.version = '8.3.0'` — SQLAlchemy Oracle dialect hace `re.match(pattern, oracledb.version)` → crasheaba con `MagicMock`. Fix aplicado en `graph.py`.
-- **18 tests nuevos** en `test_s78.py` — 18/18 PASS. **1390 tests PASS** (suite principal).
-- **Ciclo validación `88d06e0f`:** 13m 18s, **QA 67/100** (+10 vs S77), pytest exit 2 × 2 rondas, bloqueador: naming ORM inconsistente (ContratoORM vs ContractORM generados por tareas distintas).
-- **Bloqueadores para pytest exit 0:** ORM class names inconsistentes entre `models.py` y `service.py` → `ImportError` en import. También `User` vs `LoginRequest` en `auth/models.py`.
-
-#### Comparativa ciclos postprocessors (actualizada)
-
-| Sprint | Ciclo | QA | Tests | Duración | Tokens |
-|--------|-------|----|-------|----------|--------|
-| S55 | 9d939f29 | 65 | exit 0 | 1m 35s | 30k |
-| S76 | c0e2e71e | **93** | collection_error | 13m | 215k |
-| S77 | fb7bbbd5 | 57 | exit 2 × 3 | 11m | 118k |
-| **S78** | 88d06e0f | **67** | exit 2 × 2 | **13m 18s** | **175k** |
-
----
-
-### Novedades S84 (2026-04-28) — rama `dev`
-
-- **S84-B — `_write_artifacts()` devuelve `content`:** campo `content` añadido al dict de retorno. Habilita S83-F context injection. **Validado:** S83-F inyectó 2345/3531/3534 chars en ciclo S84. ORM naming consistente por primera vez (ContractORM/BenefitORM/UserORM en inglés en todos los archivos).
-- **S84-A — Postprocessor Oracle init:** `_fix_oracle_init_in_postgres_db()` en `code_postprocessor.py` elimina `oracledb.init_oracle_client()` cuando `DATABASE_URL` es PostgreSQL. Cubre el caso "mixed" (PostgreSQL URL + Oracle init).
-- **S84-A-v2 — S79-C reescribe database.py:** `_verify_db_url_matches_fr()` ahora también reescribe `database.py` directamente en disco (Oracle URL → PostgreSQL) cuando el FR especifica PostgreSQL. Actúa en todos los retry rounds.
-- **S84-C — Template auth/models.py:** `system_backend_python.md` — sección S84-C con `UserORM` + `TokenResponse` + `LoginRequest` en `src/auth/models.py`. Referenciable por el LLM.
-- **S84-F — `_ensure_auth_models_task()`:** inyecta `TASK-INFRA-AUTH-MODELS` cuando el SDD tiene `src/auth/router.py` pero no `src/auth/models.py`. Insertado ANTES de auth/router.py para que el sort topológico lo ordene correctamente. **Validado:** `src/auth/models.py` generado con `UserORM` correcto.
-- **S84-G — S65-A skip `oracledb`:** `_validate_artifacts_imports` agrega `_s70c_mocked = {"oracledb", "cx_Oracle"}` — S65-A ya no bloquea pytest cuando S70-C ya mockeó estos módulos en conftest.py.
-- **16 tests nuevos** en `test_s84.py` — 16/16 PASS. **1505 tests PASS** (suite total, incluyendo regresión).
-- **Ciclo validación S84 (`e98bf96e`):** 5m 38s (-70% vs S83), 109k tokens (-59%), S65-A bloqueó pytest en 3 rounds (por `import oracledb` — resuelto en S84-G). ORM naming consistente ✅.
-- **Bloqueador S84 resuelto en S85:** Oracle URL → S84-A-v2; S65-A block → S84-G.
-
-#### Ciclo de validación S85
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S85:**
-- pytest ejecuta real (S84-G elimina bloqueo oracledb)
-- DATABASE_URL PostgreSQL (S84-A-v2 reescribe en disco)
-- ORM naming consistente (S83-F + S84-B)
-- QA ≥ 70
-
----
-
-### Novedades S83 (2026-04-28) — rama `dev`
-
-- **S83-E — `_ensure_auth_login_task()`:** inyecta `TASK-INFRA-AUTH-ROUTER` cuando FR menciona auth/login y el SDD no tiene auth/router.py. **Validado en S83 y S84.**
-- **S83-F — Topological sort + context injection:** `_topological_sort_tasks()` ordena tareas por `depends_on` (Kahn's algorithm). `_build_dependency_context()` inyecta contenido de archivos ya generados (models.py) al prompt de tareas dependientes (service.py, router.py). Context injection requería S84-B para funcionar.
-- **17 tests nuevos** en `test_s83.py` — 17/17 PASS. **1478 tests PASS**.
-- **Ciclo validación S83 (`4798c9db`):** 18m 32s, QA 50, 264k tokens, pytest exit 2 × 3 rounds. Bugs raíz: `_write_artifacts` sin `content` (S84-B), Oracle URL (S84-A-v2).
-
----
-
-### Novedades S80 (2026-04-28) — rama `dev`
-
-- **S80-A — `_verify_orm_class_names()` manifest vacío:** Cuando `models.py` no tiene clases ORM (solo Pydantic) pero `service.py` importa nombres que terminan en `ORM` → `[S80-A] ⚠️ service.py importa clases ORM pero models.py no tiene ninguna.` Resuelve el caso que S79-A dejaba pasar silenciosamente.
-- **S80-B — S79-C sin restricción `retry_round==0`:** `_verify_db_url_matches_fr()` ahora corre en todos los rounds. Garantiza que Oracle URL con FR PostgreSQL se detecte independientemente de si S65-A interceptó el output previo.
-- **S80-C — Postprocessor `_fix_declarative_base_import()`** en `code_postprocessor.py`: detecta `Base = declarative_base()` en archivos que no son `src/database.py` y reemplaza con `from src.database import Base`. Corre ANTES de S73-A para interceptar el patrón crudo. Resuelve `NameError: name 'Base' is not defined` en BenefitORM.
-- **S80-D — `auth_router` en `_ensure_fastapi_main_task()`:** Cuando el SDD tiene `src/auth/router.py`, el hint de main.py incluye `auth_router`. También actualiza descripción de tareas main.py existentes. Solo activa cuando SDD tiene la tarea (no inventa routers fantasma).
-- **S80-E — Caps reducidos:** `_TASK_CAPS = {"high": 8, "critical": 10}` (era 10/12). Reduce superficie de error sin coordinación entre tareas.
-- **20 tests nuevos** en `test_s80.py` — 20/20 PASS. **1429 tests PASS** (suite total).
-
-#### Ciclo de validación S80
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S80:**
-- pytest exit 0 (S80-A + S80-C resuelven ORM/Base issues)
-- DATABASE_URL PostgreSQL (S80-B garantiza S79-C feedback)
-- auth_router en main.py (S80-D)
-- QA ≥ 70 (caps reducidos → menos tareas → menos errores)
-
-### Novedades S79 (2026-04-28) — rama `dev`
-
-- **S79-A — `_verify_orm_class_names(work_dir)`** en `graph.py` (~línea 1138): usa `ast.parse()` para construir ORM manifest desde todos los `models.py`, verifica imports en `service.py`/`router.py`. Si detecta `ContratoORM` donde `ContractORM` existe → inyecta `[S79-A] ⚠️ INCONSISTENCIA NOMBRES ORM` con hint `¿quisiste decir: ContractORM?` al retry_feedback. Ignora Pydantic schemas (terminan en Request/Response/Schema/Create/Update).
-- **S79-B — Template CRUD completo** en `system_backend_python.md`: implementación completa de `create_benefit()`, `list_benefits()`, `delete_benefit()` en `service.py`. Tabla canónica de nombres ORM obligatorios (`ContractORM`, `BenefitORM`, `UserORM`) vs prohibidos (`ContratoORM`, `BeneficioORM`, `UsuarioORM`).
-- **S79-C — `_verify_db_url_matches_fr(work_dir, fr_text)`** en `graph.py`: detecta cuando FR menciona PostgreSQL pero `database.py` tiene URL Oracle (y viceversa) → inyecta `[S79-C] ⚠️ DATABASE_URL INCONSISTENTE` con corrección `postgresql+psycopg://...`.
-- **S79-D — Nota login BD** en `system_backend_python.md`: `> S79-D — OBLIGATORIO: login_user DEBE consultar UserORM en BD` — directamente en la sección del endpoint login.
-- **19 tests nuevos** en `test_s79.py` — 19/19 PASS. **1409 tests PASS** (suite principal).
-- **Bloqueadores S79 resuelven:** (1) `ContratoORM vs ContractORM` → S79-A lo detecta y corrige en retry_feedback; (2) Oracle URL en FR PostgreSQL → S79-C; (3) CRUD en módulo equivocado → S79-B previene + S79-A detecta.
-
-### Roadmap S79 — COMPLETADO (2026-04-28)
-
-#### S79-A — ORM naming verifier postprocessor (CRÍTICO) ✅
-`_verify_orm_class_names(work_dir)` — implementado, 7/7 tests PASS.
-
-#### S79-B — Template refuerzo CRUD en service.py (ALTO) ✅
-Implementación completa `create_benefit`/`list_benefits`/`delete_benefit` + tabla nombres ORM. 4/4 tests PASS.
-
-#### S79-C — DATABASE_URL coherente con FR (ALTO) ✅
-`_verify_db_url_matches_fr(work_dir, fr_text)` — implementado, 5/5 tests PASS.
-
-#### S79-D — login_user verifica usuario en BD (MEDIO) ✅
-Nota `S79-D OBLIGATORIO` agregada en template. 3/3 tests PASS.
-
-#### Ciclo de validación S79
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S79:**
-- pytest exit 0 (con S79-A + S79-B)
-- QA ≥ 75 (mínimo en 1 ciclo; ≥80 promedio ≥3 ciclos per ADR-003)
-- DATABASE_URL PostgreSQL (no Oracle)
-
----
-
-### Novedades S77 (2026-04-28) — rama `dev`
-
-- **S77-A — `_fix_sqlalchemy_oracle_params()`** en `code_postprocessor.py`: elimina `thick=True/False` y `mode="thick"` de `create_engine()`. El LLM genera `thick=True` en el 100% de los proyectos Oracle. S77-A lo elimina automáticamente. Resolvió el collection_error que bloqueaba pytest en S76 (`TypeError: invalid keyword argument 'thick'`).
-- **S77-B — `_fix_pydantic_decorator_order()`** en `code_postprocessor.py`: usa `ast.parse()` + `ast.unparse()` para reordenar `@classmethod`/`@field_validator` al orden Pydantic v2 correcto (`@field_validator` ANTES de `@classmethod`). El LLM invierte el orden en el 100% de los ciclos. S77-B corrige 4-8 decoradores por ciclo con 100% de confiabilidad.
-- **S77-C — `_verify_main_includes_routers()`** en `graph.py`: escanea `src/*/router.py` en disco y verifica que `main.py` tenga `include_router()` para cada uno. Auto-inyecta si falta. No activado en ciclo S77 (LLM usó inline endpoints en este ciclo).
-- **S77-F — fix auth BD errors** en `routers/auth_router.py`: `_get_user_by_email` con manejo explícito de `psycopg.OperationalError` (503), `psycopg.errors.UndefinedColumn` (500 con mensaje de configuración), `psycopg.Error` genérico (500).
-- **22 tests nuevos** en `test_s77.py` — 22/22 PASS. Test S72 (`test_adds_classmethod_with_correct_pydantic_v2_order`) actualizado para reflejar orden final correcto.
-- **1372 tests PASS** (suite principal).
-- **Ciclo validación `fb7bbbd5`:** ~11 min (-2 min vs S76), QA 57/100 (regresión LLM no determinística, no regresión de postprocessors), pytest exit 2 × 3 rondas (bloqueador: `create_benefit` importado de módulo equivocado en test generado). S77-A ✅ S77-B ✅ validados en producción.
-- **Telemetría S77 vs S76:** tareas SDD 12→7 (LLM compacto), archivos 13→9, tokens 118,451, duración -2 min. Login como stub vacío en este ciclo.
-- **Bloqueadores para pytest exit 0:** (1) `create_benefit` en `models/contracts.py` pero test lo importa de `contract_service.py` — fix: template S78-C; (2) login endpoint stub (`pass`) — fix: template S78-A.
-
-#### Comparativa ciclos postprocessors
-
-| Sprint | Ciclo | QA | Tests | Duración | Postprocessors activos |
-|--------|-------|----|-------|----------|----------------------|
-| S55 | 9d939f29 | 65 | exit 0 | 1m 35s | — |
-| S75 | 782bd4b1 | 50 | collection_error | 6m 3s | S72/73/74/75 |
-| S76 | c0e2e71e | **93** | collection_error | **13m** | S72-75 |
-| **S77** | fb7bbbd5 | **57** | exit 2 × 3 | **11m** | **S77-A ✅ S77-B ✅** |
-
----
-
-### Novedades S76 (2026-04-28) — rama `dev`
-
-- **S76 — cambio de modelo SDD (cero código nuevo):** `OVD_MODEL_SDD` cambiado de `ovd-arch-assistant` (Qwen2.5 7B wrapper con `num_predict=1024` baked-in) a `qwen3-coder:30b` (MoE 30B con presupuesto sin restricción).
-- **Causa raíz S75 confirmada matemáticamente:** un SDD completo necesita ~3,700 tokens. `num_predict=1024` lo hacía físicamente imposible. Por eso S75 colapsó a 6 tareas y S74 fue suerte estadística.
-- **Modelfile inspeccionado (Fase 0):** confirmado que `ovd-arch-assistant` NO es fine-tuned — es un Modelfile wrapper con system prompt contaminado de dominio HHMM/Clínica Alemana, irrelevante para FRs generales. Cero riesgo de regresión.
-- **Resultado ciclo `c0e2e71e`:** QA 93/100 (vs 50 en S75), SDD compliance: True, 12 tareas SDD (vs 6), 13 archivos generados (vs 5), duración ~13 min, costo $0 (Ollama).
-- **S76 plan original NO implementado:** `_validate_sdd_completeness`, `_enforce_file_targets`, `_ensure_module_tasks`, `Pydantic min_length=1`, logging — innecesarios. El cambio de modelo resolvió el 90% del problema.
-- **Bugs residuales para S77:** `thick=True` inválido en SQLAlchemy `create_engine`, Pydantic `@classmethod`/`@field_validator` en orden invertido, `main.py` no incluye `auth_router`, `ContractORM` sin columna `org_id`.
-
-### Roadmap S77 — Próximo sprint
-
-#### S77-A — Postprocessor `thick=True` SQLAlchemy (CRÍTICO)
-En `code_postprocessor.py`, agregar `_fix_oracle_thick_param()` que elimina el parámetro inválido `thick=True` de `create_engine()`. El thick mode ya se activa con `oracledb.init_oracle_client()`. Sin este fix, `pytest` falla con collection error.
-
-#### S77-B — Postprocessor Pydantic decorator order (ALTO)
-`@classmethod` debe ir DESPUÉS de `@field_validator`, no antes. Modelo qwen3-coder:30b a veces los invierte → `PydanticUserError`. Fix con regex en `code_postprocessor.py`.
-
-#### S77-C — Verificar `main.py` incluye todos los routers (MEDIO)
-`_verify_main_includes_all_routers(work_dir)` — escanea `src/*/router.py` y verifica que `main.py` tenga `include_router` para cada uno. Si falta, auto-inyectar (similar a S69-C).
-
-#### S77-D — Retry selectivo a nivel de archivo (MEDIO — alta optimización)
-Actualmente `test_retry` regenera todo el módulo (~3 min/ronda). Extraer del error pytest los archivos específicos (`re.findall(r'(src/[\w/]+\.py)', error)`) y regenerar SOLO esos. Impacto esperado: 13 min → 9 min.
-
-#### S77-E — Crear `ovd-arch-assistant-v2` basado en qwen3-coder:30b (BAJO)
-Modelfile con `FROM qwen3-coder:30b` + system prompt limpio + `num_ctx 16384` + `num_predict 8192`. Permite reaplicar contexto OVD sin las restricciones del modelo viejo.
-
-#### S77-F — Fix login dashboard 500 (PRE-EXISTENTE)
-`POST /auth/login` del engine retorna `Internal Server Error`. Bloquea uso del dashboard. Workaround actual: monitoreo SSE + curl con OVD_SECRET. Investigar handler en `api.py` y posible regresión por columna `revoked_reason` agregada manualmente en `ovd_refresh_tokens`.
-
-#### Ciclo de validación S77
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S77:**
-- pytest exit 0 (con S77-A + S77-B + S77-C aplicados)
-- Duración < 10 min (con S77-D)
-- QA ≥ 93 (mantener nivel S76)
-
-### Novedades S75 (2026-04-27) — rama `dev`
-
-- **S75-A:** `_fix_function_import_shadowing()` en `code_postprocessor.py` — detecta `FunctionDef` a nivel módulo que redefine import con wrapper trivial (`def fn(): return fn()` → RecursionError). Usa `ast.NodeTransformer` + `ast.unparse`. Solo elimina si el cuerpo es `return imported_fn(args)` puro.
-- **S75-B:** template `system_backend_python.md` — sección "requirements.txt completo obligatorio" con passlib, python-jose, httpx, pytest-asyncio.
-- **S75-C:** template — regla "Imports de submódulos `.models`" — solo si el archivo existe en el SDD. Previene `from src.contracts.models import X` phantom.
-- **17 tests nuevos** en `test_s75.py` — todos pasan.
-- **Ciclo validación S75 (`782bd4b1`):** 6m 3s, **QA 50/100**, SDD colapsó a 6 tareas / 1 agente — regresión expuso problema de fondo: modelo `ovd-arch-assistant` con `num_predict=1024` no puede generar SDDs completos. S75 funcionó (cero recursive wrappers, cero phantom imports) pero no era el bug raíz.
-
-### Novedades S66 (2026-04-27) — rama `dev`
-
-- **S66-A:** `_validate_artifacts_imports()` — escanea archivos en disco para construir mapa `export_name → módulo`. Cuando detecta import fantasma, sugiere corrección exacta: `→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'`. También lista "MÓDULOS DISPONIBLES EN DISCO" para que el agente sepa qué puede importar sin adivinar.
-- **S66-B:** `generate_sdd` — post-procesamiento limita máx 5 tareas/agente. Enforcement en código: si el LLM genera 11 tareas en backend, quedan 5. Registrado en `log.warning` con `backend(11→5)`.
-- **S66-C:** `run_tests` — detecta cuando S65-A genera el mismo feedback de imports rotos que el round anterior (líneas 1-3 idénticas). Si `retry_round ≥ 1`: `Command(goto=generate_docs)` directo. Elimina el loop de 34 min del ciclo bc5bcba1.
-- **10 tests nuevos** en `test_s66.py`. **1192 tests pasan** en suite completa.
-
-### Novedades S65 (2026-04-27) — rama `dev`
-
-- **S65-A:** `_validate_artifacts_imports()` — `ast.parse()` + `importlib.util.find_spec()` detecta phantom imports ANTES de pytest. Si módulo importado no está en disco ni stdlib ni instalado → retorna `(False, feedback)` y omite pytest.
-- **S65-B:** `_validate_orm_patterns()` — detecta `db.add(PydanticModel(...))` en lugar de `db.add(ORMModel(...))`.
-- **S65-C:** `_check_fastapi_route_ordering()` — detecta rutas parametrizadas (`{id}`) registradas antes que rutas estáticas con mismo prefijo.
-- **S65-D:** `_ensure_auth_dependencies()` — auto-genera `src/auth/dependencies.py` cuando el FR menciona JWT/auth y el archivo no existe.
-- **S65-E:** `_ensure_python_infrastructure()` — auto-crea `requirements.txt` si no existe en work_dir después de execute_agents.
-- **Ciclo validación bc5bcba1:** 34m 4s, QA=65/100, status=completed. S65-A detectó 7 phantom imports por ronda pero agentes no corrigieron porque feedback no indicaba ruta correcta → corregido en S66-A.
-
-### Novedades S61 (2026-04-26) — rama `dev`
-
-- **S61-A:** `pythonpath = .` (no `src`) en templates `system_backend_python.md` + `system_backend.md`. S27-A skip conftest.py injection cuando `pytest.ini` ya tiene `pythonpath` — evita doble prefijo `src/src/main.py`.
-- **S61-B:** `last_test_error: str` en `OVDState` (sin truncar). S60-B usa `last_test_error` en vez de `retry_feedback` (truncado a 800 chars) para detectar errores estructurales repetidos.
-- **S61-C:** `qa_review` retorna resultado previo sin llamar al LLM cuando `selective_retry_agents` no vacío. Evita score volátil (95→57→95) en retries selectivos.
-- **S61-D:** `_kept_agent_results` en `OVDState`. `route_agents` preserva resultados de agentes no-retried. `deliver` fusiona kept + current — informa todos los agentes (no solo el último retried).
-- **13 tests nuevos** en `test_s61.py`. **1138 tests pasan** (2 flaky pre-existentes: `test_s31`, `test_s47`).
-
-### Bug conocido — `ovd_refresh_tokens` columna faltante
-- `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT;` — ya aplicado en Docker postgres_db
-- Causaba crash del engine cuando el dashboard refrescaba JWT durante execute_agents
-
-### Bug conocido — `ANTHROPIC_API_KEY` con comentario inline en `.env`
-- `ANTHROPIC_API_KEY=   # comentario` es leído como valor truthy por el parser de dotenv → context resolver detecta Oracle + API key → routea a Claude → `AuthenticationError 401`
-- **Fix:** separar el comentario en línea propia. La API key debe quedar en línea propia sin texto posterior.
-- **Inicio del engine:** usar `env ANTHROPIC_API_KEY="" .venv/bin/uvicorn ...` si la shell tiene la variable exportada desde `~/.zshrc`
-
-### Roadmap S52 — Próximo sprint
-
-#### S52-A — Diagnóstico de archivos de producción no escritos (crítico)
-- **Síntoma:** directorios `src/calculadora/` y `src/models/` creados pero vacíos tras el ciclo S51. El informe de entrega reporta los archivos pero no están en disco.
-- **Fix:** en el S49-C path (y S49-A), si `_write_artifacts` retorna `[]` pero `output` es no-vacío, loguear un `WARNING` con los primeros 500 chars del output para diagnóstico. También añadir verificación post-write: `if not target.exists(): log.error(...)`.
-- **Test:** `test_s52.py::TestS52ADiagnostics` — verificar que el warning se emite y que los archivos existen en disco tras `_write_artifacts`.
-
-#### S52-B — Optimización del retry S51-C
-- **Síntoma:** S51-C agrega ~3.5 min al ciclo enviando el SDD completo como contexto del retry.
-- **Fix:** en el retry S51-C, construir un prompt mínimo: solo el módulo de producción ya escrito + instrucción directa de generar `tests/test_<paquete>.py`. Sin el SDD completo.
-- **Impacto esperado:** reducir el retry de ~3.5 min a ~1 min.
-
-#### S52-C — Verificación física en S51-C
-- **Síntoma:** S51-C verifica artifacts en memoria pero no en disco. Si los archivos del retry no se escriben al disco, run_tests falla igual.
-- **Fix:** después del retry de S51-C, verificar `(Path(directory) / "tests").glob("test_*.py")` físicamente. Si no hay archivos, intentar `_write_artifacts` explícitamente con el output del retry.
-
-#### S52-D — Flush de log para diagnóstico
-- **Fix:** agregar `logging.basicConfig(force=True)` con `stream=sys.stdout` y `flush=True` al inicio de `api.py` para asegurar que los `log.info/_write_artifacts` aparezcan en tiempo real en el log del engine.
-
-### Novedades S55 (2026-04-26) — rama `dev`
-
-- **S55-A:** `graph.py` — `_log_runner_response()` cambia `log.info` → `log.warning` para el diagnóstico principal de `done_reason`/`eval_count` y el reporte de fences encontrados. Ahora son visibles en el log del engine sin configuración adicional.
-- **S55-B:** `graph.py` — `_write_artifacts()` acepta `preserve_nonempty: bool = False`. Cuando `True`, si un archivo ya existe con contenido y el nuevo contenido está vacío o es <50% del original, se preserva el existente. Activo en paths S49-C y S49-A cuando `retry_feedback` está presente. Previene sobreescritura destructiva en rondas de retry por efecto "Lost in the Middle".
-- **S55-C:** `graph.py` — `_build_single_task_sdd_content()` inyecta hint `[S55-C]` con instrucción `round()` cuando la tarea es de tests (keywords: `test`, `pytest`, `unitari`, `spec`). Elimina float literals hardcoded → todos los asserts usan `round(peso / altura**2, 2)`.
-- **S55-D:** `graph.py` — `update_test_retry` S54-D cambia `log.info` → `log.warning` para el reporte de archivos en disco antes del retry.
-- **11 tests nuevos** en `test_s55.py`. **1051 tests pasan** (1 flaky pre-existente: `test_s31.py::test_cycle_start_ts_reciente`).
-- **Resultado ciclo validación S55:** `9d939f29` — **1m 35s** (vs 3m 47s en S54), **pytest exit 0** (primer éxito histórico), 7/7 tests PASS, 30k tokens (vs 120k en S54 = -75%), 0 retries, 4 archivos en disco. Todos los asserts con `round()` — sin float mismatch.
-
-### Novedades S67 (2026-04-27) — rama `dev`
-
-- **S67-B implementado:** `generate_sdd` — cap dinámico por complejidad del FR. `_TASK_CAPS = {low:5, medium:8, high:10, critical:12}`. Confirmado: `backend(15→8)` en ciclo b3de3b92 (high complexity).
-- **Ciclo validación S67 (b3de3b92):** 22m 4s, QA 60/100, 12 archivos en disco, 68,763 tokens. Primer ciclo con `directory` correcto → S65-A y S66-A activados.
-- **S65-A ✅ VALIDADO:** detectó 10 phantom imports con correcciones exactas (`→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'`).
-- **S66-A ✅ VALIDADO:** lista de módulos disponibles en disco + correcciones por import.
-- **S66-C ❌ BUG:** `retry_round=0` en ambas pasadas por `run_tests` → S66-C nunca activa. Fix en S68-A.
-- **Bug org_id:** `org_id` correcto es `ORG_OMAR_ROBLES` (no `"omar"`). Curl de prueba corregido en CLAUDE.md.
-- **3 bugs críticos para S68:** (A) `retry_round=0` impide S66-C; (B) `retry_feedback` no llega a agentes en retry; (C) `src/database.py` + `src/main.py` no en SDD.
-- **Ciclo validación S66 (34f25350):** 2m 10s (**-94% vs S65**), tokens 20k (**-97%**), QA 50/100. S66-B funcionó. `directory=''` porque `org_id` incorrecto.
-- **Telemetría acumulada (~51 ciclos):** QA promedio ~55%, 7 ciclos alta calidad (≥80, 14%), costo total $0.
-
-### Novedades S68 (2026-04-27) — rama `dev`
-
-- **S68-A:** `update_test_retry` — `_is_s65a_output` detecta `"[S65-A] IMPORTS ROTOS"` en `test_output` y preserva `last_test_error`. Corrige el bug donde `retry_round` siempre era 0 en S66-C.
-- **S68-B:** `_extract_import_corrections()` — extrae líneas `→ CORRECCIÓN:` del feedback S65-A e inyecta al inicio del HumanMessage (antes del SDD). Confirmado en log: 5/5 tareas inyectadas en todas las rondas.
-- **S68-C:** `_is_infra_task()` — separa tareas de infraestructura (`src/__init__.py`, `src/database.py`, `src/main.py`, `src/auth/dependencies.py`) del cap de complejidad. En `generate_sdd`: `infra + business[:MAX]`.
-- **S68-D:** `system_backend_python.md` — agregadas `format_rut()`, `require_valid_rut()`, regla de almacenamiento RUT en BD, UNIQUE constraint por (org_id, rut_limpio).
-- **16 tests nuevos** en `test_s68.py`. **1208 tests pasan** (suite principal).
-- **Ciclo validación S68 (33b0ed21):** 7m 49s (-77% vs S65), QA 60/100, tests FAIL. Bloqueador: `src/main.py` nunca generado por el SDD — `from src import app` falla con ImportError.
-
-### Novedades S70 (2026-04-27) — rama `dev`
-
-- **S70-A:** `session_create` dispara `asyncio.create_task(_run_graph_background(...))` inmediatamente antes del `return 201`. Grafo inicia sin esperar SSE (~43ms). Elimina el bloqueo donde ciclos quedaban `started` indefinidamente.
-- **S70-B:** `_ensure_fastapi_main_task()` — solo genera `include_router()` para módulos con `router.py` explícito en el SDD. Si no hay router.py en tareas → description dice "no importes módulos router que no estén definidos en el SDD".
-- **S70-C:** `run_tests` — detecta `import oracledb` en archivos del workspace (excluye test_*.py y conftest.py). Si detecta → agrega `sys.modules['oracledb'] = MagicMock()` al conftest.py antes de pytest. Validado en ciclo `0209baf4`.
-- **S70-D:** `system_backend_python.md` — regla "NUNCA importes desde el mismo módulo que estás escribiendo". Ejemplo explícito de auto-import circular prohibido.
-- **S70-E:** `system_backend_python.md` — regla JWT library única: `python-jose[cryptography]`. No mezclar con PyJWT.
-- **14 tests nuevos** en `test_s70.py`. **Tests S69 actualizados** (`test_s69a_descripcion_contiene_include_router` → `test_s69a_descripcion_contiene_entry_point`).
-- **Ciclo validación S70 (`0209baf4`):** ~10 min, QA 60/100, status=`completed`. S70-A/B/C/D/E validados. Bloqueador restante: `validate_rut` vs `validar_rut` naming inconsistency → ImportError → pytest exit 4.
-- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_s39::test_usa_cap_800_en_truncate` (obsoleto), `test_s47::test_dispatch_frontend_despacha_pendientes`.
-
-### Roadmap S71 — Próximo sprint
-
-#### S71-A — Nombres canónicos en inglés para funciones de utilidad (CRÍTICO)
-En `system_backend_python.md`, agregar tabla de nombres canónicos:
-- `validate_rut(rut: str) -> bool` en `src/utils/rut_validator.py`
-- `clean_rut(rut: str) -> str`
-- `format_rut(rut: str) -> str`
-- `is_prime(n: int) -> bool` en `src/utils/prime_validator.py`
-**Impacto esperado:** pytest exit 0.
-
-#### S71-B — Verificar cobertura de tareas SDD post-execute (ALTO)
-Después de `execute_agents`, verificar que cada `task.file` del SDD exista en disco. Si falta alguno → retry selectivo solo para ese agente y esa tarea.
-`_check_sdd_coverage(sdd, work_dir) -> list[str]` → archivos faltantes.
-
-#### S71-C — Fix `_ensure_cycle_registered` con tokens (ALTO)
-Ciclo queda `status='started'` aunque archivos fueron generados. `_ensure_cycle_registered` debe leer tokens desde el checkpoint del grafo y actualizarlos en BD.
-
-#### S71-D — Forzar Pydantic v2 en templates (MEDIO)
-Prohibir `@validator` en `system_backend_python.md`. Solo mostrar `@field_validator` + `@classmethod`.
-
-#### S71-E — `valor_total` con trigger Oracle (MEDIO)
-En `system_sdd.md`, agregar ejemplo de trigger Oracle para campos calculados automáticamente: `valor_total = SUM(benefits.valor)`.
-
-#### Ciclo de validación S71
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
-       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S71:** duración <10 min, QA ≥80, pytest exit 0, status=`completed`.
-
-### Novedades S69 (2026-04-27) — rama `dev`
-
-- **S69-A:** `_ensure_fastapi_main_task()` en `generate_sdd` — inyecta `TASK-INFRA-MAIN` si el FR menciona FastAPI y el LLM no incluyó `src/main.py`. Validado: src/main.py generado por primera vez.
-- **S69-B:** `system_sdd.md` — tabla VERIFICACIÓN OBLIGATORIA al inicio del template (posición 0%) con `src/main.py`, `src/database.py`, `src/auth/dependencies.py`. Combate "Lost in the Middle".
-- **S69-C:** `_validate_artifacts_imports` — auto-genera `src/main.py` mínimo cuando import roto es `src.main` y el archivo no existe en disco. Incluye `include_router()` para cada `router.py` detectado.
-- **13 tests nuevos** en `test_s69.py`. **1221 tests pasan** (suite principal).
-- **Ciclo validación S69 (e3888513):** 6m 54s (-12% vs S68), QA 95/100 (+58%), src/main.py generado ✅, sdd_compliance=True. Tests FAIL: `ModuleNotFoundError: oracledb` (nuevo error — ya no es `ImportError src.main`).
-- **Nota SSE:** El grafo S47-A solo inicia cuando se conecta al SSE. Sin conexión SSE, el ciclo queda `started`. Fix en S70-A.
-
-### Roadmap S70 — Próximo sprint
-
-#### S70-A — Iniciar grafo en session_create (CRÍTICO)
-En `session_create`, después de guardar el checkpoint inicial, disparar `asyncio.create_task(_run_graph_background(thread_id, config))` directamente. Elimina el requisito de SSE para iniciar la ejecución.
-
-#### S70-B — Router detection en _ensure_fastapi_main_task (ALTO)
-`src/main.py` importa `router.py` que no existe. En `_ensure_fastapi_main_task`, solo incluir `include_router()` para módulos que tienen `router.py` en el SDD. Si no hay router, usar import directo del service.
-
-#### S70-C — conftest.py con mock oracledb (ALTO)
-En `_ensure_python_infrastructure`, si detecta `oracledb` en database.py, crear/actualizar `conftest.py` con:
-```python
-import sys
-from unittest.mock import MagicMock
-sys.modules['oracledb'] = MagicMock()
-```
-Impacto esperado: pytest exit 0 sin Oracle instalado localmente.
-
-#### S70-D — Prohibir auto-import circular (ALTO)
-Agregar regla en `system_backend_python.md`: "NUNCA importes desde el mismo módulo que estás escribiendo. Los modelos ORM van en `models.py`, no en `service.py`."
-
-#### S70-E — Consistencia JWT library (MEDIO)
-Agregar regla: "Usa una sola librería JWT. Preferir `python-jose[cryptography]`."
-
-#### Ciclo de validación S70
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S70:** duración <8 min, QA ≥95, pytest exit 0, src/main.py ✅, grafo inicia sin SSE.
-
-### Roadmap S69 — COMPLETADO (2026-04-27)
-
-#### S69-A — Post-procesar SDD para inyectar src/main.py (CRÍTICO)
-
-En `generate_sdd`, después del parseo del JSON del LLM:
-```python
-def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
-    """S69-A: si el FR menciona FastAPI y no hay tarea para src/main.py, inyectarla."""
-    if not any(kw in fr_analysis.get("raw","").lower() for kw in ("fastapi","api rest","endpoint")):
-        return sdd
-    has_main = any("main.py" in (t.get("file","") + t.get("title","") + t.get("description","")).lower()
-                   for t in sdd.get("tasks", []))
-    if not has_main:
-        sdd["tasks"].insert(0, {
-            "id": "TASK-INFRA-MAIN", "agent": "backend",
-            "title": "Crear src/main.py con app FastAPI y todos los routers",
-            "description": "src/main.py con app = FastAPI(), include_router() para cada módulo del SDD",
-            "file": "src/main.py", "depends_on": [], "estimated_complexity": "low"
-        })
-        log.warning("S69-A: src/main.py inyectado como TASK-INFRA-MAIN")
-    return sdd
-```
-
-#### S69-B — QA contextual al SDD del ciclo (GAP-S56-A)
-
-QA score 60/100 persistente. El reviewer evalúa con el perfil del proyecto en vez del SDD del ciclo.
-Fix: pasar `sdd_json` al template `system_qa.md` como contexto primario.
-**Impacto esperado:** QA 60 → 75+.
-
-#### S69-C — Auto-generar src/main.py desde _validate_artifacts_imports
-
-Cuando S65-A detecta `from src.main import app ← módulo no existe` Y `src/main.py` no está en disco → generar un `src/main.py` mínimo con los routers detectados antes de lanzar el retry.
-
-#### Ciclo de validación S69
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S69:** duración <8 min, QA ≥70, pytest exit 0, src/main.py generado.
-
-### Roadmap S68 — COMPLETADO (2026-04-27)
-
-#### S68-A — Fix retry_round para S66-C (CRÍTICO)
-En `run_tests`, usar `last_test_error` para detectar import loop en lugar de `retry_round`:
-```python
-_retry_round_effective = 1 if "[S65-A] IMPORTS ROTOS" in state.get("last_test_error", "") else retry_round
-```
-
-#### S68-B — Propagar retry_feedback a agentes en retry (CRÍTICO)
-En `_build_single_task_sdd_content`, si `retry_feedback` contiene `→ CORRECCIÓN:`, inyectarlo al inicio del prompt.
-
-#### S68-C — Tareas infra obligatorias fuera del cap (CRÍTICO)
-En `system_sdd.md`: `src/database.py` y `src/main.py` son tareas obligatorias para backend Python, NO cuentan contra el cap de complejidad.
-
-#### S68-D — Completar clean_rut + format_rut en backend_python.md (ALTO)
-Agregar implementaciones completas en la tabla de RUTs.
-
-#### Ciclo de validación S68
-
-```bash
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-**Métricas objetivo S68:** duración <15 min, QA ≥70, pytest exit 0, S66-C activa.
-
-### Roadmap S67 — COMPLETADO (2026-04-27)
-
-#### Acción inmediata: reiniciar engine con S67-B y lanzar ciclo CORRECTO
-
-```bash
-# 1. Limpiar entrega anterior
-rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/
-rm -f  /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
-
-# 2. Iniciar engine con S66+S67-B activos
-cd /Users/omarrobles/Workspace/Proyectos\ Personales/agente\ de\ terminal/ovd-platform/src/engine
-set -a && source <(grep -v '^#' .env | grep '=' | sed 's/ *#.*//') && set +a
-env ANTHROPIC_API_KEY="" .venv/bin/uvicorn api:app --port 8001
-
-# 3. Lanzar ciclo — SIEMPRE incluir project_id (sin esto, código va a tmpdir)
-SECRET=$(grep OVD_SECRET .env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST http://localhost:8001/session \
-  -H "Content-Type: application/json" \
-  -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
-```
-
-#### S67-A — Validar S66-A corrección de imports (crítico)
-- **Target:** el agente recibe `→ CORRECCIÓN: usa 'from src.auth.utils import validate_rut'` y en ronda 1 corrige el import. `run_tests` pasa a ejecutar pytest real.
-- **Métrica:** ciclo completa sin import loop. QA ≥ 70/100.
-
-#### S67-B — Validar S66-C shortcut (crítico)
-- **Target:** si import loop persiste en ronda 1, `Command(goto=generate_docs)` debe disparar. Duración < 20 min (vs 34 min en S65).
-- **Métrica:** log muestra `S66-C import loop detectado (ronda=1)`.
-
-#### S67-C — Fix phantom router imports en main.py (alto)
-- **Síntoma:** `src/main.py` siempre importa `from src.auth.router import router` y `from src.contracts.router import router` aunque ningún agente genere `router.py`.
-- **Fix:** En `system_backend_python.md` agregar regla: "main.py solo importa routers que TÚ generas. Si no hay router.py en el SDD, NO lo importes."
-- **Alternativa:** S65-A detecta el phantom en main.py → S66-A sugiere omitirlo.
-
-#### S67-D — Actualizar línea base de ciclos
-| Sprint | Ciclo | Duración | QA | Tests | Tokens in |
-|--------|-------|----------|----|-------|-----------|
-| S55 | `9d939f29` | 1m 35s | 65 | exit 0 | 30k |
-| S65 | `bc5bcba1` | 34m 4s | 65 | 0/2 (col. error) | 687k |
-| **S67 objetivo** | — | **<20 min** | **≥70** | **exit 0** | **~200k** |
-
-### Roadmap S56 — Próximo sprint
-
-#### S56-A — QA contextualizado al FR del ciclo (crítico)
-- **Síntoma:** QA score 65/100 persistente — el reviewer compara código IMC vs SDD del proyecto "contratos" (Oracle + RUT). `sdd_compliance=False` aunque el código implementa correctamente el FR.
-- **Fix:** En `qa_review`, pasar el SDD generado en el ciclo como contexto primario, no el perfil del proyecto legacy. El reviewer debe evaluar: ¿el código implementa *este* SDD?
-- **Impacto esperado:** QA 65 → 80+, `sdd_compliance=True`.
-
-#### S56-B — log.info → log.warning en nodos de flujo
-- **Síntoma:** `run_tests`, `qa_review`, `deliver` logs invisibles en engine log. Solo visibles vía SSE.
-- **Fix:** Elevar logs de diagnóstico clave a `log.warning()` o aplicar S52-D (basicConfig force=True nivel INFO).
-- **Impacto:** Diagnóstico completo offline sin dashboard.
-
-#### S56-C — Filtrar constraints del proyecto que no aplican al FR
-- **Síntoma:** SDD agrega constraints Oracle (`FETCH FIRST`, `python-oracledb thick`) a un FR de IMC puro.
-- **Fix:** En `generate_sdd`, filtrar constraints del perfil del proyecto si el FR no menciona BD.
-
-#### S56-D — Reducir tokens por tarea en SDD multi-tarea
-- **Síntoma:** `prompt_eval_count` crece de 6062 → 9415 entre tarea 1 y 4 en el mismo ciclo.
-- **Fix:** Incluir solo requirements relevantes a cada tarea en `_build_single_task_sdd_content`.
-- **Impacto esperado:** -20-30% tokens por tarea en SDDs con >4 tareas.
-
-### Línea base temporal de ciclos
-
-| Sprint | Ciclo | Duración | QA | Tests en disco | run_tests | Tokens in |
-|--------|-------|----------|----|----------------|-----------|-----------|
-| S48 | — | ~56 min | — | no | skip | — |
-| S49 | `232f864e` | 1m 18s | 65 | no | skip | ~156k |
-| S50 | `4cf452ca` | 1m 17s | 65 | no | skip | ~156k |
-| S51 | `8f04d629` | 5m 04s | 65 | **sí** | **exit 2** | 120k |
-| S54 | `4e2f7663` | 3m 47s | 65 | sí | exit 2 | 120k |
-| **S55** | `9d939f29` | **1m 35s** | **65** | **sí** | **exit 0** | **30k** |
-| S56 objetivo | — | ~1m 20s | **80+** | sí | exit 0 | ~25k |
-
-### Novedades S51 (2026-04-25) — rama `dev`
-
-- **S51-A:** `graph.py` S39-D loop — detección de tarea de tests por keywords (`test`, `pytest`, `spec`, `unitari`). Inyecta `[PRIORIDAD MÁXIMA — S51-A]` al inicio del `task_sdd_content`. El LLM recibe la instrucción antes que cualquier otro contexto.
-- **S51-B:** `system_backend.md` — ítem 5 obligatorio en ORDEN DE ESCRITURA: `tests/test_<paquete>.py`. Texto explícito: "PROHIBIDO entregar sin `tests/test_<paquete>.py`."
-- **S51-C:** `graph.py` S39-D loop — después de todas las tareas, verifica si el SDD tenía tarea de tests pero ningún `test_*.py` está en `all_artifacts`. Si detecta ausencia, hace un retry automático con `[PRIORIDAD MÁXIMA — S51-C SEGUNDO INTENTO]`. El retry refresca el contexto del proyecto (incluye archivos ya escritos).
-- **Fix `.env`:** `ANTHROPIC_API_KEY` separado del comentario inline. Comentario movido a línea propia.
-- **11 tests nuevos** en `test_s51.py`. **1040 tests pasan** (0 fallos nuevos; `test_s31.py::test_cycle_start_ts_reciente` flaky pre-existente).
-- **Resultado ciclo validación S51:** `8f04d629` — 5m 04s, S51-C disparó, `tests/test_imc.py` generado (8 casos con floats correctos), pytest exit 2 por ImportError (src/ vacío).
-
-### Línea base temporal de ciclos
-
-| Sprint | Ciclo | Duración | QA | Tests en disco | run_tests |
-|--------|-------|----------|----|----------------|-----------|
-| S48 | — | ~56 min | — | no | skip |
-| S49 | `232f864e` | 1m 18s | 65 | no | skip |
-| S50 | `4cf452ca` | 1m 17s | 65 | no | skip |
-| S51 | `8f04d629` | 5m 04s | 65 | **sí** | **exit 2** |
-| S52 | — | objetivo: ~2.5 min | objetivo: 75+ | sí | objetivo: exit 0 |
-
-### Novedades S50 (2026-04-25) — rama `dev`
-
-- **S50-A:** `_run_agent_with_tools` — en los paths S49-A (iter=0, sin tool_calls) y S49-C (Ollama directo), llama `_write_artifacts(output, directory)` si el runner retorna `artifacts=[]` y `output` no vacío. Permite que `run_tests` detecte archivos en disco durante `execute_agents`.
-- **S50-B:** `deliver` — deduplicación de artefactos por path con `seen_paths` dict. Elimina duplicados generados por S39-D (N tareas × runner = mismo archivo N veces). S49 reportaba 13 archivos, S50 reporta 4 únicos.
-- **S50-C:** `system_backend.md` — sección Pydantic v2 obligatorio con `@field_validator` + `@classmethod`. Marca `@validator` como DEPRECADO. Etiqueta S50-C.
-- **S50-D:** `system_backend.md` — regla floats con ejemplos explícitos: `round(65/1.72**2, 2) → 21.97` (no 22.35). Previene valores hardcodeados incorrectos en tests.
-- **12 tests nuevos** en `test_s50.py`. **1029 tests pasan** (0 fallos nuevos).
-- **Resultado ciclo validación S50:** `4cf452ca` — 1m 17s, 4 archivos únicos, Pydantic v2 respetado, floats correctos, sin tests en disco.
-
-### Novedades S49 (2026-04-25) — rama `dev`
-
-- **S49-A:** `_run_agent_with_tools` — switch inmediato a runner cuando `iter=0` y `tool_calls=[]`. Evita el overhead S30-B (parse markdown) para modelos que nunca usan tools
-- **S49-B:** `system_sdd.md` — límite estricto de **5 tareas por agente** (antes 6-7). Justificación explícita: 18 tareas = 56 min, 5 tareas = ~1.5 min
-- **S49-C:** Detección de modelos Ollama en `_run_agent_with_tools` via `stack_routing='ollama'` + heurística de nombre de modelo (`_looks_like_ollama_model`). Salta `bind_tools` directamente al runner
-- **Helpers nuevos:** `_get_chat_ollama_class()` + `_looks_like_ollama_model()` en `graph.py`
-- **Fix tests:** `test_graph_routing.py` + `test_regression_sprint.py` — usar `monkeypatch.setattr(graph, '_SECURITY_MIN_SCORE', 70)` para tests de retry de seguridad (roto por S48-A bypass)
-- **15 tests nuevos** en `test_s49.py`. **1017 tests pasan** (0 fallos nuevos)
-- **Resultado ciclo validación:** duración **1m 18s** (vs ~56 min en S48), 5 tareas SDD, 12 archivos reales generados, 9/10 tests PASS
-
-### Novedades S48 (2026-04-25) — rama `dev`
-
-- **S48-A:** `security_audit` — bypass completo cuando `OVD_SECURITY_MIN_SCORE=0` (retorna `passed=True, score=100` sin llamar al LLM). Antes tardaba 20+ min antes de timeout
-- **S48-B:** `system_sdd.md` — sección "Contrato de interfaces compartidas" para prevenir `ImportError` entre agentes por nombres de clase inconsistentes
-- **S48-C:** `_run_agent_with_tools` — log `WARNING` cuando `iter=0` y `tool_calls=[]` (diagnóstico de que qwen3-coder:30b nunca usa tools)
-- **S48-D:** `_run_graph_background` — log del nodo de fallo en el bloque `finally`
-- **Fix DB:** `ALTER TABLE ovd_refresh_tokens ADD COLUMN IF NOT EXISTS revoked_reason TEXT` — crash del engine durante JWT refresh
-
-### Novedades S47 (2026-04-25) — rama `dev`
-
-- **S47-A:** `api.py` — background `asyncio.Task` para el grafo. El grafo corre independiente del SSE → sobrevive desconexión del cliente
-- **S47-B:** Registro temprano de ciclos — `status='started'` al crear sesión, `status='failed'` si muere antes de deliver, `status='completed'` en deliver (UPSERT)
-- **Migración BD:** `ALTER TABLE ovd_cycles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'started'` + `CREATE UNIQUE INDEX ... ON ovd_cycles(thread_id)`
-
-### Novedades S40 (2026-04-23) — rama `dev` (pendiente de commit)
-
-#### S40-templates — Mejoras de calidad en 3 templates
-- **S40-A `system_sdd.md`:** Regla explícita: máx 6-7 tareas por agente, prohibición de tareas scaffold-only (con ejemplos ❌/✅), tarea de tests unitarios obligatoria por agente, hooks deben quedar integrados en el SDD
-- **S40-B `system_backend.md`:** Nueva sección "Validación de RUT chileno" con implementación de referencia completa (`validate_rut`, `clean_rut`, `format_rut`, `require_valid_rut`), reglas de almacenamiento (sin puntos ni guión), UNIQUE constraint por org_id, casos de test obligatorios
-- **S40-C `system_frontend.md`:** Nueva sección "Tests Vitest obligatorios" (estructura `.test.tsx`, mínimo 2 tests por componente) + regla "Hooks — integración obligatoria" (hook sin usar = bug) + nota RUT en UI
-- **Documentado en:** `docs/TEMPLATE_IMPROVEMENTS_S40.md`
-- **Impacto esperado:** QA score ≥80/100 (era 62), SDD compliance True (era False), test files ≥1 por agente (era 0)
-
-#### Nivel1-E — Fix security bypass (`graph.py`)
-- **Bug:** `OVD_SECURITY_MIN_SCORE=0` nunca activaba el bypass porque el código chequeaba `_SECURITY_MIN_SCORE > 0` (0 > 0 = False) → security retry loop siempre se ejecutaba en dev
-- **Fix:** Cambiado a `if _SECURITY_MIN_SCORE == 0: passed = True` en `route_after_security_audit`
-- **Efecto:** Con `OVD_SECURITY_MIN_SCORE=0` en `.env`, la auditoría de seguridad ya no bloquea ni genera retry loops en dev
-
-#### Ajustes `.env` (dev)
-- `OVD_MODEL=qwen3-coder:30b` — tag explícito requerido (bare name `qwen3-coder` no resuelto por Ollama)
-- `OVD_SSE_STREAM_TIMEOUT_SECS=3600` — aumentado desde 900s → 1800s → 3600s (ciclos con retry loops duraban >30 min)
-- `OVD_NODE_TIMEOUT_SECS=1200` — 1200s por nodo (Nivel1-B)
-- `OVD_LLM_TIMEOUT_SECS=1200` — 1200s LLM (Nivel1-B)
-
-#### Ciclos de validación S40 (resultados)
-- `a2c87c99` — pre-fix: QA 62/100, SDD compliance False, 0 test files, hooks sin integrar
-- `974da8c2` — timeout SSE 900s durante agents
-- `d6bac9e5` — timeout SSE 1800s por security retry (Nivel1-E no aplicado aún)
-- `128b19c9` — cancelado heartbeat 30min (agente backend colgado en nodo agents)
-- **Pendiente:** relanzar ciclo con todos los fixes activos (Nivel1-E + SSE 3600s + S40-templates)
-
-### Novedades S38 (2026-04-22) — rama `dev`
-- **async tool invocation (S38-A):** `_run_agent_with_tools` ahora usa `await tool_fn.ainvoke(args)` con fallback a `tool_fn.invoke(args)` cuando lanza `NotImplementedError`. Fix para context7 `StructuredTool` que fallaba con "does not support sync invocation" en ciclos con research web.
-- **QA truncation 12k→20k (S38-B):** `qa_review` trunca `agent_output` a 20000 chars (antes 12000). Con 3 agentes (database+backend+frontend) generando ~6K cada uno, el output total (~18K) se cortaba, perdiendo código del agente frontend del análisis de QA.
-- **10 tests nuevos** en `test_s38.py`. **764 tests pasan** (0 fallos).
-
-### Novedades S37 (2026-04-22) — rama `dev`
-- **audit_logger bigint fix (S37-A):** El INSERT en `ovd_audit_log` pasaba `str(uuid.uuid4())` para la columna `id` (que es `bigint` con `nextval` sequence). Fix: remover `id` del INSERT, dejar que la BD lo genere automáticamente. Error visible en logs: `invalid input syntax for type bigint: "887ba5d8-..."`.
-- **RAG-02 ruta absoluta (S37-B):** `_generate_delivery_report` retornaba `report_name` (solo nombre del archivo) en vez de `str(report_path)` (ruta absoluta). `_index_delivery_report` no podía encontrar el archivo. Fix: `return str(report_path)`. Error visible en logs: `RAG-02: error indexando informe de entrega — Ruta no encontrada: ovd-delivery-*.md`.
-- **7 tests nuevos** en `test_s37.py`. **754 tests pasan** (0 fallos).
-- **Ciclo `474f6d72` — validación exitosa:** Security 100/100, QA 68/100, **Tests 28/28 PASSED** ✅. S36-A (Issues: 10 en vez de 1548) y S36-B (valores float correctos calculados con `round()`) validados en producción.
-
-### Novedades S36 (2026-04-22) — rama `dev`
-- **QA Issues: 1548 fix (S36-A):** `QAReviewOutput` ahora tiene `@field_validator("issues", "missing_requirements", "code_quality_issues", mode="before")` que convierte un `str` en `list[str]` partiendo por líneas, sin iterar caracteres. Causa raíz: Pydantic v2 coerciona `str` → `list[str]` iterando char a char cuando el LLM retorna el campo como texto libre.
-- **Float test values fix (S36-B):** `system_backend.md` ahora incluye sección "Regla de valores numéricos en tests" con instrucción explícita: NUNCA escribir valores float de memoria, verificar con `round()` antes de escribir el test. Ejemplo: `round(53.4 / 1.70**2, 2)` = `18.48` (no `18.49`). Evita el loop infinito donde tests siempre fallan por valores incorrectos.
-- **13 tests nuevos** en `test_s36.py`. **747 tests pasan** (0 fallos).
-
-### Novedades S35 (2026-04-22) — rama `dev`
-- **Dashboard persiste proyecto seleccionado (S35):** `FrLauncher.tsx` ahora inicializa `selectedProject` desde `localStorage('ovd_last_project')`. Si no hay valor guardado o el proyecto ya no existe, auto-selecciona el primer proyecto de la lista. Cada cambio de proyecto actualiza localStorage. Evita lanzar ciclos sin `project_id` (lo que causaba `directory=""` y `run_tests` usando tmpdir en vez del workspace real).
-- **Warning en API cuando `directory` vacío:** `session_create` loguea un warning explícito cuando `resolved_directory=""` después de todos los lookups. Facilita diagnóstico en logs del engine.
-- **Causa raíz documentada:** El ciclo `ef3ebab7` fue lanzado sin seleccionar proyecto → `project_id=""` → lookup DB no ocurrió → `directory=""` → `run_tests` creó tmpdir (`ovd_tests_hqvg00o0`) → "Sin test files encontrados" aunque el agente sí había escrito en el workspace real.
-
-### Novedades S34 (2026-04-22) — rama `dev`
-- **Detección de error repetido (S34-A):** `update_test_retry` compara los `AssertionError` del round actual con los del round anterior (via `_extract_assert_errors`). Si el mismo error aparece dos veces, agrega al feedback: "⚠️ MISMO ERROR POR SEGUNDA VEZ — revisa la fórmula matemática desde cero. El valor esperado ES correcto." Evita que el agente haga ajustes superficiales cuando la lógica es fundamentalmente incorrecta.
-- **Extracción de bloque de test fallido (S34-B):** `_extract_failed_test_blocks` parsea el output `--tb=long` y extrae hasta 3 bloques `FAILED test_name / def test_... / E   assert X == Y`. El bloque se incluye al inicio del retry_feedback para que el agente vea exactamente qué función se llama y con qué valores, sin buscar en 200 líneas de output.
-- **14 tests nuevos** en `test_s34.py`. **734 tests pasan** (0 fallos).
-
-### Fix dashboard GRAPH_NODES (2026-04-22) — rama `dev`
-- **Bug:** `request_approval` estaba en posición 7 de `GRAPH_NODES` (después de `run_tests`), pero en el grafo real dispara en posición 3 (después de `generate_sdd`). La lógica `node_end` activa automáticamente el nodo `idx+1`, por lo que cuando el SDD se auto-aprobaba, `generate_docs` aparecía como spinning simultáneamente con `agents`.
-- **Fix:** Reordenado `GRAPH_NODES` en `FrLauncher.tsx` para reflejar el flujo real: `generate_sdd → request_approval → route_agents → agents → ... → run_tests → generate_docs → deliver`. Label cambiada de "Aprobación" a "Aprobar SDD" para mayor claridad.
-
-### Novedades S33 (2026-04-22) — rama `dev`
-- **`update_test_retry` instrucción no modificar tests (S33-A):** El feedback de retry ahora incluye "⚠️ INSTRUCCIÓN CRÍTICA: Los tests son la especificación correcta y NO deben modificarse. Solo corrige la IMPLEMENTACIÓN (archivos en src/)." — evita que el agente modifique tests en rondas de retry, lo que causaba regresión (más fallos en round 3 que en round 1).
-- **`run_tests` extracción de AssertionError (S33-B):** Cuando pytest retorna exit 1 (fallos lógicos), extrae líneas con `AssertionError` y líneas `assert X == Y` del output y las prepende como `[DIAGNÓSTICO S33-B]`. El agente recibe los fallos de aserción exactos al inicio del retry_feedback, no enterrados en 200 líneas de output.
-- **`run_tests` --tb=long en retry (S33-C):** El primer round usa `--tb=short` (más compacto). Rondas de retry (`retry_round > 0`) usan `--tb=long` para dar contexto completo del fallo al agente. Mejora el diagnóstico cuando el agente necesita entender la causa raíz de un fallo de aserción.
-- **15 tests nuevos** en `test_s33.py`. **720 tests pasan** (0 fallos).
-
-### Novedades S32 (2026-04-22) — rama `dev`
-- **`run_tests` pytest target logic refinada (S32-A):** 3 casos según disponibilidad de test files: (1) hay tests nuevos del ciclo → ejecutar solo esos (S31-C); (2) solo hay tests pre-existentes (proyecto real clonado) → ejecutar `work_dir` completo; (3) sin ningún test file → skip graceful `passed=True` con warning. Corrige regresión donde S31-C hacía skip de tests de proyectos reales.
-- **`system_backend.md` orden de escritura (S32-B):** Sección de infraestructura obligatoria ahora incluye etiquetas `← PRIMERO / SEGUNDO / TERCERO / CUARTO` y texto explícito "Solo después escribe el código de negocio". Fuerza al agente a escribir `src/<paquete>/__init__.py` antes que cualquier módulo Python.
-- **`run_tests` diagnóstico ImportError (S32-C):** Cuando pytest retorna exit 4 (error de colección), extrae líneas con `ImportError`, `ModuleNotFoundError` o `attempted relative import` del output y los prepende como `[DIAGNÓSTICO S32-C]` con instrucción de solución. Este diagnóstico queda en `retry_feedback` para que el agente corrija la estructura en el siguiente round.
-- **16 tests nuevos** en `test_s32.py`. **705 tests pasan** (0 fallos). Tests S22 (`timeout`, `runner_not_installed`) actualizados para crear test files reales en tmpdir (requerido por S32-A).
-
-### Novedades S31 (2026-04-22) — rama `dev`
-- **Filtro mtime en `qa_review` y `security_audit` (S31-A):** Solo se leen archivos con `mtime >= cycle_start_ts - 5s`. Evita que archivos de ciclos anteriores contaminen el scoring de QA o la auditoría de seguridad en workspaces compartidos.
-- **Cap de `retry_feedback` (S31-B):** `update_test_retry` y `update_qa_retry` truncan el feedback acumulado a 3000 caracteres antes de pasarlo al agente. Previene la explosión de contexto (hasta 48K tokens) en la 3ª ronda de reintentos.
-- **`run_tests` test isolation por mtime (S31-C):** Cuando `cycle_start_ts` está disponible, pytest recibe como target solo los `test_*.py` con mtime del ciclo actual, no el `work_dir` completo. Evita que pytest recoja tests de ciclos anteriores acumulados en el workspace.
-- **9 tests nuevos** en `test_s31.py`. **696 tests pasan** (0 fallos).
-
-### Novedades S30 (2026-04-22) — rama `dev`
-- **`write_file` dirname guard (S30-A):** `dir_path = os.path.dirname(abs_path); if dir_path: os.makedirs(dir_path, exist_ok=True)` — evita `FileNotFoundError` cuando el agente escribe un archivo sin directorio (e.g. `"main.py"` sin ruta).
-- **Warning en tool failure (S30-B):** `_run_agent_with_tools` captura errores de tool calls y emite `log.warning` con nombre de tool y agente. Facilita diagnóstico sin romper el ciclo.
-- **Instrucción de subdirectorios (S30-C):** El `human_content` enviado a cada agente incluye: "IMPORTANTE: Organiza los archivos en subdirectorios apropiados (ej: src/app/components/). NO uses rutas planas sin directorio." Reduce archivos escritos en raíz del workspace.
-- **Compresión de mensajes (S30-D):** Loop de tool-calling mantiene solo system + human + últimos 8 mensajes (`_MAX_HIST=8`). Previene acumulación de 48K+ tokens en conversaciones largas con múltiples tool calls.
-- **`cycle_start_ts` en estado (S30-E):** `OVDState` incluye `cycle_start_ts: float` inicializado con `time.time()` al crear el ciclo. Usado por S31-A y S31-C para filtrar artefactos por timestamp.
-- **11 tests nuevos** en `test_s30.py`. **687 tests pasan** (0 fallos).
-
-### Novedades S28 (2026-04-22) — rama `dev`
-- **`system_sdd.md` regla de agentes (S28-A):** Tabla explícita que mapea tipo de tarea → agente correcto. `devops` EXCLUSIVAMENTE para Dockerfile/CI/CD/Kubernetes. Para Python puro → solo `backend`. Prohibición explícita de asignar código de aplicación a `devops`. Elimina la contaminación de 2 agentes escribiendo el mismo archivo.
-- **`run_tests` exit codes pytest (S28-C):** Eliminado conflicto `-v`/`-q` en el comando pytest. Nuevos warnings diferenciados: exit 5 = "0 tests encontrados, verificar convención test_*.py", exit 4 = "error de colección (SyntaxError/ImportError)", exit 2 = "ejecución interrumpida". Lista de archivos .py en workspace incluida en el warning de exit 5.
-- **S28-B descartado** (workspace cleanup): riesgo de borrar código preexistente del proyecto. La raíz real era S28-A.
-- **9 tests nuevos** en `test_s28.py`. **666 tests pasan** (0 fallos).
-
-### Novedades S27 (2026-04-22) — rama `dev`
-- **`run_tests` conftest.py injection (S27-A):** Si `conftest.py` en la raíz del workspace está vacío o no existe, `run_tests` lo inyecta automáticamente con `sys.path.insert(0, "src")`. No sobreescribe si ya tiene contenido. Elimina el bloqueo de QA por conftest vacío.
-- **`audit_logger` JSON fix (S27-B):** El campo `metadata` (JSONB) se pasaba como `dict` Python → `cannot adapt type 'dict'`. Fix: `json.dumps({...})`. Eventos `session_created` y `cycle_completed` ahora se graban correctamente en BD.
-- **`_index_delivery_report` sys.path fix (S27-C):** `from knowledge import bootstrap` fallaba porque `src/` no estaba en sys.path. Fix: insertar `sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))` antes del import. Informes de entrega ahora se indexan en RAG.
-- **`system_qa.md` cláusula infraestructura (S27-D):** QA ya no marca `sdd_compliance=False` por diferencias menores en archivos de infraestructura (conftest.py vacío vs con contenido) ni por tener más tests que los especificados en el SDD.
-- **9 tests nuevos** en `test_s27.py` — conftest injection (3 casos), audit_logger JSON, RAG-02 sys.path, QA template.
-- **657 tests pasan** (0 fallos).
-
-### Novedades S26 (2026-04-22) — rama `dev`
-- **`system_backend.md` fix (S26-A):** Prohibición explícita de `__init__.py` en la raíz del workspace. Estructura correcta: `src/<paquete>/` + `conftest.py` con `sys.path.insert(0, "src")`. Ejemplo visual de ✅ vs ❌ estructura.
-- **`run_tests` cwd + flags (S26-B):** `cwd=work_dir` para todos los runners (antes solo vitest/cargo). Nuevos flags: `--rootdir={work_dir}` y `--import-mode=importlib` → resuelve `ImportError: attempted relative import with no known parent package`.
-- **`security_audit` filesystem-first (S26-C):** Mismo patrón S24-C de qa_review — lee archivos del workspace en vez de depender de `output`. Elimina el problema de "No se proporcionó código" en el flujo tool-calling.
-- **9 tests nuevos** en `test_s26.py` — template, run_tests flags/cwd, security_audit filesystem.
-- **648 tests pasan** (0 fallos).
-
-### Novedades S25 (2026-04-22) — rama `dev`
-- **`run_tests` usa `sys.executable` (S25-A):** en vez de `"python"` (no en PATH en macOS), usa el intérprete del venv del engine → pytest 9.0.3 disponible. Validado: 10 tests recolectados y ejecutados, loop de retry 3 rondas funcional.
-- **Diagnóstico validado S23+S24:** reimport `sys` en `graph.py` (no estaba importado). Engine **sin `--reload`** → reiniciar manualmente después de cada cambio de código.
-- **Resultado ciclo de validación S25:** Security 100/100, QA 95/100 (round 1), run_tests ejecuta pytest real, retry loop funcional. Tests fallan por estructura de agente (`__init__.py` raíz con import relativo) — issue pendiente en template `system_backend.md`.
-
-### Novedades S24 (2026-04-22) — rama `dev`
-- **`_scan_workspace_artifacts()`:** nueva función — escanea el workspace por archivos de código cuando `written_files[]` queda vacío por bug en tracking de tool calls. Excluye `__pycache__`, `node_modules`, `.md`, `.DS_Store`, `ovd-delivery-*`.
-- **`_detect_test_runner()` filesystem-first (S24-B):** busca `test_*.py`/`*.test.ts`/`*.rs` en disco directamente antes de revisar artifacts[] u output. Ignora `__pycache__` y `.venv` en el rglob.
-- **`qa_review` filesystem-first (S24-C):** cuando `directory` está seteado, lee TODOS los archivos `.py/.ts/.sql/etc.` del workspace directamente, sin depender de `artifacts[]` ni `output`. Evita el score bajo por "main.py vacío" que ocurría en S23.
-- **`deliver` S24-A fallback:** cuando `existing_arts=[]` y `agent_output=""`, llama `_scan_workspace_artifacts()` para recuperar los archivos que el agente escribió pero no registró.
-- **Logging S24-D:** `log.info` en `_run_agent_with_tools` (written_files, artifacts finales) y en `run_tests` (directory, artifacts por agente, runner detectado).
-- **639 tests pasan** (0 fallos)
-
-### Diagnóstico confirmado S24 (para referencia futura)
-- **Causa raíz artifacts=[]:** `tool_result` de `write_file` puede no ser `str` puro con algunos wrappers de LangChain/Ollama → `isinstance(tool_result, str)` falla silenciosamente → `written_files=[]` → `artifacts=[]`.
-- **Efecto cascada:** `run_tests` no detecta tests (runner=none), `qa_review` ve output vacío (score bajo), `deliver` reporta files=0 aunque los archivos SÍ estén en disco.
-- **Fix:** filesystem-first en todos los nodos que necesitan saber qué archivos existen.
-
-### Novedades S23 (2026-04-22) — rama `dev`
-- **`deliver` S23-A:** usa `artifacts[]` directamente cuando el agente escribió con tool calling (no re-parsea output vacío)
-- **`_detect_test_runner` S23-B:** busca en artifacts[], output fences y filesystem glob
-- **`qa_review` S23-C:** lee archivos del disco via artifacts+directory cuando output=""
-- **`system_backend.md` S23-D:** sección "Infraestructura obligatoria para proyectos Python" (`__init__.py`, `pytest.ini`, `conftest.py`) — ahora el SDD genera 4 req + 5 tareas incluyendo infraestructura
-- **Correcciones:** `factories.make_agent_result` artifacts=[] (era formato incorrecto), `test_s12_api_v1` mock row sin columna oracle_involved obsoleta
-
-### Novedades S22 (2026-04-21) — rama `dev`
-- **Nodo `run_tests`:** detecta runner (pytest/vitest/cargo), ejecuta con timeout 60s, retry loop máx 2 rondas antes de continuar
-- **Security scan CLI:** helpers `_run_security_scans` + `_exec_scan_tool` — semgrep, gitleaks, pip-audit — activado con `OVD_SECURITY_SCAN_ENABLED=true` (default: false)
-- **Nodo `generate_docs`:** genera README/OpenAPI/ADR/CHANGELOG según tipo de FR; falla gracefully (generated_docs=[] si LLM falla)
-- **Template `system_docs.md`:** `src/engine/templates/system_docs.md` — nuevo template para el documentador
-- **SSE events nuevos:** `test_results` y `generated_docs` emitidos en el stream; ambos incluidos en el evento `done`
-- **Dashboard:** 2 nodos nuevos en `GRAPH_NODES` (`Ejecutar tests`, `Generar docs`) + aliases en `NODE_ALIAS`
-- **Grafo actualizado:** `qa_review → run_tests → generate_docs → deliver` (antes: `qa_review → deliver`)
-- **Tests S22:** 23 tests nuevos en `test_s22_run_tests.py`, `test_s22_security_scan.py`, `test_s22_generate_docs.py`
-
-### Novedades S21 (sesión anterior)
-- **Nodo `describe_image`:** visión multimodal para wireframes/mockups adjuntos al FR
-- **Dashboard approval panel:** feedback textarea, acción `revise`, adjunto de archivo, contador de revisiones, exportar SDD
-- **Documentación automática:** analizado y planificado (implementado en S22)
-
-### Novedades S19 (2026-04-17)
-- **Tests Block C (frontend):** Vitest — `Approval.test.tsx` y `Telemetry.test.tsx` corregidos (34 tests pasando)
-- **Tests Block D (Docker smoke):** `src/engine/tests/test_docker_smoke.py` — 5 tests `@pytest.mark.docker` con lifecycle completo
-- **Tests Block E (Rust inline):** `#[cfg(test)]` en `workspace.rs`, `auth.rs`, `config/mod.rs` — 26 tests
-- **CORS:** `CORSMiddleware` en `src/engine/api.py` — configurable vía `OVD_CORS_ORIGINS`
-- **RAG multi-provider:** `src/engine/rag.py` — switch `OVD_RAG_EMBEDDING_PROVIDER=openai|ollama`
-- **`docs/ROADMAP.md`:** actualizado a v0.9.0-quality-docs
-
 ## RAG
 
 - **Estado:** activo (`OVD_RAG_ENABLED=true`)
-- **Modelo embeddings dev:** `nomic-embed-text` vía Ollama local (`OVD_RAG_EMBEDDING_PROVIDER=ollama`)
-- **Modelo embeddings prod:** `text-embedding-3-small` vía OpenAI (`OVD_RAG_EMBEDDING_PROVIDER=openai`)
-- **Implementación:** directo en pgvector sin Bridge (`src/engine/rag.py`)
-- **Bootstrap OVD Platform:** 1617 chunks indexados (docs/ + src/engine/ + CLAUDE.md)
-- **Auto-index post-ciclo:** `_index_delivery_report` en graph.py llama a knowledge.bootstrap
-- **Nota:** PostgreSQL (`postgres_db`) no tiene restart policy — hay que levantarlo manualmente si Docker Desktop se reinicia: `docker start postgres_db`
+- **Embeddings dev:** `nomic-embed-text` vía Ollama
+- **Embeddings prod:** `text-embedding-3-small` vía OpenAI
+- **Bootstrap:** 1617 chunks (docs/ + src/engine/ + CLAUDE.md)
+- **Auto-index:** `_index_delivery_report` en graph.py post-ciclo
 
-## Knowledge externa (S18)
+## Knowledge externa
 
-- **ui-ux-pro-max:** `src/knowledge/ui-ux/` — guías de diseño UI/UX consultadas en runtime por agente frontend vía BM25 search (`template_loader.query_ui_context()`). Actualizar: `./scripts/update-skills.sh`
-- **superpowers-upstream:** `src/knowledge/superpowers-upstream/` — copia local de obra/superpowers para comparar diffs. Los 6 skills integrados viven en los templates del engine. Actualizar: revisar diff con `scripts/update-skills.sh` y editar templates manualmente.
+- `src/knowledge/ui-ux/` — guías UI/UX para agente frontend (BM25 search)
+- `src/knowledge/superpowers-upstream/` — referencia skills integrados
 
 ## Metodología de desarrollo
 
-Este proyecto usa **Superpowers** como framework de desarrollo.
-Referencia completa: `docs/SUPERPOWERS_OVD.md`
+Framework: **Superpowers** (`docs/SUPERPOWERS_OVD.md`)
 
 ### Reglas obligatorias
-- No implementar código sin plan previo (`writing-plans`)
-- TDD estricto para **nodos nuevos** — RED-GREEN-REFACTOR
-- Código legacy (fases 1–S17T, nodos WF4 existentes) no requiere cobertura retroactiva
-- Siempre ejecutar `verification-before-completion` antes de declarar una tarea lista
+- No implementar sin plan previo (`writing-plans`)
+- TDD estricto para nodos nuevos — RED-GREEN-REFACTOR
+- Ejecutar `verification-before-completion` antes de declarar una tarea lista
 
 ### Bloque de inicio de sesión
-Al retomar desarrollo, incluir este contexto en el primer mensaje:
 
 ```
-Context: I'm continuing development of OVD (Oficina Virtual de Desarrollo).
-- Stack: LangGraph + FastAPI + pgvector + Ollama (embeddings) + Multi-LLM router (Claude/OpenAI/Ollama) + Oracle 19c (vía MCP server)
-- Status: S3→S34 completados, próximo: despliegue VPS (C01)
-- Existing code: do not redesign or refactor already completed phases
-- Next task: [DESCRIBIR TAREA CONCRETA]
+Context: I'm continuing development of OVD Platform (Oficina Virtual de Desarrollo).
+Stack: LangGraph + FastAPI + pgvector + Ollama + Multi-LLM router + Oracle 19c (MCP)
+Status: S3→S95 completados en rama dev. Próximo: S96.
+Existing code: do not redesign or refactor already completed phases.
+Next task: [DESCRIBIR TAREA CONCRETA]
 
-Skip brainstorming for completed phases. Jump directly to writing-plans
-or subagent-driven-development for the next task.
+Sprint activo y ciclo de validación: docs/sprints/CURRENT.md
+Historial S19–S95: docs/sprints/HISTORY.md
 ```
 
 ## Reglas de trabajo
 
-- Siempre abrir Claude Code desde la carpeta raíz del repo (`ovd-platform/`)
-- **Registrar cambios en este CLAUDE.md al final de cada sesión** — rutas, estado de sprints, credenciales
-- Hacer commit al final de cada sesión de trabajo
-- Rama de features: `dev`, merge a `main` vía PR
+- Abrir Claude Code desde la raíz del repo (`ovd-platform/`)
+- Actualizar `docs/sprints/CURRENT.md` al final de cada sesión
+- Commit al final de cada sesión
+- Merge a `main` vía PR desde `dev`
+- Para operaciones destructivas (DROP, DELETE, force push): pedir confirmación siempre
