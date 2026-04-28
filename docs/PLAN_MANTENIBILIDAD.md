@@ -540,6 +540,66 @@ Cifrado a nivel de aplicación con la librería `cryptography` de Python + Infis
 
 ---
 
+---
+
+## Capacidades futuras — Integraciones de conocimiento externo
+
+### Conectores a sistemas de clientes (Confluence, Jira, GitHub, etc.)
+
+**Contexto:** Uno o más clientes usan Confluence, Jira y herramientas similares. En el futuro puede ser necesario que OVD ingiera documentación técnica, historias de usuario o wikis de esos sistemas para enriquecer el RAG y mejorar la calidad de los SDDs generados.
+
+**Capacidad disponible sin nuevo framework:**
+
+El stack ya incluye `langchain-anthropic` y la arquitectura RAG en `rag.py` está sobre `pgvector`. La librería `langchain-community` (que es una dependencia transitiva o de fácil adición) incluye document loaders listos para usar:
+
+| Sistema | Loader disponible | Qué ingiere |
+|---------|------------------|-------------|
+| Confluence | `ConfluenceLoader` | páginas, espacios, etiquetas |
+| Jira | `JiraIssuesLoader` | issues, sprints, comentarios |
+| GitHub | `GithubFileLoader` | archivos de repo, PRs |
+| Notion | `NotionDBLoader` | bases de datos, páginas |
+| SharePoint | `SharePointLoader` | documentos Office, wikis |
+| PDF / DOCX | `PyPDFLoader`, `Docx2txtLoader` | documentos adjuntos |
+
+**Cómo se integra con el stack actual:**
+
+```
+sistema externo (Confluence/Jira)
+        ↓
+langchain-community loader (Python)
+        ↓
+text splitter (RecursiveCharacterTextSplitter)
+        ↓
+nomic-embed-text (Ollama) / text-embedding-3-small (OpenAI)
+        ↓
+pgvector (ya existe en ovd_rag_embeddings)
+        ↓
+rag.py → RAGRetriever (ya implementado)
+```
+
+**No se necesita LlamaIndex ni ningún nuevo framework.** El pipeline de embeddings, almacenamiento y búsqueda semántica ya existe. Solo se agrega un módulo `rag_connectors.py` con la lógica de extracción por sistema.
+
+**Implementación estimada por conector:**
+
+| Conector | Esfuerzo | Bloqueante |
+|----------|----------|-----------|
+| PDF / DOCX (upload manual) | 0.5 días | Ninguno — ya hay infraestructura |
+| GitHub (repo público o token) | 1 día | PAT o GitHub App |
+| Confluence | 1-2 días | API token + URL del espacio |
+| Jira | 1-2 días | API token + project key |
+| SharePoint | 2-3 días | Azure AD app registration |
+
+**Prerrequisitos para activar:**
+
+1. Agregar `langchain-community` a `pyproject.toml` (1 línea)
+2. Crear `src/engine/rag_connectors.py` con la clase `ExternalConnector`
+3. Exponer endpoint `POST /knowledge/sync` para trigger manual o scheduled
+4. Registrar `source_system` y `source_url` como metadata en `ovd_rag_embeddings` (columnas ya soportadas por pgvector)
+
+**Cuándo abordar:** cuando un cliente concrete la necesidad de ingerir Confluence o Jira. No implementar preventivamente — el costo está en la integración OAuth/token con el sistema del cliente, no en el código de OVD.
+
+---
+
 ## Notas de implementación
 
 - La Fase 1 (división de `graph.py`) debe hacerse en una rama separada (`refactor/graph-split`) con los ~1,507 tests actuales como red de seguridad
