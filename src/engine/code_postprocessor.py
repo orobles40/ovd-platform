@@ -357,8 +357,9 @@ def _fix_oracle_init_in_postgres_db(content: str, rel_path: str) -> str:
     if not (rel_path.endswith("database.py") or rel_path.endswith("/database.py")):
         return content
     is_postgres = bool(
-        re.search(r"DATABASE_URL\s*=\s*['\"]postgresql", content)
-        or re.search(r"DATABASE_URL\s*=\s*['\"].*psycopg", content)
+        re.search(r"DATABASE_URL\s*=\s*f?['\"]postgresql", content)
+        or re.search(r"DATABASE_URL\s*=\s*f?['\"].*psycopg", content)
+        or re.search(r"postgresql\+psycopg", content)
     )
     if not is_postgres:
         return content

@@ -2812,19 +2812,31 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     _db_content = _db_file.read_text(encoding="utf-8", errors="replace")
                     _has_oracle = "oracle+oracledb://" in _db_content or "oracledb" in _db_content
                     _has_pg = "postgresql" in _db_content or "psycopg" in _db_content
+                    import re as _re_s82f
+                    _fixed = _db_content
                     if _has_oracle and not _has_pg:
-                        import re as _re_s82f
                         _fixed = _re_s82f.sub(
                             r"oracle\+oracledb://[^\s'\"]+",
                             "postgresql+psycopg://ovd_dev:changeme@localhost:5432/app_db",
-                            _db_content,
+                            _fixed,
                         )
-                        _fixed = _re_s82f.sub(r"import oracledb\n", "", _fixed)
-                        _db_file.write_text(_fixed, encoding="utf-8")
+                        _fixed = _re_s82f.sub(r"import oracledb\n?", "", _fixed)
                         log.warning(
                             "agent_executor[%s]: S82-F — Oracle URL reemplazada con PostgreSQL en src/database.py (FR pide PostgreSQL)",
                             agent_name,
                         )
+                    # S93-fix: remover oracledb.init_oracle_client() aunque la URL ya sea PostgreSQL
+                    if "oracledb.init_oracle_client" in _fixed:
+                        _fixed = _re_s82f.sub(
+                            r"^oracledb\.init_oracle_client\([^\)]*\)\n?", "", _fixed, flags=_re_s82f.MULTILINE
+                        )
+                        _fixed = _re_s82f.sub(r"import oracledb\n?", "", _fixed)
+                        log.warning(
+                            "agent_executor[%s]: S82-F — oracledb.init_oracle_client() eliminado de database.py (URL es PostgreSQL)",
+                            agent_name,
+                        )
+                    if _fixed != _db_content:
+                        _db_file.write_text(_fixed, encoding="utf-8")
 
         result = {
             "agent": agent_name,
