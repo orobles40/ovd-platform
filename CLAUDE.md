@@ -44,17 +44,18 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S84 (rama `dev`)
-- **Tests:** Python unit ~1505 (S84 agregó 16 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1505+
-- **Rama activa:** `dev` (S84 aplicado: content en artifacts + Oracle init fix + auth/models injection + S65-A skip oracledb)
-- **Próximo foco:** Ciclo S85 (pytest exit 0 — S84-A-v2 + S84-G activos)
+- **Sprints completados:** S3 → S95 (rama `dev`)
+- **Tests:** Python unit ~1477 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1477+
+- **Rama activa:** `dev` (S95 aplicado: S88-A/B + S89-A/B + S90-A/B + S91-A + S80-C ext + S84-A f-string + S82-F cleanup + S63-B preserve-src)
+- **Próximo foco:** S96 (auto-generador general de stubs, fix prime_validator spurious import, pytest exit 0)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100** (+10 vs S77), 11 tareas SDD, 12 archivos, pytest exit 2 (naming mismatch ContratoORM vs ContractORM entre tareas), 175k tokens, status=completed. S78-A ✅ (JWT no-stub), S78-B ✅ (no disparó — stub ya no existe), S78-C ⚠️ (parcial — naming inconsistente entre archivos), Fix S70-C ✅ (oracledb.version="8.3.0").
-- **Ciclo de validación S77:** `fb7bbbd5` — ~11 min, **QA 57/100**, 7 tareas SDD, 9 archivos, pytest exit 2 (create_benefit en módulo equivocado), status=completed. S77-A ✅ S77-B ✅ activados en producción.
-- **Ciclo de validación S76:** `c0e2e71e` — ~13 min, **QA 93/100**, **SDD compliance: True**, 12 tareas, 13 archivos, status=completed. **OVD_MODEL_SDD cambiado a `qwen3-coder:30b`** (resolvió bug raíz del presupuesto de tokens 1024 de `ovd-arch-assistant`).
-- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
-- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Diagnóstico profundo pendiente S79.
+- **Ciclo de validación S94:** `5a17c6a2` — `collected 9 items / 1 error` (record: primer round con pytest ejecutando 9 tests), S63-B borraba src/ después — resuelto con S94-fix. Más cercano a pytest exit 0 alcanzado.
+- **Ciclo de validación S84:** `e98bf96e` — 5m 38s, 109k tokens, ORM naming consistente ✅. Bloqueador S65-A resuelto en S84-G.
+- **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100**, pytest exit 2 × 2 rondas.
+- **Ciclo de validación S76:** `c0e2e71e` — **QA 93/100**, **SDD compliance: True**. Baseline de referencia.
+- **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B), `test_s63b_cleanup_in_retry_round_zero` (roto por S94-fix, pendiente corrección)
+- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET.
 
 ### ADR-003 — Criterios de selección de modelos LLM (2026-04-28)
 
@@ -73,6 +74,124 @@ cd src/tui && cargo build && cargo run
 6. Baseline a superar: QA 93/100, duración 13 min, costo $0 (S76)
 
 Tabla de modelos candidatos verificados está en el ADR — incluye SDD, coder, vision, analyzer.
+
+### Roadmap S96 — Próximo sprint
+
+#### S96-A — Auto-generador general de stubs (CRÍTICO)
+En `_validate_artifacts_imports`, reemplazar los casos individuales S89-A/S90-A/S91-A por un mecanismo general: cuando S65-A detecta `src.X.Y ← módulo no existe`, generar automáticamente un stub mínimo `src/X/Y.py` con exports vacíos derivados del import statement. Reduce el mantenimiento de casos hard-coded. **Impacto esperado:** cualquier módulo local faltante se auto-genera sin código adicional.
+
+#### S96-B — Filtro de imports espurios de proyectos anteriores (CRÍTICO)
+En `code_postprocessor.py`, agregar `_fix_spurious_utility_imports()` que elimina imports de módulos de utilidad que no pertenecen al dominio actual: `src.utils.prime_validator`, `src.utils.imc_validator`, `src.calculadora.*`. Causa raíz: el LLM mezcla contexto de proyectos anteriores (calculadora IMC) con el proyecto actual (contratos). **Fix:** regex que elimina esas líneas de import de `service.py` y `router.py`.
+
+#### S96-C — Postprocessor ORM naming español→inglés (ALTO)
+`_fix_orm_class_names_es_to_en()` en `code_postprocessor.py`: renombra clases ORM en español a inglés: `ContratoORM→ContractORM`, `BeneficioORM→BenefitORM`, `UsuarioORM→UserORM`. S79-B (template) no es suficiente — el LLM sigue generando nombres en español. El postprocessor lo corrige determinísticamente con `re.sub()`.
+
+#### S96-D — Fix test_s63.py regresión (MEDIO)
+`test_s63b_cleanup_in_retry_round_zero` espera el comportamiento pre-S94 (borra todos los archivos). Actualizar el test para reflejar la nueva lógica: si `collected \d+ items` en el error → preserva `src/`. Agregar caso nuevo que verifica la preservación.
+
+#### S96-E — Verificación post-auto-gen (MEDIO)
+Después de S89-A/S90-A/S91-A auto-generar archivos, re-ejecutar `_validate_artifacts_imports` para verificar que los nuevos archivos resuelven los imports rotos. Actualmente se filtra el broken-list pero no se re-valida. Si el auto-gen tiene errores, se detectan tarde.
+
+#### Ciclo de validación S96
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S96:**
+- S65-A no bloquea (0 imports rotos en round 0)
+- pytest ejecuta real (exit 0 o exit 1 con fallos lógicos — no colección)
+- QA ≥ 70
+
+---
+
+### Novedades S85–S95 (2026-04-28) — rama `dev`
+
+#### S85 — Validación del pipeline S84
+
+- **Objetivo:** pytest exit 0 con S84-A-v2 + S84-G activos.
+- **Resultado:** S65-A seguía bloqueando por `import oracledb` en casos edge (f-string URL).
+- **Diagnóstico:** S84-A detectaba `postgresql` literal pero no f-strings (`f'postgresql+psycopg://...'`). S82-F sólo reemplazaba Oracle→PostgreSQL pero no removía `oracledb.init_oracle_client()` cuando URL ya era PostgreSQL.
+
+#### S87 — Diagnóstico explícito en `_validate_artifacts_imports`
+
+- **S87-diag:** `_validate_artifacts_imports` ahora imprime `log.warning("[S65-A] imports rotos detectados (%d):\n%s", len(broken), "\n".join(broken[:10]))` — visible en logs del engine sin SSE.
+
+#### S88 — Fix imports `*.orm` (postprocessor)
+
+- **S88-A — `_fix_orm_phantom_module_import()`** en `code_postprocessor.py`: regex `from src.X.orm import` → `from src.X.models import`. El LLM genera sufijo `.orm` en lugar de `.models` en el 30% de los ciclos. Fix determinístico.
+- **Commit:** `c47ef25a0` — S88-A + S87-diag.
+
+#### S89 — Auto-gen `contracts/models.py` + fix `*.repository`
+
+- **S89-A:** `_validate_artifacts_imports` — cuando S65-A detecta `src.contracts.models ← no existe` y el archivo no está en disco, genera `src/contracts/models.py` con `ContractORM`, `BenefitORM`, `ContractCreate`, `BenefitCreate`, `Contract`, `Benefit` (Pydantic + ORM).
+- **S89-B — `_fix_phantom_repository_import()`** en `code_postprocessor.py`: elimina `from src.X.repository import ...` — módulo que el LLM inventa pero nunca genera.
+- **Commit:** `73fa1e5bf`.
+
+#### S90 — Auto-gen `auth/service.py` + fix `src.benefits.*`
+
+- **S90-A:** `_validate_artifacts_imports` — cuando `src.auth.service ← no existe`, genera `src/auth/service.py` con `verify_password()`, `create_access_token()`, `login_user()` (passlib + jose).
+- **S90-B — `_fix_benefits_module_import()`** en `code_postprocessor.py`: redirige `from src.benefits.X import` → `from src.contracts.X import`. El LLM a veces crea paquete `benefits/` separado en lugar de usar `contracts/`.
+- **Commit:** `7d5b38fe7`.
+
+#### S91 — Auto-gen `contracts/router.py`
+
+- **S91-A:** `_validate_artifacts_imports` — cuando `src.contracts.router ← no existe`, genera `src/contracts/router.py` con endpoints CRUD completos: `POST /contratos`, `GET /contratos/{rut}`, `POST /contratos/{id}/beneficios`, `GET /contratos/{id}/beneficios`. Usa try/except ImportError para evitar cascada si models/service también faltan.
+- **Commit:** `01c69cdb1`.
+
+#### S92 — Fix `DeclarativeBase` sin `class Base(DeclarativeBase)` (SQLAlchemy 2.0)
+
+- **S80-C extendido:** `_fix_declarative_base_import()` en `code_postprocessor.py` detecta el patrón: `from sqlalchemy.orm import DeclarativeBase` + clases ORM que heredan `Base` pero `class Base(DeclarativeBase): pass` no está definido en el mismo archivo. Reemplaza con `from src.database import Base`.
+- **S84-A f-string fix:** `_fix_oracle_init_in_postgres_db()` ahora detecta f-strings: `f'postgresql+psycopg://...'` además de strings literales. Regex actualizado con `f?`.
+- **Commit:** `10ebc69d5`.
+
+#### S93 — Fix `oracledb.init_oracle_client()` residual
+
+- **S82-F extendido:** en `agent_executor`, la limpieza de Oracle ahora tiene dos fases: (1) reemplazo Oracle URL → PostgreSQL si aplica; (2) **siempre** elimina `oracledb.init_oracle_client()` si aparece en el archivo, independientemente de la dirección de la URL. Resuelve el caso: URL ya era PostgreSQL (f-string) + init_oracle_client sin import.
+- **Commit:** `a359b166a` (junto con S92).
+
+#### S94 — Fix S63-B borraba src/ cuando pytest ya colectaba tests
+
+- **S63-B fix:** `update_test_retry` — antes de borrar artefactos en retry, verifica si `last_test_error` contiene `collected \d+ items?`. Si pytest colectó al menos 1 test, preserva todos los archivos `src/` y solo limpia tests con errores. Evita regresar a near-scratch cuando el código fuente es parcialmente correcto.
+- **Hito:** Ciclo `5a17c6a2` alcanzó `collected 9 items / 1 error` — el más cercano a pytest exit 0.
+- **Commit:** `a0102962c`.
+
+#### S95 — Diagnóstico bloqueador final
+
+- **Ciclo `65ab6e7b`:** S65-A detectó 1 import roto en round 0: `src/contracts/service.py: from src.utils.prime_validator import is_prime ← módulo no existe`. El LLM confundió el proyecto contratos con el proyecto calculadora IMC anterior. No bloqueado por ORM/database — bloqueado por import espurio de proyecto distinto.
+- **Diagnóstico:** raíz del problema es contaminación de contexto LLM entre proyectos. Fix: S96-B postprocessor.
+- **Estado tests:** ~1477 PASS (regresión en `test_s63b_cleanup_in_retry_round_zero` por S94-fix — pendiente corrección en S96-D).
+
+#### Comparativa ciclos S85–S95
+
+| Ciclo | Hash | S65-A | pytest | Bloqueador |
+|-------|------|-------|--------|------------|
+| S85 | — | bloquea | no ejecuta | oracledb f-string |
+| S88 | f8a16d77 | bloquea | no ejecuta | `src.contracts.orm` (`.orm` suffix) |
+| S89 | 3c5dad50 | bloquea | no ejecuta | contracts/models.py no existe en disco |
+| S90 | fa795201 | bloquea | no ejecuta | auth/service.py + src.benefits.* |
+| S91 | 214aef2f | bloquea | no ejecuta | contracts/router.py no existe |
+| S92 | 5ab8e3f5 | bloquea | no ejecuta | `Base` no definido (DeclarativeBase 2.0) |
+| S93 | 2fc0ba7c | bloquea | no ejecuta | oracledb.init sin import |
+| S94 | 5a17c6a2 | **pasa** | **9 items / 1 error** | S63-B borraba src/ |
+| S95 | 65ab6e7b | bloquea | no ejecuta | `prime_validator` import espurio |
+
+---
 
 ### Roadmap S78 — Próximo sprint
 
