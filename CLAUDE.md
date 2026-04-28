@@ -44,10 +44,10 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S80 (rama `dev`)
-- **Tests:** Python unit ~1429 (S80 agregó 20 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1429+
-- **Rama activa:** `dev` (S80 aplicado: ORM manifest vacío + declarative_base postprocessor + auth_router + caps reducidos)
-- **Próximo foco:** Ciclo de validación S80 (pytest exit 0 target)
+- **Sprints completados:** S3 → S84 (rama `dev`)
+- **Tests:** Python unit ~1505 (S84 agregó 16 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1505+
+- **Rama activa:** `dev` (S84 aplicado: content en artifacts + Oracle init fix + auth/models injection + S65-A skip oracledb)
+- **Próximo foco:** Ciclo S85 (pytest exit 0 — S84-A-v2 + S84-G activos)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
 - **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100** (+10 vs S77), 11 tareas SDD, 12 archivos, pytest exit 2 (naming mismatch ContratoORM vs ContractORM entre tareas), 175k tokens, status=completed. S78-A ✅ (JWT no-stub), S78-B ✅ (no disparó — stub ya no existe), S78-C ⚠️ (parcial — naming inconsistente entre archivos), Fix S70-C ✅ (oracledb.version="8.3.0").
@@ -135,6 +135,56 @@ curl -s -X POST http://localhost:8001/session \
 | S76 | c0e2e71e | **93** | collection_error | 13m | 215k |
 | S77 | fb7bbbd5 | 57 | exit 2 × 3 | 11m | 118k |
 | **S78** | 88d06e0f | **67** | exit 2 × 2 | **13m 18s** | **175k** |
+
+---
+
+### Novedades S84 (2026-04-28) — rama `dev`
+
+- **S84-B — `_write_artifacts()` devuelve `content`:** campo `content` añadido al dict de retorno. Habilita S83-F context injection. **Validado:** S83-F inyectó 2345/3531/3534 chars en ciclo S84. ORM naming consistente por primera vez (ContractORM/BenefitORM/UserORM en inglés en todos los archivos).
+- **S84-A — Postprocessor Oracle init:** `_fix_oracle_init_in_postgres_db()` en `code_postprocessor.py` elimina `oracledb.init_oracle_client()` cuando `DATABASE_URL` es PostgreSQL. Cubre el caso "mixed" (PostgreSQL URL + Oracle init).
+- **S84-A-v2 — S79-C reescribe database.py:** `_verify_db_url_matches_fr()` ahora también reescribe `database.py` directamente en disco (Oracle URL → PostgreSQL) cuando el FR especifica PostgreSQL. Actúa en todos los retry rounds.
+- **S84-C — Template auth/models.py:** `system_backend_python.md` — sección S84-C con `UserORM` + `TokenResponse` + `LoginRequest` en `src/auth/models.py`. Referenciable por el LLM.
+- **S84-F — `_ensure_auth_models_task()`:** inyecta `TASK-INFRA-AUTH-MODELS` cuando el SDD tiene `src/auth/router.py` pero no `src/auth/models.py`. Insertado ANTES de auth/router.py para que el sort topológico lo ordene correctamente. **Validado:** `src/auth/models.py` generado con `UserORM` correcto.
+- **S84-G — S65-A skip `oracledb`:** `_validate_artifacts_imports` agrega `_s70c_mocked = {"oracledb", "cx_Oracle"}` — S65-A ya no bloquea pytest cuando S70-C ya mockeó estos módulos en conftest.py.
+- **16 tests nuevos** en `test_s84.py` — 16/16 PASS. **1505 tests PASS** (suite total, incluyendo regresión).
+- **Ciclo validación S84 (`e98bf96e`):** 5m 38s (-70% vs S83), 109k tokens (-59%), S65-A bloqueó pytest en 3 rounds (por `import oracledb` — resuelto en S84-G). ORM naming consistente ✅.
+- **Bloqueador S84 resuelto en S85:** Oracle URL → S84-A-v2; S65-A block → S84-G.
+
+#### Ciclo de validación S85
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S85:**
+- pytest ejecuta real (S84-G elimina bloqueo oracledb)
+- DATABASE_URL PostgreSQL (S84-A-v2 reescribe en disco)
+- ORM naming consistente (S83-F + S84-B)
+- QA ≥ 70
+
+---
+
+### Novedades S83 (2026-04-28) — rama `dev`
+
+- **S83-E — `_ensure_auth_login_task()`:** inyecta `TASK-INFRA-AUTH-ROUTER` cuando FR menciona auth/login y el SDD no tiene auth/router.py. **Validado en S83 y S84.**
+- **S83-F — Topological sort + context injection:** `_topological_sort_tasks()` ordena tareas por `depends_on` (Kahn's algorithm). `_build_dependency_context()` inyecta contenido de archivos ya generados (models.py) al prompt de tareas dependientes (service.py, router.py). Context injection requería S84-B para funcionar.
+- **17 tests nuevos** en `test_s83.py` — 17/17 PASS. **1478 tests PASS**.
+- **Ciclo validación S83 (`4798c9db`):** 18m 32s, QA 50, 264k tokens, pytest exit 2 × 3 rounds. Bugs raíz: `_write_artifacts` sin `content` (S84-B), Oracle URL (S84-A-v2).
 
 ---
 
