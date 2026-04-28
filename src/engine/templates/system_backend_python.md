@@ -200,6 +200,37 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
 > NUNCA generes un token sin verificar que el usuario existe y la contraseña es válida.
 > El ejemplo de arriba ya incluye la consulta correcta — NO lo simplifiques.
 
+> **S84-C — Si el SDD incluye `src/auth/models.py`, DEBES generar este archivo con `UserORM` y `TokenResponse`.**
+> `src/auth/router.py` importa `UserORM` desde `src.auth.models` — si ese archivo no existe, todos los tests fallan con ImportError.
+
+```python:src/auth/models.py
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from src.database import Base
+from pydantic import BaseModel
+
+class UserORM(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    rut = Column(String(12), nullable=False, unique=True)
+    email = Column(String(100), nullable=True)
+    password_hash = Column(String(200), nullable=False)
+    nombre = Column(String(100), nullable=True)
+    rol = Column(String(20), nullable=False, default="afiliado")
+    activo = Column(Boolean, nullable=False, default=True)
+    org_id = Column(String(50), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = 3600
+
+class LoginRequest(BaseModel):
+    rut: str
+    password: str
+```
+
 **PASO 3 — Tests importan desde `src.main`:**
 ```python:tests/test_auth.py
 from src.main import app

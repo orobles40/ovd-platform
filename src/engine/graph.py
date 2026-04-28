@@ -1264,6 +1264,48 @@ def _ensure_auth_login_task(sdd: dict, fr_analysis: dict) -> dict:
     return sdd
 
 
+def _ensure_auth_models_task(sdd: dict) -> dict:
+    """S84-F: si el SDD tiene src/auth/router.py pero no src/auth/models.py, inyectar models.
+
+    auth/router.py importa UserORM y TokenResponse desde auth/models.py.
+    Sin este archivo, todos los tests fallan con ImportError.
+    """
+    has_auth_router = any(
+        "auth/router" in t.get("file", "") or t.get("file", "").endswith("auth_router.py")
+        for t in sdd.get("tasks", [])
+    )
+    if not has_auth_router:
+        return sdd
+    has_auth_models = any(
+        "auth/models" in t.get("file", "") or "auth_models" in t.get("file", "")
+        for t in sdd.get("tasks", [])
+    )
+    if has_auth_models:
+        return sdd
+    # Insertar antes de auth/router.py
+    _router_idx = next(
+        (i for i, t in enumerate(sdd["tasks"]) if "auth/router" in t.get("file", "")), 0
+    )
+    sdd["tasks"].insert(_router_idx, {
+        "id": "TASK-INFRA-AUTH-MODELS",
+        "agent": "backend",
+        "title": "Crear src/auth/models.py con UserORM y schemas de auth",
+        "description": (
+            "Crea src/auth/models.py con:\n"
+            "- UserORM(Base): tabla 'users' con id, rut(String unique), email, password_hash,\n"
+            "  nombre, rol, activo, org_id, created_at.\n"
+            "- TokenResponse(BaseModel): access_token, token_type='bearer', expires_in=3600.\n"
+            "- LoginRequest(BaseModel): rut, password.\n"
+            "Sigue el ejemplo en system_backend_python.md sección S84-C."
+        ),
+        "file": "src/auth/models.py",
+        "depends_on": [],
+        "estimated_complexity": "low",
+    })
+    log.warning("generate_sdd: S84-F src/auth/models.py inyectado como TASK-INFRA-AUTH-MODELS")
+    return sdd
+
+
 def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]:
     """S77-C: verifica que src/main.py incluya include_router() para CADA router.py en disco.
 
@@ -1655,6 +1697,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S83-E: inyectar src/auth/router.py si el FR menciona auth/login y no está en el SDD
         sdd = _ensure_auth_login_task(sdd, state.get("fr_analysis", {}))
+
+        # S84-F: inyectar src/auth/models.py si hay auth/router.py pero no auth/models.py
+        sdd = _ensure_auth_models_task(sdd)
 
         # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
         sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
@@ -5188,6 +5233,7 @@ def _write_artifacts(
                 "path": rel_path,
                 "size": len(content_bytes),
                 "lang": lang_name,
+                "content": content,  # S84-B: necesario para _build_dependency_context (S83-F)
             })
         except OSError as e:
             log.warning("_write_artifacts[%s]: no se pudo escribir '%s': %s", agent, rel_path, e)

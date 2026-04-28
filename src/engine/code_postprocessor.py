@@ -345,6 +345,38 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S84-A — Fix Oracle init en database.py con URL PostgreSQL
+# ---------------------------------------------------------------------------
+
+def _fix_oracle_init_in_postgres_db(content: str, rel_path: str) -> str:
+    """S84-A: elimina oracledb.init_oracle_client() cuando DATABASE_URL es PostgreSQL.
+
+    El LLM combina Oracle init con URL postgres por haber visto proyectos Oracle
+    en el historial. Si DATABASE_URL tiene psycopg/postgresql → Oracle init es inválido.
+    """
+    if not (rel_path.endswith("database.py") or rel_path.endswith("/database.py")):
+        return content
+    is_postgres = bool(
+        re.search(r"DATABASE_URL\s*=\s*['\"]postgresql", content)
+        or re.search(r"DATABASE_URL\s*=\s*['\"].*psycopg", content)
+    )
+    if not is_postgres:
+        return content
+    if "oracledb.init_oracle_client" not in content:
+        return content
+    lines = content.splitlines(keepends=True)
+    new_lines = [
+        line for line in lines
+        if "oracledb.init_oracle_client" not in line
+        and not re.match(r"^import oracledb\b", line.strip())
+    ]
+    new_content = "".join(new_lines)
+    if new_content != content:
+        log.warning("[S84-A] oracledb.init_oracle_client() eliminado de %s (DATABASE_URL es PostgreSQL)", rel_path)
+    return new_content
+
+
+# ---------------------------------------------------------------------------
 # S80-C — Fix declarative_base() anti-pattern en archivos que no son database.py
 # ---------------------------------------------------------------------------
 
@@ -718,6 +750,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)
+
+    # S84-A: eliminar Oracle init cuando DATABASE_URL es PostgreSQL
+    content = _fix_oracle_init_in_postgres_db(content, rel_path)
 
     # S77-A: fix parámetros Oracle inválidos en create_engine
     content = _fix_sqlalchemy_oracle_params(content)
