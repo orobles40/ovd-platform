@@ -188,6 +188,11 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
     return TokenResponse(access_token=token)
 ```
 
+> **S79-D — OBLIGATORIO: `login_user` DEBE consultar `UserORM` en BD.**
+> `db.query(UserORM).filter(...).first()` es OBLIGATORIO antes de generar el JWT.
+> NUNCA generes un token sin verificar que el usuario existe y la contraseña es válida.
+> El ejemplo de arriba ya incluye la consulta correcta — NO lo simplifiques.
+
 **PASO 3 — Tests importan desde `src.main`:**
 ```python:tests/test_auth.py
 from src.main import app
@@ -649,6 +654,50 @@ Regla de separación de responsabilidades:
 - `router.py` — endpoints FastAPI, usa `service.py`
 
 Cada archivo importa SOLO desde archivos de nivel inferior. Nunca de sí mismo ni de niveles superiores.
+
+### Implementación CRUD completa en service.py — ejemplo canónico (S79-B)
+
+**REGLA ABSOLUTA:** `models.py` contiene SOLO clases ORM y Pydantic schemas. NINGUNA función de negocio.
+
+```python:src/contracts/service.py
+from sqlalchemy.orm import Session
+from src.contracts.models import ContractORM, BenefitORM
+from src.contracts.schemas import BenefitCreate
+
+def create_benefit(data: BenefitCreate, contract_id: int, db: Session) -> BenefitORM:
+    benefit = BenefitORM(
+        name=data.name,
+        value=data.value,
+        contract_id=contract_id,
+    )
+    db.add(benefit)
+    db.commit()
+    db.refresh(benefit)
+    return benefit
+
+def list_benefits(contract_id: int, db: Session) -> list[BenefitORM]:
+    return db.query(BenefitORM).filter(BenefitORM.contract_id == contract_id).all()
+
+def delete_benefit(benefit_id: int, db: Session) -> bool:
+    benefit = db.query(BenefitORM).filter(BenefitORM.id == benefit_id).first()
+    if not benefit:
+        return False
+    db.delete(benefit)
+    db.commit()
+    return True
+```
+
+**NOMBRES ORM — consistencia obligatoria (S79-B):**
+
+El nombre de la clase ORM definida en `models.py` DEBE ser IDÉNTICO en `service.py` y `router.py`. Un solo proyecto usa UN solo nombre por entidad:
+
+| Entidad | Nombre ORM correcto | Nombres PROHIBIDOS |
+|---------|--------------------|--------------------|
+| Contrato | `ContractORM` | `ContratoORM`, `Contrato`, `ContratoModel` |
+| Beneficio | `BenefitORM` | `BeneficioORM`, `Beneficio`, `BenefitModel` |
+| Usuario | `UserORM` | `UsuarioORM`, `Usuario`, `UserModel` |
+
+**Regla:** si `models.py` define `class ContractORM(Base)`, entonces `service.py` DEBE importar `ContractORM` — NUNCA reinventar el nombre.
 
 ### Hashing de contraseñas — passlib + bcrypt OBLIGATORIO (S74-E)
 

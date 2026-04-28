@@ -1135,6 +1135,130 @@ def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]
     return missing, fix_snippet
 
 
+def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
+    """S79-A: detecta inconsistencias de nombres entre clases ORM definidas en models.py
+    e importadas en service.py/router.py. Usa ast.parse() — no ejecuta el código.
+    Retorna (ok, feedback). Si ok=True, sin inconsistencias.
+    """
+    import ast as _ast
+
+    _wdir = pathlib.Path(work_dir) if work_dir else None
+    if not _wdir or not _wdir.exists():
+        return True, ""
+
+    _orm_manifest: dict[str, str] = {}
+    for _models_file in _wdir.glob("src/**/models.py"):
+        try:
+            _tree = _ast.parse(_models_file.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for _node in _ast.walk(_tree):
+            if not isinstance(_node, _ast.ClassDef):
+                continue
+            for _base in _node.bases:
+                _base_name = None
+                if isinstance(_base, _ast.Name):
+                    _base_name = _base.id
+                elif isinstance(_base, _ast.Attribute):
+                    _base_name = _base.attr
+                if _base_name in ("Base", "DeclarativeBase", "MappedAsDataclass"):
+                    _orm_manifest[_node.name] = str(_models_file.relative_to(_wdir))
+                    break
+
+    if not _orm_manifest:
+        return True, ""
+
+    _issues: list[str] = []
+    for _svc_file in list(_wdir.glob("src/**/service.py")) + list(_wdir.glob("src/**/router.py")):
+        try:
+            _tree = _ast.parse(_svc_file.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for _node in _ast.walk(_tree):
+            if not isinstance(_node, _ast.ImportFrom):
+                continue
+            if not (_node.module and "model" in _node.module):
+                continue
+            for _alias in _node.names:
+                _imported = _alias.asname or _alias.name
+                if _imported.endswith(("Request", "Response", "Schema", "Create", "Update")):
+                    continue
+                if _imported not in _orm_manifest:
+                    _candidates = [k for k in _orm_manifest if (
+                        k.lower().replace("orm", "") == _imported.lower().replace("orm", "")
+                        or k.lower()[:5] == _imported.lower()[:5]
+                    )]
+                    _hint = f" (¿quisiste decir: {', '.join(_candidates)}?)" if _candidates else ""
+                    _issues.append(
+                        f"  - {_svc_file.relative_to(_wdir)}: "
+                        f"importa `{_imported}` que no existe en models.py{_hint}"
+                    )
+
+    if not _issues:
+        return True, ""
+
+    _available = ", ".join(f"`{k}`" for k in sorted(_orm_manifest.keys()))
+    _feedback = (
+        "[S79-A] ⚠️ INCONSISTENCIA NOMBRES ORM — los siguientes imports no existen en models.py:\n"
+        + "\n".join(_issues)
+        + f"\n\nClases ORM definidas en models.py: {_available}"
+        + "\nCORRECCIÓN: usa EXACTAMENTE los mismos nombres en models.py y service.py/router.py."
+        + " Si models.py define `ContractORM`, service.py debe importar `ContractORM` (no `ContratoORM`)."
+    )
+    return False, _feedback
+
+
+def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
+    """S79-C: detecta inconsistencia entre la BD solicitada en el FR y la URL generada en database.py.
+
+    Ej: FR menciona PostgreSQL pero database.py tiene oracle+oracledb://...
+    Retorna (ok, feedback). Si ok=True, URL es coherente con el FR.
+    """
+    if not work_dir or not fr_text:
+        return True, ""
+    _wdir = pathlib.Path(work_dir)
+    _db_file = _wdir / "src" / "database.py"
+    if not _db_file.exists():
+        return True, ""
+
+    _content = _db_file.read_text(encoding="utf-8", errors="replace")
+    _fr_lower = fr_text.lower()
+
+    _fr_wants_postgres = any(kw in _fr_lower for kw in ("postgresql", "postgres", "psycopg"))
+    _fr_wants_oracle = any(kw in _fr_lower for kw in ("oracle", "oracledb", "xepdb"))
+
+    _has_oracle_url = "oracle" in _content.lower() or "oracledb" in _content.lower()
+    _has_postgres_url = "postgresql" in _content.lower() or "psycopg" in _content.lower()
+
+    _issues: list[str] = []
+    if _fr_wants_postgres and _has_oracle_url and not _has_postgres_url:
+        _issues.append(
+            "El FR solicita PostgreSQL pero database.py tiene URL Oracle (oracle+oracledb://...)."
+        )
+    if _fr_wants_oracle and _has_postgres_url and not _has_oracle_url:
+        _issues.append(
+            "El FR solicita Oracle pero database.py tiene URL PostgreSQL (postgresql+psycopg://...)."
+        )
+
+    if not _issues:
+        return True, ""
+
+    _fix_hint = ""
+    if _fr_wants_postgres:
+        _fix_hint = (
+            "\nCORRECCIÓN — database.py debe usar:\n"
+            "  DATABASE_URL = os.environ.get('DATABASE_URL', "
+            "'postgresql+psycopg://user:pass@localhost:5432/dbname')\n"
+            "  engine = create_engine(DATABASE_URL)"
+        )
+    _feedback = (
+        "[S79-C] ⚠️ DATABASE_URL INCONSISTENTE con el FR:\n"
+        + "\n".join(f"  - {i}" for i in _issues)
+        + _fix_hint
+    )
+    return False, _feedback
+
+
 def _verify_no_stub_endpoints(work_dir: str) -> tuple[bool, str]:
     """S78-B: detecta endpoints de auth con cuerpo stub (pass/...) en main.py o router.py.
 
@@ -3888,6 +4012,21 @@ async def run_tests(state: OVDState) -> dict:
         if not _stubs_ok:
             log.warning("run_tests: S78-B stubs detectados — se agregarán al retry_feedback")
 
+    # S79-A: verificar consistencia de nombres ORM antes de pytest
+    _orm_feedback_s79a = ""
+    if runner == "pytest" and work_dir and retry_round == 0:
+        _orm_ok, _orm_feedback_s79a = _verify_orm_class_names(work_dir)
+        if not _orm_ok:
+            log.warning("run_tests: S79-A ORM naming inconsistencies detectadas — agregando al retry_feedback")
+
+    # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR
+    _db_url_feedback_s79c = ""
+    if runner == "pytest" and work_dir and retry_round == 0:
+        _fr_text = state.get("feature_request", "") or ""
+        _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(work_dir, _fr_text)
+        if not _db_ok:
+            log.warning("run_tests: S79-C DATABASE_URL inconsistente con FR — agregando al retry_feedback")
+
     # Ejecutar runner
     passed = False
     output = ""
@@ -4040,9 +4179,16 @@ async def run_tests(state: OVDState) -> dict:
             agent_names=agent_names,
         ))
 
-    # S78-B: si hay stubs detectados, prefijar el output para que update_test_retry lo incluya
+    # S78-B + S79-A + S79-C: prefijar feedback de verificadores al output para update_test_retry
+    _pre_feedback = ""
     if _stub_feedback_s78b and not passed:
-        output = _stub_feedback_s78b + "\n\n" + output
+        _pre_feedback += _stub_feedback_s78b + "\n\n"
+    if _orm_feedback_s79a and not passed:
+        _pre_feedback += _orm_feedback_s79a + "\n\n"
+    if _db_url_feedback_s79c and not passed:
+        _pre_feedback += _db_url_feedback_s79c + "\n\n"
+    if _pre_feedback:
+        output = _pre_feedback + output
 
     status_msg = f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
     return {

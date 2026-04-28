@@ -44,10 +44,10 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S78 (rama `dev`)
-- **Tests:** Python unit ~1390 (S78 agregó 18 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1390+
-- **Rama activa:** `dev` (S78 aplicado: login JWT template + stub detector + naming rules + oracledb mock fix)
-- **Próximo foco:** S79-A (ORM naming verifier), S79-B (service.py CRUD template refuerzo), S79-C (DATABASE_URL coherente con FR)
+- **Sprints completados:** S3 → S79 (rama `dev`)
+- **Tests:** Python unit ~1409 (S79 agregó 19 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1409+
+- **Rama activa:** `dev` (S79 aplicado: ORM naming verifier + CRUD template + DB URL verifier + login BD note)
+- **Próximo foco:** Ciclo de validación S79 (pytest exit 0 target)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
 - **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100** (+10 vs S77), 11 tareas SDD, 12 archivos, pytest exit 2 (naming mismatch ContratoORM vs ContractORM entre tareas), 175k tokens, status=completed. S78-A ✅ (JWT no-stub), S78-B ✅ (no disparó — stub ya no existe), S78-C ⚠️ (parcial — naming inconsistente entre archivos), Fix S70-C ✅ (oracledb.version="8.3.0").
@@ -138,19 +138,28 @@ curl -s -X POST http://localhost:8001/session \
 
 ---
 
-### Roadmap S79 — Próximo sprint
+### Novedades S79 (2026-04-28) — rama `dev`
 
-#### S79-A — ORM naming verifier postprocessor (CRÍTICO)
-`_verify_orm_class_names(work_dir)` — escanea todos los `.py`, extrae clases ORM (heredan de `Base`), detecta cuando `service.py` importa nombre que no existe en `models.py`. Si detecta → inyecta al retry_feedback el mapping correcto: `ContratoORM → ContractORM`.
+- **S79-A — `_verify_orm_class_names(work_dir)`** en `graph.py` (~línea 1138): usa `ast.parse()` para construir ORM manifest desde todos los `models.py`, verifica imports en `service.py`/`router.py`. Si detecta `ContratoORM` donde `ContractORM` existe → inyecta `[S79-A] ⚠️ INCONSISTENCIA NOMBRES ORM` con hint `¿quisiste decir: ContractORM?` al retry_feedback. Ignora Pydantic schemas (terminan en Request/Response/Schema/Create/Update).
+- **S79-B — Template CRUD completo** en `system_backend_python.md`: implementación completa de `create_benefit()`, `list_benefits()`, `delete_benefit()` en `service.py`. Tabla canónica de nombres ORM obligatorios (`ContractORM`, `BenefitORM`, `UserORM`) vs prohibidos (`ContratoORM`, `BeneficioORM`, `UsuarioORM`).
+- **S79-C — `_verify_db_url_matches_fr(work_dir, fr_text)`** en `graph.py`: detecta cuando FR menciona PostgreSQL pero `database.py` tiene URL Oracle (y viceversa) → inyecta `[S79-C] ⚠️ DATABASE_URL INCONSISTENTE` con corrección `postgresql+psycopg://...`.
+- **S79-D — Nota login BD** en `system_backend_python.md`: `> S79-D — OBLIGATORIO: login_user DEBE consultar UserORM en BD` — directamente en la sección del endpoint login.
+- **19 tests nuevos** en `test_s79.py` — 19/19 PASS. **1409 tests PASS** (suite principal).
+- **Bloqueadores S79 resuelven:** (1) `ContratoORM vs ContractORM` → S79-A lo detecta y corrige en retry_feedback; (2) Oracle URL en FR PostgreSQL → S79-C; (3) CRUD en módulo equivocado → S79-B previene + S79-A detecta.
 
-#### S79-B — Template refuerzo CRUD en service.py (ALTO)
-En `system_backend_python.md`: agregar ejemplo completo de `create_benefit()` y `list_benefits()` EN `contract_service.py`. Incluir regla: `models.py` = SOLO clases ORM y Pydantic. NINGUNA función de negocio.
+### Roadmap S79 — COMPLETADO (2026-04-28)
 
-#### S79-C — DATABASE_URL coherente con FR (ALTO)
-Si FR menciona PostgreSQL pero `database.py` tiene URL Oracle → `_verify_db_url_matches_fr(work_dir, fr_analysis)` corrige a `postgresql+psycopg://...`.
+#### S79-A — ORM naming verifier postprocessor (CRÍTICO) ✅
+`_verify_orm_class_names(work_dir)` — implementado, 7/7 tests PASS.
 
-#### S79-D — login_user verifica usuario en BD (MEDIO)
-Template S78-A tiene el ejemplo pero el LLM simplificó. Agregar nota: "OBLIGATORIO: consultar `UserORM` en BD. NO generar JWT sin verificar credenciales contra BD."
+#### S79-B — Template refuerzo CRUD en service.py (ALTO) ✅
+Implementación completa `create_benefit`/`list_benefits`/`delete_benefit` + tabla nombres ORM. 4/4 tests PASS.
+
+#### S79-C — DATABASE_URL coherente con FR (ALTO) ✅
+`_verify_db_url_matches_fr(work_dir, fr_text)` — implementado, 5/5 tests PASS.
+
+#### S79-D — login_user verifica usuario en BD (MEDIO) ✅
+Nota `S79-D OBLIGATORIO` agregada en template. 3/3 tests PASS.
 
 #### Ciclo de validación S79
 
