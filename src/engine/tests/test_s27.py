@@ -5,29 +5,38 @@ S27 — Tests para los fixes de calidad post-S26:
   S27-C: _index_delivery_report agrega sys.path antes de importar 'knowledge'
   S27-D: system_qa.md tiene cláusula de infraestructura en criterio de aprobación
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 import pathlib
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from tests.factories import make_state
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import pytest
+
+from tests.factories import make_state
 
 # ────────────────────────────────────────────────────────────────────────────
 # S27-A — run_tests inyecta conftest.py
 # ────────────────────────────────────────────────────────────────────────────
 
+
 def _make_state_with_tests(tmp_path: pathlib.Path) -> dict:
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     (tmp_path / "tests" / "test_foo.py").write_text("def test_pass(): assert True")
     return make_state(
-        agent_results=[{
-            "agent": "backend",
-            "output": "",
-            "artifacts": [{"path": "tests/test_foo.py", "size": 30, "lang": "python"}],
-        }],
+        agent_results=[
+            {
+                "agent": "backend",
+                "output": "",
+                "artifacts": [
+                    {"path": "tests/test_foo.py", "size": 30, "lang": "python"}
+                ],
+            }
+        ],
         directory=str(tmp_path),
         test_retry_count=0,
     )
@@ -50,6 +59,7 @@ class TestConfTestInjection:
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
             import graph as g
+
             await g.run_tests(state)
 
         _ini = tmp_path / "pytest.ini"
@@ -77,13 +87,16 @@ class TestConfTestInjection:
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
             import graph as g
+
             await g.run_tests(state)
 
         # S62-A: cuando no hay pytest.ini, el engine lo crea con pythonpath = .
         # (es preferible a conftest injection para evitar conflictos de doble prefijo)
         _ini = tmp_path / "pytest.ini"
         _conftest = tmp_path / "conftest.py"
-        assert _ini.exists() or _conftest.exists(), "debe existir pytest.ini o conftest.py"
+        assert _ini.exists() or _conftest.exists(), (
+            "debe existir pytest.ini o conftest.py"
+        )
         if _ini.exists():
             assert "pythonpath" in _ini.read_text()
         else:
@@ -104,6 +117,7 @@ class TestConfTestInjection:
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
             import graph as g
+
             await g.run_tests(state)
 
         assert (tmp_path / "conftest.py").read_text() == custom_content
@@ -112,6 +126,7 @@ class TestConfTestInjection:
 # ────────────────────────────────────────────────────────────────────────────
 # S27-B — audit_logger serializa metadata como JSON string
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestAuditLoggerMetadata:
     """audit_logger pasa metadata como JSON string, no como dict Python."""
@@ -161,7 +176,9 @@ class TestAuditLoggerMetadata:
         summary = "Ciclo completado"
         old_val = None
         new_val = '{"files": 6}'
-        result = json.dumps({"summary": summary, "old_value": old_val, "new_value": new_val})
+        result = json.dumps(
+            {"summary": summary, "old_value": old_val, "new_value": new_val}
+        )
         assert isinstance(result, str)
         parsed = json.loads(result)
         assert parsed["summary"] == summary
@@ -170,6 +187,7 @@ class TestAuditLoggerMetadata:
 # ────────────────────────────────────────────────────────────────────────────
 # S27-C — _index_delivery_report resuelve el módulo 'knowledge'
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestIndexDeliveryReport:
     """_index_delivery_report configura sys.path antes de importar 'knowledge'."""
@@ -196,20 +214,24 @@ class TestIndexDeliveryReport:
 
         # Patch knowledge.bootstrap para evitar import real
         import builtins
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
             if name == "knowledge":
                 # Capturar sys.path en el momento del import
                 import sys
+
                 captured_paths.extend(sys.path[:])
                 mod = MagicMock()
                 mod.bootstrap = bootstrap_mock
                 return mod
             return real_import(name, *args, **kwargs)
 
-        with patch.dict(os.environ, {"OVD_RAG_ENABLED": "true"}), \
-             patch("builtins.__import__", side_effect=mock_import):
+        with (
+            patch.dict(os.environ, {"OVD_RAG_ENABLED": "true"}),
+            patch("builtins.__import__", side_effect=mock_import),
+        ):
             try:
                 await g._index_delivery_report(state, report_file)
             except Exception:
@@ -240,6 +262,7 @@ class TestIndexDeliveryReport:
 # ────────────────────────────────────────────────────────────────────────────
 # S27-D — system_qa.md cláusula de infraestructura
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestQaTemplateInfra:
     """system_qa.md contiene las cláusulas de infraestructura en criterio de aprobación."""

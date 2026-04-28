@@ -6,39 +6,52 @@ S61-B: last_test_error guardado sin truncar; S60-B usa last_test_error para dete
 S61-C: qa_review retorna QA previo en selective retry (sin llamar LLM)
 S61-D: deliver fusiona _kept_agent_results con agent_results en selective retry
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import pathlib
 import tempfile
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import graph
+import pytest
 
+import graph
 
 # ---------------------------------------------------------------------------
 # S61-A: pythonpath = . en templates
 # ---------------------------------------------------------------------------
 
+
 def test_backend_python_template_uses_dot_pythonpath():
     """S61-A: system_backend_python.md tiene pythonpath = . en el bloque ini."""
-    tpl_path = pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+    tpl_path = (
+        pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+    )
     content = tpl_path.read_text(encoding="utf-8")
-    assert "pythonpath = ." in content, "system_backend_python.md debe tener 'pythonpath = .'"
+    assert "pythonpath = ." in content, (
+        "system_backend_python.md debe tener 'pythonpath = .'"
+    )
     # Verificar que el bloque ini no tenga 'pythonpath = src' (ignorar menciones en texto explicativo)
     import re
+
     ini_blocks = re.findall(r"```ini.*?```", content, re.DOTALL)
     for block in ini_blocks:
-        assert "pythonpath = src" not in block, f"bloque ini tiene 'pythonpath = src': {block}"
+        assert "pythonpath = src" not in block, (
+            f"bloque ini tiene 'pythonpath = src': {block}"
+        )
 
 
 def test_backend_template_no_pytest_ini():
     """S61-A/S58-pre: system_backend.md (base universal) no debe contener pytest.ini."""
     tpl_path = pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
     content = tpl_path.read_text(encoding="utf-8")
-    assert "pytest.ini" not in content, "system_backend.md base no debe contener pytest.ini (Python-specific)"
+    assert "pytest.ini" not in content, (
+        "system_backend.md base no debe contener pytest.ini (Python-specific)"
+    )
 
 
 def test_s27a_skips_conftest_when_pytest_ini_has_pythonpath(tmp_path):
@@ -58,7 +71,9 @@ def test_s27a_skips_conftest_when_pytest_ini_has_pythonpath(tmp_path):
         "retry_feedback": "",
         "selective_retry_agents": [],
         "status": "",
-        "org_id": "", "project_id": "", "jwt_token": "",
+        "org_id": "",
+        "project_id": "",
+        "jwt_token": "",
         "stack_routing": "ollama",
         "generated_docs": [],
         "messages": [],
@@ -84,7 +99,9 @@ def test_s27a_skips_conftest_when_pytest_ini_has_pythonpath(tmp_path):
     elif not _conftest.exists() or _conftest.stat().st_size == 0:
         _conftest.write_text("import sys, os\nsys.path.insert(0, 'src')\n")
 
-    assert not _conftest.exists(), "conftest.py NO debe ser creado cuando pytest.ini tiene pythonpath"
+    assert not _conftest.exists(), (
+        "conftest.py NO debe ser creado cuando pytest.ini tiene pythonpath"
+    )
 
 
 def test_s27a_injects_conftest_when_no_pytest_ini(tmp_path):
@@ -104,12 +121,15 @@ def test_s27a_injects_conftest_when_no_pytest_ini(tmp_path):
     elif not _conftest.exists() or _conftest.stat().st_size == 0:
         _conftest.write_text(_conftest_content)
 
-    assert _conftest.exists(), "conftest.py DEBE ser creado cuando no hay pytest.ini con pythonpath"
+    assert _conftest.exists(), (
+        "conftest.py DEBE ser creado cuando no hay pytest.ini con pythonpath"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S61-B: last_test_error en OVDState y uso en S60-B
 # ---------------------------------------------------------------------------
+
 
 def test_update_test_retry_saves_last_test_error_on_structural():
     """S61-B: update_test_retry guarda test_output en last_test_error cuando es error estructural."""
@@ -119,7 +139,11 @@ def test_update_test_retry_saves_last_test_error_on_structural():
         "ModuleNotFoundError: No module named 'src.main'\n"
     )
     state = {
-        "test_results": {"passed": False, "output": structural_output, "return_code": 4},
+        "test_results": {
+            "passed": False,
+            "output": structural_output,
+            "return_code": 4,
+        },
         "retry_feedback": "",
         "last_test_error": "",
         "test_retry_count": 0,
@@ -153,7 +177,9 @@ def test_update_test_retry_clears_last_test_error_on_assertion():
         "status": "",
     }
     result = graph.update_test_retry(state)
-    assert result.get("last_test_error") == "", "error no estructural debe limpiar last_test_error"
+    assert result.get("last_test_error") == "", (
+        "error no estructural debe limpiar last_test_error"
+    )
 
 
 def test_s60b_fires_using_last_test_error_not_truncated():
@@ -164,7 +190,11 @@ def test_s60b_fires_using_last_test_error_not_truncated():
         "ModuleNotFoundError: No module named 'src.main'\n"
     )
     state = {
-        "test_results": {"passed": False, "output": structural_output, "return_code": 4},
+        "test_results": {
+            "passed": False,
+            "output": structural_output,
+            "return_code": 4,
+        },
         # retry_feedback truncado a 800 chars — SIN ModuleNotFoundError (truncado)
         "retry_feedback": "feedback anterior truncado sin la palabra clave...",
         # last_test_error tiene el error completo sin truncar
@@ -180,6 +210,7 @@ def test_s60b_fires_using_last_test_error_not_truncated():
     result = graph.update_test_retry(state)
     # S62-C: ahora retorna Command — acceder al update dict
     from langgraph.types import Command
+
     assert isinstance(result, Command), "S60-B+S62-C debe retornar Command"
     assert result.update.get("test_retry_count") == 2
     assert "status" not in result.update  # S63-A: status removido del Command.update
@@ -189,11 +220,14 @@ def test_s60b_fires_using_last_test_error_not_truncated():
 def test_s60b_does_not_fire_on_first_structural_error():
     """S61-B: S60-B no cancela en la primera ronda (retry_round=0), solo a partir de ronda 1."""
     structural_output = (
-        "collected 0 items / 1 error\n"
-        "ModuleNotFoundError: No module named 'src.main'\n"
+        "collected 0 items / 1 error\nModuleNotFoundError: No module named 'src.main'\n"
     )
     state = {
-        "test_results": {"passed": False, "output": structural_output, "return_code": 4},
+        "test_results": {
+            "passed": False,
+            "output": structural_output,
+            "return_code": 4,
+        },
         "retry_feedback": "",
         "last_test_error": structural_output,  # ya guardado de ronda anterior
         "test_retry_count": 0,  # primera ronda — no debe cancelar
@@ -214,17 +248,20 @@ def test_s60b_does_not_fire_on_first_structural_error():
 # S61-C: qa_review skip en selective retry
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_qa_review_returns_cached_in_selective_retry():
     """S62-B (ex S61-C): qa_review retorna QA previo sin llamar LLM en retry de tests."""
     prev_qa = {"score": 90, "passed": True, "issues": [], "sdd_compliance": True}
     state = {
-        "selective_retry_agents": [],   # S62-B usa test_retry_count, no este campo
-        "test_retry_count": 1,          # señal correcta post-S62-B
+        "selective_retry_agents": [],  # S62-B usa test_retry_count, no este campo
+        "test_retry_count": 1,  # señal correcta post-S62-B
         "qa_retry_count": 0,
         "qa_result": prev_qa,
         "project_context": "ctx",
-        "org_id": "", "project_id": "", "jwt_token": "",
+        "org_id": "",
+        "project_id": "",
+        "jwt_token": "",
         "stack_routing": "auto",
         "directory": "",
         "agent_results": [],
@@ -250,7 +287,9 @@ async def test_qa_review_runs_normally_when_no_selective_retry():
         "selective_retry_agents": [],
         "qa_result": {},  # sin QA previo
         "project_context": "ctx",
-        "org_id": "", "project_id": "", "jwt_token": "",
+        "org_id": "",
+        "project_id": "",
+        "jwt_token": "",
         "stack_routing": "auto",
         "directory": "",
         "agent_results": [],
@@ -261,14 +300,24 @@ async def test_qa_review_runs_normally_when_no_selective_retry():
         "status": "",
     }
     mock_llm = AsyncMock()
-    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='{"score":80,"passed":true,"issues":[],"sdd_compliance":true}'))
+    mock_llm.ainvoke = AsyncMock(
+        return_value=MagicMock(
+            content='{"score":80,"passed":true,"issues":[],"sdd_compliance":true}'
+        )
+    )
 
-    with patch("graph.model_router") as mock_router, \
-         patch("graph.invoke_structured", new_callable=AsyncMock) as mock_invoke:
+    with (
+        patch("graph.model_router") as mock_router,
+        patch("graph.invoke_structured", new_callable=AsyncMock) as mock_invoke,
+    ):
         mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)
         mock_invoke.return_value = MagicMock(
-            score=80, passed=True, issues=[], sdd_compliance=True,
-            missing_requirements=[], code_quality_issues=[],
+            score=80,
+            passed=True,
+            issues=[],
+            sdd_compliance=True,
+            missing_requirements=[],
+            code_quality_issues=[],
         )
         try:
             result = await graph.qa_review(state)
@@ -281,6 +330,7 @@ async def test_qa_review_runs_normally_when_no_selective_retry():
 # ---------------------------------------------------------------------------
 # S61-D: deliver fusiona _kept_agent_results
 # ---------------------------------------------------------------------------
+
 
 def test_deliver_merges_kept_agent_results():
     """S61-D: deliver usa _kept_agent_results para agentes no-retried."""
@@ -324,7 +374,9 @@ def test_route_agents_selective_saves_kept_results():
     state = {
         "sdd": {"tasks": []},
         "fr_analysis": {},
-        "org_id": "", "project_id": "", "jwt_token": "",
+        "org_id": "",
+        "project_id": "",
+        "jwt_token": "",
         "selective_retry_agents": ["backend"],
         "test_retry_count": 1,
         "agent_results": [

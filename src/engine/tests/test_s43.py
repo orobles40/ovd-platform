@@ -8,18 +8,22 @@ S43-D: _RUNNER_FLAGS — flags centralizados por runner
 S43-E: _get_retry_no_modify_instruction — feedback retry stack-aware
 S43-F: tabla de RUTs válidos en templates
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import pathlib
-import pytest
-from factories import make_state, make_agent_result
 
+import pytest
+from factories import make_agent_result, make_state
 
 # ---------------------------------------------------------------------------
 # S43-A — doc_instructions movidas a system_docs.md
 # ---------------------------------------------------------------------------
+
 
 class TestS43ADocInstructions:
     """S43-A: system_docs.md contiene la tabla de instrucciones por tipo de FR."""
@@ -34,7 +38,9 @@ class TestS43ADocInstructions:
         """S43-A: system_docs.md contiene los tipos endpoint, migration, refactor, service."""
         content = self._get_template()
         for fr_type in ("endpoint", "migration", "refactor", "service", "component"):
-            assert fr_type in content, f"Tipo '{fr_type}' no encontrado en system_docs.md"
+            assert fr_type in content, (
+                f"Tipo '{fr_type}' no encontrado en system_docs.md"
+            )
 
     def test_system_docs_tiene_openapi(self):
         """S43-A: system_docs.md menciona OpenAPI para endpoints."""
@@ -49,10 +55,16 @@ class TestS43ADocInstructions:
     def test_generate_docs_no_usa_dict_hardcodeado(self):
         """S43-A: generate_docs no contiene el dict doc_instructions hardcodeado."""
         import inspect
+
         import graph as _graph
+
         src = inspect.getsource(_graph.generate_docs)
-        assert "doc_instructions" not in src, "doc_instructions aún hardcodeado en generate_docs"
-        assert "Genera: 1) spec OpenAPI" not in src, "Instrucción OpenAPI aún hardcodeada en generate_docs"
+        assert "doc_instructions" not in src, (
+            "doc_instructions aún hardcodeado en generate_docs"
+        )
+        assert "Genera: 1) spec OpenAPI" not in src, (
+            "Instrucción OpenAPI aún hardcodeada en generate_docs"
+        )
 
     def test_system_docs_tiene_placeholders(self):
         """S43-A: system_docs.md tiene los placeholders estándar."""
@@ -66,13 +78,16 @@ class TestS43ADocInstructions:
 # S43-B — conftest.py inyectado solo para runner=pytest
 # ---------------------------------------------------------------------------
 
+
 class TestS43BConftestCondicional:
     """S43-B: conftest.py se inyecta solo cuando runner == 'pytest'."""
 
     def test_codigo_condiciona_por_runner(self):
         """S43-B: el código de run_tests condiciona la inyección de conftest al runner pytest."""
         import inspect
+
         import graph as _graph
+
         src = inspect.getsource(_graph.run_tests)
         # Debe haber una condición que involucre runner y conftest
         assert 'runner == "pytest"' in src or "runner == 'pytest'" in src
@@ -81,7 +96,9 @@ class TestS43BConftestCondicional:
     def test_etiqueta_s43b_en_codigo(self):
         """S43-B: el código contiene la etiqueta S43-B para trazabilidad."""
         import inspect
+
         import graph as _graph
+
         src = inspect.getsource(_graph.run_tests)
         assert "S43-B" in src
 
@@ -90,11 +107,13 @@ class TestS43BConftestCondicional:
 # S43-C — _get_import_error_diagnosis
 # ---------------------------------------------------------------------------
 
+
 class TestS43CImportDiagnosis:
     """S43-C: _get_import_error_diagnosis retorna mensaje correcto por runner."""
 
     def _get_fn(self):
         import graph as g
+
         return g._get_import_error_diagnosis
 
     def test_pytest_diagnosis_menciona_init_py(self):
@@ -120,7 +139,11 @@ class TestS43CImportDiagnosis:
         """S43-C: diagnóstico vitest menciona tsconfig o TypeScript."""
         fn = self._get_fn()
         msg = fn("vitest")
-        assert "tsconfig" in msg.lower() or "typescript" in msg.lower() or "TypeScript" in msg
+        assert (
+            "tsconfig" in msg.lower()
+            or "typescript" in msg.lower()
+            or "TypeScript" in msg
+        )
 
     def test_cargo_diagnosis_menciona_mod(self):
         """S43-C: diagnóstico cargo menciona la declaración 'mod'."""
@@ -146,11 +169,13 @@ class TestS43CImportDiagnosis:
 # S43-D — _RUNNER_FLAGS
 # ---------------------------------------------------------------------------
 
+
 class TestS43DRunnerFlags:
     """S43-D: _RUNNER_FLAGS centraliza los flags por runner."""
 
     def _get_flags(self):
         import graph as g
+
         return g._RUNNER_FLAGS
 
     def test_runner_flags_dict_existe(self):
@@ -186,11 +211,13 @@ class TestS43DRunnerFlags:
 # S43-E — _get_retry_no_modify_instruction
 # ---------------------------------------------------------------------------
 
+
 class TestS43ERetryInstruction:
     """S43-E: _get_retry_no_modify_instruction retorna instrucción stack-aware."""
 
     def _get_fn(self):
         import graph as g
+
         return g._get_retry_no_modify_instruction
 
     def test_pytest_instruction_menciona_src(self):
@@ -226,8 +253,13 @@ class TestS43ERetryInstruction:
     def test_feedback_generado_contiene_instruccion_pytest(self):
         """S43-E (integración): update_test_retry con runner='pytest' produce feedback con instrucción."""
         import graph as _graph
+
         state = make_state(
-            test_results={"passed": False, "output": "assert 1 == 2", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": "assert 1 == 2",
+                "runner": "pytest",
+            },
             test_retry_count=0,
         )
         result = _graph.update_test_retry(state)
@@ -238,8 +270,13 @@ class TestS43ERetryInstruction:
     def test_feedback_generado_contiene_instruccion_vitest(self):
         """S43-E (integración): update_test_retry con runner='vitest' produce feedback con contexto TypeScript."""
         import graph as _graph
+
         state = make_state(
-            test_results={"passed": False, "output": "FAIL src/utils.test.ts", "runner": "vitest"},
+            test_results={
+                "passed": False,
+                "output": "FAIL src/utils.test.ts",
+                "runner": "vitest",
+            },
             test_retry_count=0,
         )
         result = _graph.update_test_retry(state)
@@ -251,6 +288,7 @@ class TestS43ERetryInstruction:
 # ---------------------------------------------------------------------------
 # S43-F — RUTs válidos en templates
 # ---------------------------------------------------------------------------
+
 
 class TestS43FRutsValidos:
     """S43-F: templates contienen tabla de RUTs válidos verificados matemáticamente."""
@@ -271,13 +309,17 @@ class TestS43FRutsValidos:
         """S43-F: template backend compuesto (base + stack Python) contiene tabla con RUTs válidos.
         S58-pre: la tabla fue movida de system_backend.md a stack/backend_python.md."""
         import template_loader
+
         template_loader.invalidate()
-        content = template_loader.render_composed("system_backend", stack_language="python")
+        content = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
         assert "12.345.678-5" in content
         assert "NUNCA inventes RUTs" in content or "NUNCA" in content
 
     def test_ruts_en_tabla_son_matematicamente_validos(self):
         """S43-F: los RUTs de la tabla son matemáticamente correctos."""
+
         def _calc_dv(body: str) -> str:
             total, factor = 0, 2
             for digit in reversed(body):
@@ -290,8 +332,8 @@ class TestS43FRutsValidos:
         valid_ruts = [
             ("12345678", "5"),
             ("11111111", "1"),
-            ("5678901",  "4"),
-            ("1",        "9"),  # 0.000.001-9
+            ("5678901", "4"),
+            ("1", "9"),  # 0.000.001-9
         ]
         for body, expected_dv in valid_ruts:
             calculated = _calc_dv(body)
@@ -302,6 +344,7 @@ class TestS43FRutsValidos:
 
     def test_rut_negativo_en_tabla_es_invalido(self):
         """S43-F: el RUT negativo de la tabla (12.345.678-4) es efectivamente inválido."""
+
         def _calc_dv(body: str) -> str:
             total, factor = 0, 2
             for digit in reversed(body):
@@ -311,16 +354,31 @@ class TestS43FRutsValidos:
             return {10: "K", 11: "0"}.get(remainder, str(remainder))
 
         # 12345678-4 debe ser inválido (DV correcto es 5, no 4)
-        assert _calc_dv("12345678") != "4", "El RUT negativo de prueba debe tener DV incorrecto"
+        assert _calc_dv("12345678") != "4", (
+            "El RUT negativo de prueba debe tener DV incorrecto"
+        )
 
     def test_templates_mencionan_regla_calculo_dv(self):
         """S43-F: el template compuesto indica que DV=K viene de remainder==10.
         S58-pre: verificar stack/backend_python.md (antes en system_backend.md y system_backend_python.md)."""
         import template_loader
+
         template_loader.invalidate()
         # El template compuesto con stack Python debe tener la regla
-        composed = template_loader.render_composed("system_backend", stack_language="python")
-        assert "remainder" in composed or "DV=K" in composed or "módulo 11" in composed or "modulo 11" in composed.lower()
+        composed = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
+        assert (
+            "remainder" in composed
+            or "DV=K" in composed
+            or "módulo 11" in composed
+            or "modulo 11" in composed.lower()
+        )
         # system_backend_python.md también debe tenerla (pre-existente, no modificado en S58-pre)
         content_python = self._get_template("system_backend_python.md")
-        assert "remainder" in content_python or "DV=K" in content_python or "módulo 11" in content_python or "modulo 11" in content_python.lower()
+        assert (
+            "remainder" in content_python
+            or "DV=K" in content_python
+            or "módulo 11" in content_python
+            or "modulo 11" in content_python.lower()
+        )

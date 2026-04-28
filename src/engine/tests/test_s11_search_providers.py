@@ -2,20 +2,31 @@
 OVD Platform — Tests: Search Providers (Sprint 11)
 No requiere conexión real a internet.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
+
 from search_providers import (
-    DuckDuckGoProvider, TavilyProvider, SearXNGProvider,
-    SearchResult, get_provider, reset_provider,
+    DuckDuckGoProvider,
+    SearchResult,
+    SearXNGProvider,
+    TavilyProvider,
+    get_provider,
+    reset_provider,
 )
 
 
 class TestSearchResult:
     def test_campos_minimos(self):
-        r = SearchResult(title="Título", url="https://example.com", snippet="Descripción")
+        r = SearchResult(
+            title="Título", url="https://example.com", snippet="Descripción"
+        )
         assert r.title == "Título"
         assert r.score == 0.0
         assert r.published_date == ""

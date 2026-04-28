@@ -5,10 +5,15 @@ TP-10: Tests de contenido — instrucciones críticas en los archivos correctos
 TP-11: Tests de composición — render_composed() produce output correcto por stack
 TP-12: Tests de regresión — sistema base sin degradación vs S57
 """
-import sys, os, pathlib
+
+import os
+import pathlib
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
+
 import template_loader
 
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
@@ -18,6 +23,7 @@ STACK_DIR = TEMPLATES_DIR / "stack"
 # ---------------------------------------------------------------------------
 # TP-10-A: Verificar que stack/ existe y tiene los archivos esperados
 # ---------------------------------------------------------------------------
+
 
 class TestTP10StackDirectoryContent:
     """TP-10-A: archivos de stack existen en el directorio correcto."""
@@ -51,6 +57,7 @@ class TestTP10StackDirectoryContent:
 # TP-10-B: system_backend.md base solo tiene reglas universales
 # ---------------------------------------------------------------------------
 
+
 class TestTP10BackendBaseIsUniversal:
     """TP-10-B: system_backend.md no contiene instrucciones Python-specific."""
 
@@ -77,25 +84,29 @@ class TestTP10BackendBaseIsUniversal:
     def test_base_does_not_have_pydantic(self):
         """Pydantic v2 es Python-specific — no debe estar en la base universal."""
         content = self._load_base()
-        assert "Pydantic" not in content, \
+        assert "Pydantic" not in content, (
             "system_backend.md base no debe contener instrucciones de Pydantic (Python-specific)"
+        )
 
     def test_base_does_not_have_pytest_ini(self):
         """pytest.ini es Python-specific — no debe estar en la base universal."""
         content = self._load_base()
-        assert "pytest.ini" not in content, \
+        assert "pytest.ini" not in content, (
             "system_backend.md base no debe contener pytest.ini (Python-specific)"
+        )
 
     def test_base_does_not_have_conftest(self):
         """conftest.py es Python-specific — no debe estar en la base universal."""
         content = self._load_base()
-        assert "conftest.py" not in content, \
+        assert "conftest.py" not in content, (
             "system_backend.md base no debe contener conftest.py (Python-specific)"
+        )
 
 
 # ---------------------------------------------------------------------------
 # TP-10-C: stack/backend_python.md tiene todas las instrucciones críticas
 # ---------------------------------------------------------------------------
+
 
 class TestTP10PythonStackHasCriticalInstructions:
     """TP-10-C: instrucciones críticas migradas correctamente a stack/backend_python.md."""
@@ -134,7 +145,9 @@ class TestTP10PythonStackHasCriticalInstructions:
         """Validación de RUT chileno con módulo 11 presente."""
         content = self._load_stack()
         assert "validate_rut" in content
-        assert "módulo 11" in content or "module 11" in content or "remainder" in content
+        assert (
+            "módulo 11" in content or "module 11" in content or "remainder" in content
+        )
 
     def test_python_stack_has_rut_test_table(self):
         """Tabla de RUTs válidos para tests presente — S43-F."""
@@ -162,6 +175,7 @@ class TestTP10PythonStackHasCriticalInstructions:
 # TP-11: Tests de composición — render_composed() produce output correcto
 # ---------------------------------------------------------------------------
 
+
 class TestTP11RenderComposed:
     """TP-11: render_composed() combina base + stack correctamente."""
 
@@ -171,20 +185,26 @@ class TestTP11RenderComposed:
 
     def test_render_composed_returns_string(self):
         """render_composed() retorna string no vacío."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
         assert isinstance(result, str)
         assert len(result) > 100
 
     def test_render_composed_python_includes_base(self):
         """Con stack=python, el resultado incluye reglas de la base universal."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
         # Reglas universales de la base
         assert "Multi-tenancy" in result
         assert "TDD" in result
 
     def test_render_composed_python_includes_stack_section(self):
         """Con stack=python, el resultado incluye la sección de stack Python."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
         # Contenido específico de stack/backend_python.md
         assert "conftest.py" in result
         assert "field_validator" in result
@@ -197,19 +217,25 @@ class TestTP11RenderComposed:
 
     def test_render_composed_typescript_includes_ts_section(self):
         """Con stack=typescript, incluye sección TypeScript."""
-        result = template_loader.render_composed("system_backend", stack_language="typescript")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="typescript"
+        )
         assert "Convenciones del stack (typescript)" in result
         assert "tsconfig.json" in result
 
     def test_render_composed_rust_includes_rust_section(self):
         """Con stack=rust, incluye sección Rust."""
-        result = template_loader.render_composed("system_backend", stack_language="rust")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="rust"
+        )
         assert "Convenciones del stack (rust)" in result
         assert "Cargo.toml" in result
 
     def test_render_composed_unknown_stack_returns_base(self):
         """Con stack desconocido (sin archivo), retorna solo la base sin error."""
-        result = template_loader.render_composed("system_backend", stack_language="cobol")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="cobol"
+        )
         assert len(result) > 50
         assert "Convenciones del stack" not in result
 
@@ -226,26 +252,35 @@ class TestTP11RenderComposed:
 
     def test_render_composed_frontend_react(self):
         """Frontend con stack=react incluye Tailwind/shadcn sección."""
-        result = template_loader.render_composed("system_frontend", stack_language="react")
+        result = template_loader.render_composed(
+            "system_frontend", stack_language="react"
+        )
         assert "Convenciones del stack (react)" in result
         assert "shadcn" in result.lower() or "tailwind" in result.lower()
 
     def test_render_composed_database_oracle(self):
         """Database con stack=oracle incluye host.docker.internal."""
-        result = template_loader.render_composed("system_database", stack_language="oracle")
+        result = template_loader.render_composed(
+            "system_database", stack_language="oracle"
+        )
         assert "Convenciones del stack (oracle)" in result
         assert "host.docker.internal" in result
 
     def test_render_composed_is_longer_than_base(self):
         """El template compuesto es más largo que la base sola."""
         base = template_loader.render("system_backend", stack_language="")
-        composed = template_loader.render_composed("system_backend", stack_language="python")
-        assert len(composed) > len(base), \
+        composed = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
+        assert len(composed) > len(base), (
             "render_composed() debe ser más largo que el base solo"
+        )
 
     def test_render_composed_contains_separator(self):
         """El template compuesto tiene el separador --- entre base y stack."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
         assert "---" in result
         assert "Convenciones del stack" in result
 
@@ -253,6 +288,7 @@ class TestTP11RenderComposed:
 # ---------------------------------------------------------------------------
 # TP-12: Tests de regresión — sistema sin degradación vs S57
 # ---------------------------------------------------------------------------
+
 
 class TestTP12Regression:
     """TP-12: tests de regresión para verificar cero degradación vs S57."""
@@ -292,7 +328,11 @@ class TestTP12Regression:
     def test_system_sdd_template_intact(self):
         """system_sdd.md no fue modificado por S58-pre."""
         result = template_loader.render("system_sdd")
-        assert "SDD" in result or "Spec-Driven" in result or "especificacion" in result.lower()
+        assert (
+            "SDD" in result
+            or "Spec-Driven" in result
+            or "especificacion" in result.lower()
+        )
 
     def test_system_qa_template_intact(self):
         """system_qa.md no fue modificado por S58-pre."""
@@ -302,36 +342,55 @@ class TestTP12Regression:
     def test_system_security_template_intact(self):
         """system_security.md no fue modificado por S58-pre."""
         result = template_loader.render("system_security")
-        assert "seguridad" in result.lower() or "security" in result.lower() or "OWASP" in result
+        assert (
+            "seguridad" in result.lower()
+            or "security" in result.lower()
+            or "OWASP" in result
+        )
 
     def test_python_composed_has_orden_escritura_s32b(self):
         """S32-B: ORDEN DE ESCRITURA presente en el template compuesto Python."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
-        assert "ORDEN DE ESCRITURA" in result, \
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
+        assert "ORDEN DE ESCRITURA" in result, (
             "S32-B: ORDEN DE ESCRITURA debe estar en el template compuesto Python"
+        )
 
     def test_python_composed_has_round_asserts_s53a(self):
         """S53-A: instrucción de round() en asserts presente en template compuesto Python."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
-        assert "S53-A" in result or "round(" in result, \
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
+        assert "S53-A" in result or "round(" in result, (
             "S53-A: instrucción de round() debe estar en el template compuesto Python"
+        )
 
     def test_python_composed_has_rut_valid_table(self):
         """Tabla de RUTs válidos presente en template compuesto Python (S43-F)."""
-        result = template_loader.render_composed("system_backend", stack_language="python")
-        assert "12.345.678-5" in result, \
+        result = template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
+        assert "12.345.678-5" in result, (
             "Tabla de RUTs válidos debe estar en el template compuesto Python"
+        )
 
     def test_thread_safety_lock_exists(self):
         """S58-pre: _cache_lock existe en template_loader."""
         import template_loader as tl
-        assert hasattr(tl, "_cache_lock"), "_cache_lock no encontrado en template_loader"
+
+        assert hasattr(tl, "_cache_lock"), (
+            "_cache_lock no encontrado en template_loader"
+        )
         import threading
-        assert isinstance(tl._cache_lock, type(threading.Lock())), \
+
+        assert isinstance(tl._cache_lock, type(threading.Lock())), (
             "_cache_lock debe ser un threading.Lock"
+        )
 
     def test_render_composed_exported(self):
         """render_composed() es accesible desde template_loader."""
-        assert hasattr(template_loader, "render_composed"), \
+        assert hasattr(template_loader, "render_composed"), (
             "render_composed no está exportada desde template_loader"
+        )
         assert callable(template_loader.render_composed)

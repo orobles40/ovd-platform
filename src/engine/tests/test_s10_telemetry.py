@@ -2,11 +2,21 @@
 OVD Platform — Tests: Telemetría OTEL (Sprint 10)
 No requiere OTEL Collector real.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from telemetry import setup_telemetry, get_tracer, get_trace_id, cycle_span, _get_parent_context
+
+from telemetry import (
+    _get_parent_context,
+    cycle_span,
+    get_trace_id,
+    get_tracer,
+    setup_telemetry,
+)
 
 
 class TestSetupTelemetry:
@@ -34,7 +44,8 @@ class TestGetTraceId:
             assert all(c in "0123456789abcdef" for c in tid)
 
     def test_get_trace_id_con_span_invalido_devuelve_vacio(self):
-        from opentelemetry.trace import NonRecordingSpan, INVALID_SPAN_CONTEXT
+        from opentelemetry.trace import INVALID_SPAN_CONTEXT, NonRecordingSpan
+
         span = NonRecordingSpan(INVALID_SPAN_CONTEXT)
         tid = get_trace_id(span)
         assert tid == ""
@@ -55,18 +66,29 @@ class TestGetParentContext:
 class TestRecordHelpers:
     def test_record_token_usage_no_falla(self):
         from telemetry import record_token_usage
+
         setup_telemetry()
         with cycle_span("t1", "org1", "p1", "fr") as span:
             record_token_usage(span, {"backend": {"input": 100, "output": 50}})
 
     def test_record_qa_result_no_falla(self):
         from telemetry import record_qa_result
+
         setup_telemetry()
         with cycle_span("t2", "org1", "p1", "fr") as span:
             record_qa_result(span, {"passed": True, "score": 90, "issues": []})
 
     def test_record_security_result_no_falla(self):
         from telemetry import record_security_result
+
         setup_telemetry()
         with cycle_span("t3", "org1", "p1", "fr") as span:
-            record_security_result(span, {"passed": True, "score": 95, "severity": "none", "vulnerabilities": []})
+            record_security_result(
+                span,
+                {
+                    "passed": True,
+                    "score": 95,
+                    "severity": "none",
+                    "vulnerabilities": [],
+                },
+            )

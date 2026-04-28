@@ -3,21 +3,25 @@ OVD Platform — Tests S36: QA issues parsing + floating point instructions
 S36-A: QAReviewOutput._coerce_list_fields — evita Issues: 1548 por str→chars
 S36-B: system_backend.md — instrucción de verificar valores numéricos en tests
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # S36-A — QAReviewOutput coerce str→list sin partir en caracteres
 # ---------------------------------------------------------------------------
+
 
 class TestS36AQAIssuesParsing:
     """S36-A: QAReviewOutput._coerce_list_fields convierte str a list correctamente."""
 
     def _get_qa_output_class(self):
         import graph as g
+
         return g.QAReviewOutput
 
     def test_issues_str_no_se_parte_en_chars(self):
@@ -35,8 +39,9 @@ class TestS36AQAIssuesParsing:
             summary="Calidad baja",
         )
         # NO debe tener len == len(issue_text)
-        assert len(obj.issues) != len(issue_text), \
+        assert len(obj.issues) != len(issue_text), (
             f"issues se partió en {len(obj.issues)} caracteres en vez de items"
+        )
         # Debe tener ≤ número de líneas del texto
         assert len(obj.issues) <= issue_text.count("\n") + 1
 
@@ -102,8 +107,9 @@ class TestS36AQAIssuesParsing:
             code_quality_issues=[],
             summary="Muchos issues",
         )
-        assert len(obj.issues) < 100, \
+        assert len(obj.issues) < 100, (
             f"Bug S36-A: issues tiene {len(obj.issues)} items para un string de 1548 chars"
+        )
 
     def test_len_issues_log_correcto(self):
         """len(result.issues) en el log refleja número de issues reales, no chars."""
@@ -120,8 +126,9 @@ class TestS36AQAIssuesParsing:
             summary="Crítico",
         )
         # El log haría f"Issues: {len(result.issues)}" → debe ser ≤ 10, no 100+
-        assert len(obj.issues) <= 10, \
+        assert len(obj.issues) <= 10, (
             f"Log mostraría 'Issues: {len(obj.issues)}' — debería ser ≤ 10"
+        )
 
     def test_missing_requirements_str_funciona(self):
         """missing_requirements también acepta str y lo convierte a list."""
@@ -143,45 +150,50 @@ class TestS36AQAIssuesParsing:
 # S36-B — system_backend.md instrucción de valores numéricos en tests
 # ---------------------------------------------------------------------------
 
+
 class TestS36BFloatInstructions:
     """S36-B: system_backend.md incluye instrucción sobre valores float en tests."""
 
     def _get_template_content(self) -> str:
         # S58-pre: el contenido float-specific fue movido a stack/backend_python.md
         import template_loader
+
         template_loader.invalidate()
-        return template_loader.render_composed("system_backend", stack_language="python")
+        return template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
 
     def test_template_menciona_punto_flotante(self):
         """El template menciona el problema de punto flotante en tests."""
         content = self._get_template_content()
-        assert "punto flotante" in content.lower() or "float" in content.lower(), \
+        assert "punto flotante" in content.lower() or "float" in content.lower(), (
             "system_backend.md no menciona el problema de valores float en tests"
+        )
 
     def test_template_menciona_round(self):
         """El template muestra el uso de round() para verificar valores."""
         content = self._get_template_content()
-        assert "round(" in content, \
-            "system_backend.md no muestra ejemplo con round()"
+        assert "round(" in content, "system_backend.md no muestra ejemplo con round()"
 
     def test_template_prohibe_valores_de_memoria(self):
         """El template prohíbe escribir valores numéricos de memoria."""
         content = self._get_template_content()
-        assert "memoria" in content.lower() or "NUNCA" in content, \
+        assert "memoria" in content.lower() or "NUNCA" in content, (
             "system_backend.md no prohíbe valores numéricos de memoria"
+        )
 
     def test_template_incluye_ejemplo_verificacion(self):
         """El template incluye un ejemplo verificable de cálculo antes de escribir el test."""
         content = self._get_template_content()
         # Debe haber un bloque de código con Python de verificación
-        assert "```python" in content or "```" in content, \
+        assert "```python" in content or "```" in content, (
             "system_backend.md no incluye ejemplo de código para verificar valores"
+        )
 
     def test_float_verification_math(self):
         """El valor correcto de round(53.4 / 1.70**2, 2) es 18.48, no 18.49."""
         result = round(53.4 / 1.70**2, 2)
-        assert result == 18.48, \
-            f"El valor correcto es 18.48 pero obtenemos {result}"
+        assert result == 18.48, f"El valor correcto es 18.48 pero obtenemos {result}"
 
     def test_float_rounding_precision(self):
         """Documenta que round() con distintos decimales da resultados distintos."""

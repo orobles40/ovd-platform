@@ -1,21 +1,25 @@
 """
 S20 — GAP-R4, GAP-R8: Tests del circuit breaker por provider y retry en _fetch_resolved.
 """
-from __future__ import annotations
-import os
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import httpx
 
+from __future__ import annotations
+
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 # ---------------------------------------------------------------------------
 # Tests del CircuitBreaker
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def reset_circuit_breaker():
     """Limpia el estado del circuit breaker entre tests."""
     from model_router import _cb
+
     _cb.reset()
     yield
     _cb.reset()
@@ -23,7 +27,8 @@ def reset_circuit_breaker():
 
 def test_circuit_opens_after_n_failures():
     """El circuito se abre tras N fallos consecutivos."""
-    from model_router import _cb, CircuitOpenError
+    from model_router import CircuitOpenError, _cb
+
     _cb._threshold = 3
 
     assert not _cb.is_open("ollama")
@@ -31,12 +36,13 @@ def test_circuit_opens_after_n_failures():
     _cb.record_failure("ollama")
     assert not _cb.is_open("ollama")  # aún no llega al umbral
     _cb.record_failure("ollama")
-    assert _cb.is_open("ollama")      # umbral alcanzado
+    assert _cb.is_open("ollama")  # umbral alcanzado
 
 
 def test_circuit_closes_on_success():
     """El circuito vuelve a closed tras un éxito."""
     from model_router import _cb
+
     _cb._threshold = 2
 
     _cb.record_failure("claude")
@@ -50,6 +56,7 @@ def test_circuit_closes_on_success():
 def test_circuit_half_open_after_recovery():
     """Tras recovery_secs, el circuito permite una llamada de prueba (half-open)."""
     import time
+
     from model_router import _cb
 
     _cb._threshold = 1
@@ -64,14 +71,20 @@ def test_circuit_half_open_after_recovery():
 
 def test_build_llm_raises_circuit_open_error():
     """build_llm lanza CircuitOpenError cuando el circuito está abierto."""
-    from model_router import _cb, build_llm, CircuitOpenError, ResolvedConfig
+    from model_router import CircuitOpenError, ResolvedConfig, _cb, build_llm
+
     _cb._threshold = 1
     _cb.record_failure("ollama")
 
     config = ResolvedConfig(
-        provider="ollama", model="qwen3-coder-next",
-        base_url=None, api_key_env=None, extra_instructions=None,
-        constraints=None, code_style=None, resolved_from="default",
+        provider="ollama",
+        model="qwen3-coder-next",
+        base_url=None,
+        api_key_env=None,
+        extra_instructions=None,
+        constraints=None,
+        code_style=None,
+        resolved_from="default",
     )
     with pytest.raises(CircuitOpenError):
         build_llm(config)
@@ -80,6 +93,7 @@ def test_build_llm_raises_circuit_open_error():
 # ---------------------------------------------------------------------------
 # Tests del retry en _fetch_resolved
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_fetch_resolved_retries_before_defaults():
@@ -97,7 +111,11 @@ async def test_fetch_resolved_retries_before_defaults():
         mock_resp.is_success = True
         mock_resp.json.return_value = {
             "resolved": {
-                "backend": {"provider": "ollama", "model": "qwen3-coder-next", "resolvedFrom": "project"}
+                "backend": {
+                    "provider": "ollama",
+                    "model": "qwen3-coder-next",
+                    "resolvedFrom": "project",
+                }
             }
         }
         return mock_resp

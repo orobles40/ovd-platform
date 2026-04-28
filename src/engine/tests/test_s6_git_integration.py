@@ -8,15 +8,18 @@ Verifica el comportamiento de _git_integration() en distintos escenarios:
 - Sin archivos escritos → no intenta crear branch
 - Mock de subprocess para S6.A branch creation
 """
-import sys
-import os
+
 import asyncio
-import tempfile
+import os
 import subprocess
-from unittest.mock import patch, MagicMock, AsyncMock
+import sys
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
+
 from graph import _git_integration
 
 
@@ -34,7 +37,11 @@ class TestGitIntegrationNoRepo:
         assert result["branch"] is None
 
     def test_directorio_inexistente_retorna_disabled(self):
-        result = run(_git_integration("/tmp/no-existe-xyz-ovd", "sess-abc", "test FR", ["file.py"]))
+        result = run(
+            _git_integration(
+                "/tmp/no-existe-xyz-ovd", "sess-abc", "test FR", ["file.py"]
+            )
+        )
         assert result["enabled"] is False
 
     def test_sin_archivos_retorna_disabled(self):
@@ -59,17 +66,26 @@ class TestGitIntegrationConRepo:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         subprocess.run(["git", "init"], cwd=self.tmpdir, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=self.tmpdir, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.tmpdir, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=self.tmpdir,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=self.tmpdir, capture_output=True
+        )
         # Crear un commit inicial para tener HEAD
         test_file = os.path.join(self.tmpdir, "README.md")
         with open(test_file, "w") as f:
             f.write("# Test repo\n")
         subprocess.run(["git", "add", "."], cwd=self.tmpdir, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=self.tmpdir, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=self.tmpdir, capture_output=True
+        )
 
     def teardown_method(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_s6a_crea_branch(self):
@@ -78,9 +94,11 @@ class TestGitIntegrationConRepo:
         with open(test_file, "w") as f:
             f.write("def hello(): pass\n")
 
-        result = run(_git_integration(
-            self.tmpdir, "tui-abc123def456", "Agregar función hello", ["feature.py"]
-        ))
+        result = run(
+            _git_integration(
+                self.tmpdir, "tui-abc123def456", "Agregar función hello", ["feature.py"]
+            )
+        )
         assert result["enabled"] is True
         # session_id[:12] de "tui-abc123def456" = "tui-abc123de"
         assert result["branch"] == "ovd/tui-abc123de"
@@ -91,9 +109,11 @@ class TestGitIntegrationConRepo:
         with open(test_file, "w") as f:
             f.write("def endpoint(): return {}\n")
 
-        result = run(_git_integration(
-            self.tmpdir, "tui-xyz789", "Crear endpoint API", ["api.py"]
-        ))
+        result = run(
+            _git_integration(
+                self.tmpdir, "tui-xyz789", "Crear endpoint API", ["api.py"]
+            )
+        )
         assert result["enabled"] is True
         # Si el commit fue exitoso, tiene SHA corto
         assert result["commit"] is not None or result["error"] is not None
@@ -105,18 +125,30 @@ class TestGitIntegrationConRepo:
             f.write("class Service: pass\n")
 
         feature_request = "Implementar servicio de notificaciones"
-        run(_git_integration(self.tmpdir, "tui-notif01", feature_request, ["service.py"]))
+        run(
+            _git_integration(
+                self.tmpdir, "tui-notif01", feature_request, ["service.py"]
+            )
+        )
 
         # Verificar el log de git
         log = subprocess.run(
             ["git", "log", "--oneline", "-1"],
-            cwd=self.tmpdir, capture_output=True, text=True
+            cwd=self.tmpdir,
+            capture_output=True,
+            text=True,
         )
         if log.returncode == 0 and log.stdout.strip():
-            assert "notificaciones" in log.stdout or "ovd/" in subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=self.tmpdir, capture_output=True, text=True
-            ).stdout
+            assert (
+                "notificaciones" in log.stdout
+                or "ovd/"
+                in subprocess.run(
+                    ["git", "branch", "--show-current"],
+                    cwd=self.tmpdir,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+            )
 
     def test_branch_ya_existente_no_falla(self):
         """Si el branch ya existe, debe usarlo sin error."""
@@ -133,7 +165,9 @@ class TestGitIntegrationConRepo:
             f.write("# util2\n")
 
         # Segunda llamada al mismo branch no debe fallar
-        result = run(_git_integration(self.tmpdir, "tui-dup123", "FR duplicado", ["util2.py"]))
+        result = run(
+            _git_integration(self.tmpdir, "tui-dup123", "FR duplicado", ["util2.py"])
+        )
         assert result["enabled"] is True
 
 

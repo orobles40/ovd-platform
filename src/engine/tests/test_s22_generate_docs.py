@@ -1,11 +1,15 @@
 """
 S22 — Tests del nodo generate_docs y su integración con deliver.
 """
+
 from __future__ import annotations
-import pytest
+
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys, os
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tests.factories import make_state
@@ -21,16 +25,18 @@ def _make_state_with_docs(**kwargs) -> dict:
             "tasks": [],
         },
         fr_analysis={"type": "endpoint"},
-        agent_results=[{
-            "agent": "backend",
-            "output": (
-                "```python:src/api/users.py\n"
-                "from fastapi import APIRouter\n"
-                "router = APIRouter()\n\n"
-                "@router.get('/users')\nasync def list_users(): ...\n"
-                "```"
-            ),
-        }],
+        agent_results=[
+            {
+                "agent": "backend",
+                "output": (
+                    "```python:src/api/users.py\n"
+                    "from fastapi import APIRouter\n"
+                    "router = APIRouter()\n\n"
+                    "@router.get('/users')\nasync def list_users(): ...\n"
+                    "```"
+                ),
+            }
+        ],
         **kwargs,
     )
 
@@ -38,6 +44,7 @@ def _make_state_with_docs(**kwargs) -> dict:
 # ---------------------------------------------------------------------------
 # generate_docs — happy paths
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_generate_docs_backend_endpoint_generates_openapi():
@@ -70,7 +77,13 @@ async def test_generate_docs_refactor_generates_changelog():
     import graph as g
 
     state = make_state(
-        sdd={"summary": "Refactor módulo de pagos", "requirements": [], "design": {}, "constraints": [], "tasks": []},
+        sdd={
+            "summary": "Refactor módulo de pagos",
+            "requirements": [],
+            "design": {},
+            "constraints": [],
+            "tasks": [],
+        },
         fr_analysis={"type": "refactor"},
         agent_results=[{"agent": "backend", "output": "# refactored code"}],
     )
@@ -98,7 +111,13 @@ async def test_generate_docs_frontend_generates_readme():
     import graph as g
 
     state = make_state(
-        sdd={"summary": "Componente LoginForm", "requirements": [], "design": {}, "constraints": [], "tasks": []},
+        sdd={
+            "summary": "Componente LoginForm",
+            "requirements": [],
+            "design": {},
+            "constraints": [],
+            "tasks": [],
+        },
         fr_analysis={"type": "frontend"},
         agent_results=[{"agent": "frontend", "output": "# LoginForm component"}],
     )
@@ -123,6 +142,7 @@ async def test_generate_docs_frontend_generates_readme():
 # ---------------------------------------------------------------------------
 # generate_docs — fallo graceful
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_generate_docs_llm_failure_returns_empty_docs():
@@ -152,7 +172,9 @@ async def test_generate_docs_no_code_blocks_returns_empty():
     state = _make_state_with_docs()
 
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="Aquí va la documentación sin bloques."))
+    mock_llm.ainvoke = AsyncMock(
+        return_value=MagicMock(content="Aquí va la documentación sin bloques.")
+    )
 
     with patch("graph.model_router") as mock_router:
         mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)

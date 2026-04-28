@@ -6,18 +6,23 @@ Cubre:
   S26-B: run_tests usa cwd=work_dir y --import-mode=importlib para pytest
   S26-C: security_audit lee archivos del filesystem cuando hay directory (igual que qa_review S24-C)
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pathlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from tests.factories import make_state
 
+import pytest
+
+from tests.factories import make_state
 
 # ────────────────────────────────────────────────────────────────────────────
 # S26-A — Template system_backend.md
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestSystemBackendTemplateS26:
     """system_backend.md prohíbe __init__.py en raíz e incluye conftest con sys.path."""
@@ -25,8 +30,11 @@ class TestSystemBackendTemplateS26:
     def _read_template(self) -> str:
         # S58-pre: __init__.py y conftest reglas movidas a stack/backend_python.md
         import template_loader
+
         template_loader.invalidate()
-        return template_loader.render_composed("system_backend", stack_language="python")
+        return template_loader.render_composed(
+            "system_backend", stack_language="python"
+        )
 
     def test_template_prohibits_init_in_root(self):
         """system_backend.md contiene prohibición explícita de __init__.py en raíz."""
@@ -58,12 +66,17 @@ class TestSystemBackendTemplateS26:
 # S26-B — run_tests cwd + --import-mode=importlib
 # ────────────────────────────────────────────────────────────────────────────
 
+
 def _make_agent_results_with_tests(test_paths: list[str]) -> list[dict]:
-    return [{
-        "agent": "backend",
-        "output": "",
-        "artifacts": [{"path": p, "size": 100, "lang": "python"} for p in test_paths],
-    }]
+    return [
+        {
+            "agent": "backend",
+            "output": "",
+            "artifacts": [
+                {"path": p, "size": 100, "lang": "python"} for p in test_paths
+            ],
+        }
+    ]
 
 
 class TestRunTestsS26:
@@ -161,6 +174,7 @@ class TestRunTestsS26:
 # S26-C — security_audit filesystem-first
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class TestSecurityAuditFilesystemFirst:
     """security_audit lee archivos del filesystem cuando directory está disponible."""
 
@@ -173,12 +187,22 @@ class TestSecurityAuditFilesystemFirst:
 
         state = make_state(
             directory=str(tmp_path),
-            agent_results=[{
-                "agent": "backend",
-                "output": "",  # vacío — tool calling path
-                "artifacts": [{"path": "src/auth.py", "size": 50, "lang": "python"}],
-            }],
-            sdd={"summary": "Auth service", "requirements": [], "design": {}, "constraints": [], "tasks": []},
+            agent_results=[
+                {
+                    "agent": "backend",
+                    "output": "",  # vacío — tool calling path
+                    "artifacts": [
+                        {"path": "src/auth.py", "size": 50, "lang": "python"}
+                    ],
+                }
+            ],
+            sdd={
+                "summary": "Auth service",
+                "requirements": [],
+                "design": {},
+                "constraints": [],
+                "tasks": [],
+            },
         )
 
         captured_messages: list = []
@@ -188,16 +212,24 @@ class TestSecurityAuditFilesystemFirst:
         async def mock_invoke_structured(llm, messages, schema):
             captured_messages.extend(messages)
             return SecurityAuditOutput(
-                passed=True, score=90, severity="none",
-                vulnerabilities=[], secrets_found=[], insecure_patterns=[],
-                rls_compliant=True, remediation=[], summary="OK",
+                passed=True,
+                score=90,
+                severity="none",
+                vulnerabilities=[],
+                secrets_found=[],
+                insecure_patterns=[],
+                rls_compliant=True,
+                remediation=[],
+                summary="OK",
             )
 
         mock_llm = MagicMock()
         # S48-A: OVD_SECURITY_MIN_SCORE=70 para evitar el bypass dev y probar el LLM
-        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}), \
-             patch("graph.model_router") as mock_router, \
-             patch("graph.invoke_structured", side_effect=mock_invoke_structured):
+        with (
+            patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}),
+            patch("graph.model_router") as mock_router,
+            patch("graph.invoke_structured", side_effect=mock_invoke_structured),
+        ):
             mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)
             await __import__("graph").security_audit(state)
 
@@ -210,12 +242,20 @@ class TestSecurityAuditFilesystemFirst:
         inline_code = "def insecure(): return eval(input())"
         state = make_state(
             directory="",
-            agent_results=[{
-                "agent": "backend",
-                "output": inline_code,
-                "artifacts": [],
-            }],
-            sdd={"summary": "Test", "requirements": [], "design": {}, "constraints": [], "tasks": []},
+            agent_results=[
+                {
+                    "agent": "backend",
+                    "output": inline_code,
+                    "artifacts": [],
+                }
+            ],
+            sdd={
+                "summary": "Test",
+                "requirements": [],
+                "design": {},
+                "constraints": [],
+                "tasks": [],
+            },
         )
 
         captured_messages: list = []
@@ -225,16 +265,24 @@ class TestSecurityAuditFilesystemFirst:
         async def mock_invoke_structured(llm, messages, schema):
             captured_messages.extend(messages)
             return SecurityAuditOutput(
-                passed=False, score=20, severity="high",
-                vulnerabilities=[], secrets_found=[], insecure_patterns=[],
-                rls_compliant=False, remediation=[], summary="Insecure",
+                passed=False,
+                score=20,
+                severity="high",
+                vulnerabilities=[],
+                secrets_found=[],
+                insecure_patterns=[],
+                rls_compliant=False,
+                remediation=[],
+                summary="Insecure",
             )
 
         mock_llm = MagicMock()
         # S48-A: OVD_SECURITY_MIN_SCORE=70 para evitar el bypass dev y probar el LLM
-        with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}), \
-             patch("graph.model_router") as mock_router, \
-             patch("graph.invoke_structured", side_effect=mock_invoke_structured):
+        with (
+            patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}),
+            patch("graph.model_router") as mock_router,
+            patch("graph.invoke_structured", side_effect=mock_invoke_structured),
+        ):
             mock_router.get_llm_with_context = AsyncMock(return_value=mock_llm)
             await __import__("graph").security_audit(state)
 

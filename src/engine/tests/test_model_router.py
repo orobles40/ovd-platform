@@ -9,26 +9,30 @@ Cubre:
   - _resolve_temperature por role y provider
   - _warn_if_small_model
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from model_router import (
     ResolvedConfig,
     _apply_stack_routing,
-    invalidate_cache,
+    _cache,
     _cache_key,
     _resolve_temperature,
     _warn_if_small_model,
-    _cache,
+    invalidate_cache,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_config(
     provider="ollama",
@@ -54,8 +58,8 @@ def make_config(
 # TestResolvedConfig
 # ---------------------------------------------------------------------------
 
-class TestResolvedConfig:
 
+class TestResolvedConfig:
     def test_config_defaults(self):
         """ResolvedConfig con valores mínimos: resolved_from=default, temperature=0.0."""
         cfg = ResolvedConfig(
@@ -87,8 +91,8 @@ class TestResolvedConfig:
 # TestApplyStackRouting
 # ---------------------------------------------------------------------------
 
-class TestApplyStackRouting:
 
+class TestApplyStackRouting:
     def test_auto_retorna_config_sin_cambios(self):
         """stack_routing='auto' → la función retorna la misma config sin modificar."""
         cfg = make_config(provider="ollama")
@@ -157,8 +161,8 @@ class TestApplyStackRouting:
 # TestCache
 # ---------------------------------------------------------------------------
 
-class TestCache:
 
+class TestCache:
     def setup_method(self):
         """Limpiar el cache antes de cada test."""
         _cache.clear()
@@ -215,8 +219,8 @@ class TestCache:
     def test_invalidate_cache_vacio_no_falla(self):
         """invalidate_cache() con cache vacío no debe lanzar excepción."""
         assert len(_cache) == 0
-        invalidate_cache()          # sin org_id
-        invalidate_cache("org1")    # con org_id inexistente
+        invalidate_cache()  # sin org_id
+        invalidate_cache("org1")  # con org_id inexistente
         assert len(_cache) == 0
 
 
@@ -224,8 +228,8 @@ class TestCache:
 # TestResolveTemperature
 # ---------------------------------------------------------------------------
 
-class TestResolveTemperature:
 
+class TestResolveTemperature:
     def test_qa_ollama_tiene_temperature_cero(self):
         """role='qa' con provider='ollama' → temperature=0.0 (structured role)."""
         temp = _resolve_temperature("qa", "ollama")
@@ -274,20 +278,28 @@ class TestResolveTemperature:
 # TestWarnIfSmallModel
 # ---------------------------------------------------------------------------
 
-class TestWarnIfSmallModel:
 
+class TestWarnIfSmallModel:
     def test_modelo_grande_no_emite_warning(self, caplog):
         """Un modelo 7b+ no debe emitir warning."""
         import logging
+
         with caplog.at_level(logging.WARNING):
             _warn_if_small_model("qwen2.5-coder:7b", "backend")
         # No debe haber warnings de small model en este caso
-        small_warnings = [r for r in caplog.records if "pequeño" in r.message.lower() or "7b" in r.message.lower() or "menos de" in r.message.lower()]
+        small_warnings = [
+            r
+            for r in caplog.records
+            if "pequeño" in r.message.lower()
+            or "7b" in r.message.lower()
+            or "menos de" in r.message.lower()
+        ]
         assert len(small_warnings) == 0
 
     def test_modelo_3b_emite_warning(self, caplog):
         """Un modelo 3b debe emitir warning."""
         import logging
+
         with caplog.at_level(logging.WARNING):
             _warn_if_small_model("llama:3b", "qa")
         assert len(caplog.records) > 0

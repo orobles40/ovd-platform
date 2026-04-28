@@ -1,14 +1,17 @@
 """
 S20 — GAP-R5: Tests del fallback en qa_review y _parse_qa_fallback.
 """
+
 from __future__ import annotations
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Tests de _parse_qa_fallback
 # ---------------------------------------------------------------------------
+
 
 def test_parse_qa_fallback_extracts_json_from_text():
     """Extrae campos de un JSON embebido en texto libre."""
@@ -29,7 +32,7 @@ def test_parse_qa_fallback_extracts_score_via_regex():
     """Extrae score via regex cuando no hay JSON válido."""
     from graph import _parse_qa_fallback
 
-    raw = 'score: 78/100 — calidad aceptable'
+    raw = "score: 78/100 — calidad aceptable"
     result = _parse_qa_fallback(raw)
     assert result.score == 78
     assert result.passed is True  # 78 >= 60
@@ -48,6 +51,7 @@ def test_parse_qa_fallback_returns_neutral_on_unparseable():
 # ---------------------------------------------------------------------------
 # Tests de qa_review con fallback
 # ---------------------------------------------------------------------------
+
 
 def _make_qa_state():
     return {
@@ -73,7 +77,11 @@ async def test_qa_review_returns_neutral_on_invoke_failure():
 
     with (
         patch("model_router.get_llm_with_context", AsyncMock(return_value=mock_llm)),
-        patch.object(g, "invoke_structured", AsyncMock(side_effect=Exception("structured failed"))),
+        patch.object(
+            g,
+            "invoke_structured",
+            AsyncMock(side_effect=Exception("structured failed")),
+        ),
     ):
         result_state = await g.qa_review(state)
 
@@ -96,7 +104,11 @@ async def test_qa_review_uses_raw_fallback_when_structured_fails():
 
     with (
         patch("model_router.get_llm_with_context", AsyncMock(return_value=mock_llm)),
-        patch.object(g, "invoke_structured", AsyncMock(side_effect=Exception("structured failed"))),
+        patch.object(
+            g,
+            "invoke_structured",
+            AsyncMock(side_effect=Exception("structured failed")),
+        ),
     ):
         result_state = await g.qa_review(state)
 

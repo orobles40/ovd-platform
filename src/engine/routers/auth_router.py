@@ -10,6 +10,7 @@ Endpoints públicos de autenticación:
 
 Dependencia JWT: inject_current_user() → usa para rutas protegidas de API.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.hash import argon2 as _argon2_hash
 from pydantic import BaseModel
 
-from rate_limiter import limiter
 from auth import (
     AccessTokenPayload,
     TokenPair,
@@ -30,6 +30,7 @@ from auth import (
     revoke_refresh_token,
     verify_access_token,
 )
+from rate_limiter import limiter
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ _bearer = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 # Modelos de request/response
 # ---------------------------------------------------------------------------
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -69,6 +71,7 @@ class MeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helper: lookup usuario en BD
 # ---------------------------------------------------------------------------
+
 
 async def _get_user_by_email(email: str, org_id: str | None = None) -> dict | None:
     """S77-F: retorna la fila de ovd_users o None si no existe. Manejo explícito de errores BD."""
@@ -100,7 +103,9 @@ async def _get_user_by_email(email: str, org_id: str | None = None) -> dict | No
             detail="Error de configuración de BD — contactar admin",
         )
     except psycopg.Error as e:
-        log.error("[S77-F] error psycopg inesperado en /auth/login: %s", e, exc_info=True)
+        log.error(
+            "[S77-F] error psycopg inesperado en /auth/login: %s", e, exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno de autenticación",
@@ -110,18 +115,19 @@ async def _get_user_by_email(email: str, org_id: str | None = None) -> dict | No
         return None
 
     return {
-        "id":            record[0],
-        "org_id":        record[1],
-        "email":         record[2],
+        "id": record[0],
+        "org_id": record[1],
+        "email": record[2],
         "password_hash": record[3],
-        "role":          record[4],
-        "active":        record[5],
+        "role": record[4],
+        "active": record[5],
     }
 
 
 # ---------------------------------------------------------------------------
 # Dependencia reutilizable: usuario autenticado
 # ---------------------------------------------------------------------------
+
 
 async def inject_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -167,7 +173,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("10/minute")   # LOW-03: máx 10 intentos de login por minuto por IP
+@limiter.limit("10/minute")  # LOW-03: máx 10 intentos de login por minuto por IP
 async def login(body: LoginRequest, request: Request, response: Response):
     """
     Autentica al usuario con email + contraseña.
@@ -176,10 +182,14 @@ async def login(body: LoginRequest, request: Request, response: Response):
     """
     user = await _get_user_by_email(body.email)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
+        )
 
     if not user["active"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario inactivo")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Usuario inactivo"
+        )
 
     # Verificar contraseña (argon2id o bcrypt según hash almacenado)
     try:
@@ -188,12 +198,15 @@ async def login(body: LoginRequest, request: Request, response: Response):
         # Fallback: bcrypt si el hash no es argon2
         try:
             from passlib.hash import bcrypt as _bcrypt
+
             pwd_ok = _bcrypt.verify(body.password, user["password_hash"])
         except Exception:
             pwd_ok = False
 
     if not pwd_ok:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
+        )
 
     user_agent = request.headers.get("User-Agent", "")
     ip = request.client.host if request.client else ""
@@ -218,7 +231,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
 
 @router.post("/refresh", response_model=LoginResponse)
-@limiter.limit("20/minute")   # LOW-03: máx 20 rotaciones de token por minuto por IP
+@limiter.limit("20/minute")  # LOW-03: máx 20 rotaciones de token por minuto por IP
 async def refresh(
     request: Request,
     response: Response,
@@ -230,9 +243,12 @@ async def refresh(
     """
     raw_token = (body.refresh_token if body else None) or ovd_refresh_token
     if not raw_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token requerido")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token requerido"
+        )
     try:
         from auth import verify_refresh_token
+
         record = await verify_refresh_token(raw_token)
 
         async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:

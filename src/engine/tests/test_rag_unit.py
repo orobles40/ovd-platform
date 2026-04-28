@@ -8,23 +8,27 @@ Verifica sin infraestructura real (sin PostgreSQL, sin Ollama):
 - search(): retorna string vacío ante errores
 - index_chunks_async() / search_async(): wrappers async funcionan
 """
-import sys
+
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # _get_connection_string
 # ---------------------------------------------------------------------------
+
 
 class TestGetConnectionString:
     """U-01.A — Conversión de DATABASE_URL al formato SQLAlchemy + psycopg2."""
 
     def _call(self, url: str) -> str:
         import rag
+
         original = rag._DATABASE_URL
         rag._DATABASE_URL = url
         result = rag._get_connection_string()
@@ -56,15 +60,23 @@ class TestGetConnectionString:
 # index_chunks — sin DB (DATABASE_URL vacía)
 # ---------------------------------------------------------------------------
 
+
 class TestIndexChunksWithoutDB:
     """U-01.B — index_chunks() no lanza excepción cuando DATABASE_URL no está."""
 
     def test_retorna_cero_sin_database_url(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "")
         result = rag.index_chunks(
-            [{"content": "test", "doc_type": "doc",
-              "source_file": "f.md", "metadata": {}}],
+            [
+                {
+                    "content": "test",
+                    "doc_type": "doc",
+                    "source_file": "f.md",
+                    "metadata": {},
+                }
+            ],
             project_id="p1",
             org_id="o1",
         )
@@ -72,12 +84,14 @@ class TestIndexChunksWithoutDB:
 
     def test_lista_vacia_retorna_cero(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
         result = rag.index_chunks([], project_id="p1", org_id="o1")
         assert result == 0
 
     def test_error_de_conexion_retorna_cero(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
 
         def _store_raises(*a, **kw):
@@ -85,7 +99,14 @@ class TestIndexChunksWithoutDB:
 
         monkeypatch.setattr(rag, "_get_store", _store_raises)
         result = rag.index_chunks(
-            [{"content": "x", "doc_type": "doc", "source_file": "f.md", "metadata": {}}],
+            [
+                {
+                    "content": "x",
+                    "doc_type": "doc",
+                    "source_file": "f.md",
+                    "metadata": {},
+                }
+            ],
             project_id="p1",
             org_id="o1",
         )
@@ -94,6 +115,7 @@ class TestIndexChunksWithoutDB:
     def test_chunks_multiples_procesados(self, monkeypatch):
         """Verifica que con mock de store, indexa el número correcto de chunks."""
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
 
         mock_store = MagicMock()
@@ -101,8 +123,12 @@ class TestIndexChunksWithoutDB:
         monkeypatch.setattr(rag, "_get_store", lambda pid: mock_store)
 
         chunks = [
-            {"content": f"chunk {i}", "doc_type": "doc",
-             "source_file": "f.md", "metadata": {}}
+            {
+                "content": f"chunk {i}",
+                "doc_type": "doc",
+                "source_file": "f.md",
+                "metadata": {},
+            }
             for i in range(5)
         ]
         result = rag.index_chunks(chunks, project_id="p1", org_id="o1")
@@ -112,19 +138,28 @@ class TestIndexChunksWithoutDB:
     def test_metadata_org_project_inyectada(self, monkeypatch):
         """Verifica que org_id y project_id se inyectan en los metadatos de cada doc."""
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
 
         docs_capturados = []
 
         mock_store = MagicMock()
+
         def _capture_docs(docs):
             docs_capturados.extend(docs)
+
         mock_store.add_documents = _capture_docs
         monkeypatch.setattr(rag, "_get_store", lambda pid: mock_store)
 
         rag.index_chunks(
-            [{"content": "hola", "doc_type": "codebase",
-              "source_file": "api.py", "metadata": {"language": "python"}}],
+            [
+                {
+                    "content": "hola",
+                    "doc_type": "codebase",
+                    "source_file": "api.py",
+                    "metadata": {"language": "python"},
+                }
+            ],
             project_id="mi-proyecto",
             org_id="mi-org",
         )
@@ -141,24 +176,30 @@ class TestIndexChunksWithoutDB:
 # search — sin DB
 # ---------------------------------------------------------------------------
 
+
 class TestSearchWithoutDB:
     """U-01.C — search() retorna string vacío ante errores o sin DB."""
 
     def test_retorna_vacio_sin_database_url(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "")
         result = rag.search("query test", project_id="p1")
         assert result == ""
 
     def test_retorna_vacio_si_store_lanza(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
-        monkeypatch.setattr(rag, "_get_store", lambda pid: (_ for _ in ()).throw(RuntimeError("fail")))
+        monkeypatch.setattr(
+            rag, "_get_store", lambda pid: (_ for _ in ()).throw(RuntimeError("fail"))
+        )
         result = rag.search("query", project_id="p1")
         assert result == ""
 
     def test_retorna_vacio_si_sin_resultados(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
 
         mock_store = MagicMock()
@@ -169,13 +210,18 @@ class TestSearchWithoutDB:
         assert result == ""
 
     def test_retorna_vacio_si_score_bajo(self, monkeypatch):
-        import rag
         from langchain_core.documents import Document
+
+        import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
         monkeypatch.setattr(rag, "_MIN_SCORE", 0.65)
 
         mock_store = MagicMock()
-        doc = Document(page_content="contenido", metadata={"doc_type": "doc", "source_file": "f.md"})
+        doc = Document(
+            page_content="contenido",
+            metadata={"doc_type": "doc", "source_file": "f.md"},
+        )
         mock_store.similarity_search_with_relevance_scores = MagicMock(
             return_value=[(doc, 0.3)]  # score < MIN_SCORE
         )
@@ -185,8 +231,10 @@ class TestSearchWithoutDB:
         assert result == ""
 
     def test_retorna_contexto_formateado_si_score_suficiente(self, monkeypatch):
-        import rag
         from langchain_core.documents import Document
+
+        import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "postgresql://x@localhost/db")
         monkeypatch.setattr(rag, "_MIN_SCORE", 0.65)
 
@@ -209,6 +257,7 @@ class TestSearchWithoutDB:
     def test_resultado_es_siempre_string(self, monkeypatch):
         """Contrato: search() NUNCA retorna None."""
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "")
         result = rag.search("cualquier cosa", project_id="p1")
         assert isinstance(result, str)
@@ -218,12 +267,14 @@ class TestSearchWithoutDB:
 # Wrappers async
 # ---------------------------------------------------------------------------
 
+
 class TestAsyncWrappers:
     """U-01.D — index_chunks_async y search_async delegan correctamente."""
 
     @pytest.mark.asyncio
     async def test_index_chunks_async_delega_a_sync(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "index_chunks", lambda chunks, project_id, org_id: 7)
         result = await rag.index_chunks_async([], "p1", "o1")
         assert result == 7
@@ -231,6 +282,7 @@ class TestAsyncWrappers:
     @pytest.mark.asyncio
     async def test_search_async_retorna_string(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "")
         result = await rag.search_async("test", "p1")
         assert isinstance(result, str)
@@ -238,6 +290,7 @@ class TestAsyncWrappers:
     @pytest.mark.asyncio
     async def test_search_async_retorna_string_ante_error(self, monkeypatch):
         import rag
+
         monkeypatch.setattr(rag, "_DATABASE_URL", "")
         result = await rag.search_async("test", "p1")
         assert isinstance(result, str)

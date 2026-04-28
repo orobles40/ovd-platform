@@ -5,24 +5,26 @@ Fix A (api.py:335):   captura BaseException (CancelledError) y emite SSE con men
 Fix B (graph.py:1721): fallback _run_agent_with_tools pasa rag_context y stack_language
 Fix State: estado correcto del segundo fan-out tras update_test_retry
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import asyncio
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from factories import make_state
-
 
 # ---------------------------------------------------------------------------
 # Fix A — Captura BaseException en _stream_graph_events
 # ---------------------------------------------------------------------------
 
-class TestFixABaseExceptionSSE:
 
+class TestFixABaseExceptionSSE:
     @pytest.mark.asyncio
     async def test_cancelled_error_produce_mensaje_no_vacio(self):
         """Fix A: CancelledError genera SSE con error_type y message no vacíos."""
@@ -35,11 +37,16 @@ class TestFixABaseExceptionSSE:
                 raise asyncio.CancelledError("timeout en agent_executor")
             except BaseException as e:
                 error_msg = str(e) if str(e) else type(e).__name__
-                captured.append(api._make_sse_event("error", {
-                    "message": error_msg,
-                    "error_type": type(e).__name__,
-                    "recoverable": False,
-                }))
+                captured.append(
+                    api._make_sse_event(
+                        "error",
+                        {
+                            "message": error_msg,
+                            "error_type": type(e).__name__,
+                            "recoverable": False,
+                        },
+                    )
+                )
 
         await _gen()
 
@@ -66,11 +73,16 @@ class TestFixABaseExceptionSSE:
                 raise SilentError()
             except BaseException as e:
                 error_msg = str(e) if str(e) else type(e).__name__
-                captured.append(api._make_sse_event("error", {
-                    "message": error_msg,
-                    "error_type": type(e).__name__,
-                    "recoverable": False,
-                }))
+                captured.append(
+                    api._make_sse_event(
+                        "error",
+                        {
+                            "message": error_msg,
+                            "error_type": type(e).__name__,
+                            "recoverable": False,
+                        },
+                    )
+                )
 
         await _gen()
 
@@ -90,11 +102,16 @@ class TestFixABaseExceptionSSE:
                 raise ValueError("campo inválido en retry")
             except BaseException as e:
                 error_msg = str(e) if str(e) else type(e).__name__
-                captured.append(api._make_sse_event("error", {
-                    "message": error_msg,
-                    "error_type": type(e).__name__,
-                    "recoverable": False,
-                }))
+                captured.append(
+                    api._make_sse_event(
+                        "error",
+                        {
+                            "message": error_msg,
+                            "error_type": type(e).__name__,
+                            "recoverable": False,
+                        },
+                    )
+                )
 
         await _gen()
 
@@ -106,6 +123,7 @@ class TestFixABaseExceptionSSE:
 # ---------------------------------------------------------------------------
 # Fix B — Fallback _run_agent_with_tools pasa rag_context y stack_language
 # ---------------------------------------------------------------------------
+
 
 class TestFixBFallbackParametros:
     """
@@ -121,13 +139,32 @@ class TestFixBFallbackParametros:
 
         llamadas: list[dict] = []
 
-        async def runner_captura(sdd, comment, llm, project_ctx, retry_feedback, language,
-                                  rag_context="", *, stack_language=""):
-            llamadas.append({"rag_context": rag_context, "stack_language": stack_language})
-            return {"agent": "backend", "output": "ok", "artifacts": [], "uncertainties": [], "tokens": {}}
+        async def runner_captura(
+            sdd,
+            comment,
+            llm,
+            project_ctx,
+            retry_feedback,
+            language,
+            rag_context="",
+            *,
+            stack_language="",
+        ):
+            llamadas.append(
+                {"rag_context": rag_context, "stack_language": stack_language}
+            )
+            return {
+                "agent": "backend",
+                "output": "ok",
+                "artifacts": [],
+                "uncertainties": [],
+                "tokens": {},
+            }
 
         bound_llm_mock = MagicMock()
-        bound_llm_mock.ainvoke = AsyncMock(side_effect=RuntimeError("LLM timeout en segundo fan-out"))
+        bound_llm_mock.ainvoke = AsyncMock(
+            side_effect=RuntimeError("LLM timeout en segundo fan-out")
+        )
 
         mock_llm = MagicMock()
         mock_llm.bind_tools = MagicMock(return_value=bound_llm_mock)
@@ -157,10 +194,25 @@ class TestFixBFallbackParametros:
 
         llamadas: list[dict] = []
 
-        async def runner_captura(sdd, comment, llm, project_ctx, retry_feedback, language,
-                                  rag_context="", *, stack_language=""):
+        async def runner_captura(
+            sdd,
+            comment,
+            llm,
+            project_ctx,
+            retry_feedback,
+            language,
+            rag_context="",
+            *,
+            stack_language="",
+        ):
             llamadas.append({"stack_language": stack_language})
-            return {"agent": "backend", "output": "ok", "artifacts": [], "uncertainties": [], "tokens": {}}
+            return {
+                "agent": "backend",
+                "output": "ok",
+                "artifacts": [],
+                "uncertainties": [],
+                "tokens": {},
+            }
 
         bound_llm_mock = MagicMock()
         bound_llm_mock.ainvoke = AsyncMock(side_effect=RuntimeError("LLM timeout"))
@@ -191,15 +243,19 @@ class TestFixBFallbackParametros:
 # Fix State — Estado correcto del segundo fan-out
 # ---------------------------------------------------------------------------
 
-class TestFixStateSegundoFanout:
 
+class TestFixStateSegundoFanout:
     def test_update_test_retry_no_modifica_agent_results(self):
         """State: update_test_retry NO incluye agent_results en su retorno."""
         import graph as g
 
         state = make_state(
             agent_results=[{"agent": "backend", "output": "código", "artifacts": []}],
-            test_results={"passed": False, "output": "AssertionError: assert 1 == 2", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": "AssertionError: assert 1 == 2",
+                "runner": "pytest",
+            },
             test_retry_count=0,
             retry_feedback="",
         )
@@ -212,8 +268,9 @@ class TestFixStateSegundoFanout:
 
     def test_make_agent_sends_incluye_retry_feedback_en_segundo_ciclo(self):
         """State: el Send del segundo fan-out incluye retry_feedback del ciclo anterior."""
-        import graph as g
         from langgraph.types import Send
+
+        import graph as g
 
         feedback = "⚠️ Tests fallaron: AssertionError en test_login"
         state = make_state(

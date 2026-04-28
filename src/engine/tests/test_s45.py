@@ -6,17 +6,21 @@ S45-C: checklist de archivos requeridos en template backend
 S45-D: regla devops reforzada en system_sdd.md
 S45-E: URL de BD desde project_context
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import pathlib
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # S45-A — session_create carga effective_project_context desde BD
 # ---------------------------------------------------------------------------
+
 
 class TestS45AProjectContext:
     """S45-A: api.py usa effective_project_context cargado desde ovd_project_profiles."""
@@ -24,28 +28,38 @@ class TestS45AProjectContext:
     def test_api_contiene_effective_project_context(self):
         """S45-A: api.py define effective_project_context antes de llamar a resolve_async."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
-        assert "effective_project_context" in src, "effective_project_context no encontrado en start_session"
+        assert "effective_project_context" in src, (
+            "effective_project_context no encontrado en start_session"
+        )
 
     def test_api_consulta_ovd_project_profiles(self):
         """S45-A: start_session consulta la tabla ovd_project_profiles."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
         assert "ovd_project_profiles" in src
 
     def test_api_etiqueta_s45a(self):
         """S45-A: el código contiene la etiqueta S45-A."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
         assert "S45-A" in src
 
     def test_api_carga_constraints_del_perfil(self):
         """S45-A: el perfil incluye constraints y project_description."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
         assert "constraints" in src
         assert "project_description" in src
@@ -53,12 +67,16 @@ class TestS45AProjectContext:
     def test_api_usa_effective_en_resolve_async(self):
         """S45-A: resolve_async recibe effective_project_context, no body.project_context."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
         assert "effective_project_context" in src
         # Verifica que NO pasa body.project_context directamente (el antiguo bug)
         lines = src.split("\n")
-        resolve_call_lines = [l for l in lines if "resolve_async" in l and "project_context" in l]
+        resolve_call_lines = [
+            l for l in lines if "resolve_async" in l and "project_context" in l
+        ]
         for line in resolve_call_lines:
             assert "body.project_context" not in line, (
                 f"resolve_async aún usa body.project_context directamente: {line}"
@@ -67,21 +85,30 @@ class TestS45AProjectContext:
     def test_api_fallback_cuando_no_hay_perfil(self):
         """S45-A: si body.project_context tiene valor, NO consulta la BD (respeta lo enviado)."""
         import inspect
+
         import api as _api
+
         src = inspect.getsource(_api.start_session)
         # La condición debe ser "if not effective_project_context and body.project_id"
-        assert "not effective_project_context" in src or "not body.project_context" in src
+        assert (
+            "not effective_project_context" in src or "not body.project_context" in src
+        )
 
 
 # ---------------------------------------------------------------------------
 # S45-B — RUT desde project_context
 # ---------------------------------------------------------------------------
 
+
 class TestS45BRutEnforcement:
     """S45-B: template instruye usar RUTs del project_context primero."""
 
     def _get_template(self) -> str:
-        tpl = pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+        tpl = (
+            pathlib.Path(__file__).parent.parent
+            / "templates"
+            / "system_backend_python.md"
+        )
         return tpl.read_text(encoding="utf-8")
 
     def test_template_menciona_project_context_para_rut(self):
@@ -106,11 +133,16 @@ class TestS45BRutEnforcement:
 # S45-C — Checklist de archivos requeridos
 # ---------------------------------------------------------------------------
 
+
 class TestS45CArchivosRequeridos:
     """S45-C: template backend exige requirements.txt y checklist de módulos."""
 
     def _get_template(self) -> str:
-        tpl = pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+        tpl = (
+            pathlib.Path(__file__).parent.parent
+            / "templates"
+            / "system_backend_python.md"
+        )
         return tpl.read_text(encoding="utf-8")
 
     def test_template_exige_requirements_txt(self):
@@ -123,7 +155,9 @@ class TestS45CArchivosRequeridos:
         content = self._get_template()
         pos_req = content.find("requirements.txt")
         pos_init = content.find("__init__.py")
-        assert pos_req < pos_init, "requirements.txt debe aparecer antes que __init__.py en el template"
+        assert pos_req < pos_init, (
+            "requirements.txt debe aparecer antes que __init__.py en el template"
+        )
 
     def test_template_tiene_checklist(self):
         """S45-C: el template incluye un checklist de verificación antes de entregar."""
@@ -133,12 +167,15 @@ class TestS45CArchivosRequeridos:
     def test_checklist_menciona_imports_rotos(self):
         """S45-C: el checklist advierte sobre imports a módulos no generados."""
         content = self._get_template()
-        assert "import" in content and ("no creaste" in content or "generaste" in content or "generado" in content)
+        assert "import" in content and (
+            "no creaste" in content or "generaste" in content or "generado" in content
+        )
 
 
 # ---------------------------------------------------------------------------
 # S45-D — Regla devops reforzada
 # ---------------------------------------------------------------------------
+
 
 class TestS45DDevopsRule:
     """S45-D: system_sdd.md tiene tabla de ejemplos concretos para asignación devops."""
@@ -173,11 +210,16 @@ class TestS45DDevopsRule:
 # S45-E — URL de BD desde project_context
 # ---------------------------------------------------------------------------
 
+
 class TestS45EDbConnectionUrl:
     """S45-E: template backend instruye NO hardcodear URL de BD."""
 
     def _get_template(self) -> str:
-        tpl = pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+        tpl = (
+            pathlib.Path(__file__).parent.parent
+            / "templates"
+            / "system_backend_python.md"
+        )
         return tpl.read_text(encoding="utf-8")
 
     def test_template_prohibe_hardcodear_url(self):

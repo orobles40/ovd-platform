@@ -8,8 +8,11 @@ Permite resumir sesiones interrumpidas (human_approval, escalacion, reinicio).
 La tabla que usa LangGraph se llama 'checkpoints' — creada automaticamente
 por langgraph-checkpoint-postgres al iniciar.
 """
+
 from __future__ import annotations
+
 import os
+
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 

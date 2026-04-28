@@ -2,12 +2,19 @@
 OVD Platform — Tests: Context Resolver + Stack Registry (Sprint 8)
 No requiere BD ni LLM.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from context_resolver import (
-    ContextResolver, StackRegistry, AgentContext,
-    _infer_restrictions, _resolve_model_routing, RESTRICTION_RULES,
+    RESTRICTION_RULES,
+    AgentContext,
+    ContextResolver,
+    StackRegistry,
+    _infer_restrictions,
+    _resolve_model_routing,
 )
 
 
@@ -44,7 +51,9 @@ class TestResolveModelRouting:
         assert routing == "claude"
 
     def test_stack_moderno_usa_ollama(self):
-        stack = StackRegistry(db_engine="postgresql", db_version="15", model_routing="auto")
+        stack = StackRegistry(
+            db_engine="postgresql", db_version="15", model_routing="auto"
+        )
         routing = _resolve_model_routing(stack)
         assert routing == "ollama"
 
@@ -60,7 +69,8 @@ class TestResolveModelRouting:
 
     def test_restricciones_legacy_activan_claude(self):
         stack = StackRegistry(
-            db_engine="oracle", db_version="12c",
+            db_engine="oracle",
+            db_version="12c",
             db_restrictions=["no_json_functions", "no_lateral_join"],
             model_routing="auto",
         )
@@ -71,7 +81,8 @@ class TestResolveModelRouting:
 class TestAgentContextToPromptBlock:
     def test_bloque_contiene_restricciones(self):
         ctx = AgentContext(
-            org_id="org1", project_id="p1",
+            org_id="org1",
+            project_id="p1",
             stack=StackRegistry(db_engine="oracle", db_version="12c"),
             model_routing="claude",
             restrictions=["No usar JSON_TABLE", "No usar LATERAL JOIN"],
@@ -84,7 +95,8 @@ class TestAgentContextToPromptBlock:
 
     def test_bloque_sin_credenciales(self):
         ctx = AgentContext(
-            org_id="org1", project_id="p1",
+            org_id="org1",
+            project_id="p1",
             stack=StackRegistry(),
             model_routing="ollama",
             restrictions=[],
@@ -98,7 +110,8 @@ class TestAgentContextToPromptBlock:
 
     def test_retrocompat_texto_libre(self):
         ctx = ContextResolver.resolve(
-            org_id="org1", project_id="p1",
+            org_id="org1",
+            project_id="p1",
             project_context="Sistema con Oracle 12c y Python",
             rag_context="",
         )

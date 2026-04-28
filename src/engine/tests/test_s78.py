@@ -6,6 +6,7 @@ S78-B: _verify_no_stub_endpoints — detecta endpoints con pass/... — 6 tests
 S78-C: tabla canónica de módulos CRUD de beneficios en template — 4 tests
 S78-D: extracción de archivos fallidos de output pytest — 4 tests
 """
+
 import pathlib
 import re
 import textwrap
@@ -20,6 +21,7 @@ _BACKEND_PY = _TEMPLATES_DIR / "system_backend_python.md"
 # ---------------------------------------------------------------------------
 # S78-A — Template login JWT completo
 # ---------------------------------------------------------------------------
+
 
 class TestS78A:
     def test_template_contiene_jwt_encode(self):
@@ -47,12 +49,15 @@ class TestS78A:
         login_idx = content.find("async def login")
         rut_idx = content.find("validate_rut", login_idx) if login_idx != -1 else -1
         assert login_idx != -1, "No se encontró async def login en el template"
-        assert rut_idx != -1, "validate_rut no aparece después de la definición de login"
+        assert rut_idx != -1, (
+            "validate_rut no aparece después de la definición de login"
+        )
 
 
 # ---------------------------------------------------------------------------
 # S78-B — _verify_no_stub_endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestS78B:
     def test_detecta_stub_pass_en_login(self, tmp_path):
@@ -64,6 +69,7 @@ class TestS78B:
             encoding="utf-8",
         )
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert not ok
         assert "login" in feedback
@@ -78,6 +84,7 @@ class TestS78B:
             encoding="utf-8",
         )
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert not ok
         assert "register" in feedback
@@ -93,6 +100,7 @@ class TestS78B:
             encoding="utf-8",
         )
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert ok
         assert feedback == ""
@@ -101,6 +109,7 @@ class TestS78B:
         """S78-B: retorna ok=True cuando no hay main.py ni router.py."""
         (tmp_path / "src").mkdir()
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert ok
 
@@ -113,6 +122,7 @@ class TestS78B:
             encoding="utf-8",
         )
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert not ok
         assert "login" in feedback or "register" in feedback
@@ -125,6 +135,7 @@ class TestS78B:
             encoding="utf-8",
         )
         from graph import _verify_no_stub_endpoints
+
         ok, feedback = _verify_no_stub_endpoints(str(tmp_path))
         assert not ok
         assert "jwt" in feedback.lower() or "JWT" in feedback
@@ -134,6 +145,7 @@ class TestS78B:
 # S78-C — Tabla canónica de módulos CRUD beneficios en template
 # ---------------------------------------------------------------------------
 
+
 class TestS78C:
     def test_template_incluye_create_benefit_en_service(self):
         """S78-C: template debe mapear create_benefit → src/services/contract_service.py."""
@@ -141,8 +153,10 @@ class TestS78C:
         assert "create_benefit" in content
         # Debe aparecer asociado a service, no a models
         idx = content.find("create_benefit")
-        context = content[idx:idx + 200]
-        assert "service" in context.lower(), f"create_benefit no está asociado a service: {context}"
+        context = content[idx : idx + 200]
+        assert "service" in context.lower(), (
+            f"create_benefit no está asociado a service: {context}"
+        )
 
     def test_template_incluye_list_benefits_en_service(self):
         """S78-C: template debe mapear list_benefits → src/services/contract_service.py."""
@@ -170,9 +184,10 @@ class TestS78C:
 # S78-D — Extracción de archivos fallidos del output pytest
 # ---------------------------------------------------------------------------
 
+
 def _extract_failing_files_s78d(test_output: str) -> list[str]:
     """Mismo patrón que usa update_test_retry S78-D."""
-    pattern = re.compile(r'(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)')
+    pattern = re.compile(r"(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)")
     return list(set(pattern.findall(test_output)))
 
 

@@ -7,23 +7,30 @@ S50-B: deliver deduplica artefactos por path (evita models.py × 2)
 S50-C: system_backend.md usa Pydantic v2 @field_validator
 S50-D: system_backend.md tiene ejemplos explícitos de floats calculados
 """
-import sys, os, pathlib
+
+import os
+import pathlib
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from tests.factories import make_state
 
+import pytest
+
+from tests.factories import make_state
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _backend_template() -> str:
     # S58-pre: el contenido Python-specific fue movido a stack/backend_python.md
     # Los tests deben verificar el template compuesto (base + stack Python)
     import template_loader
+
     template_loader.invalidate()
     return template_loader.render_composed("system_backend", stack_language="python")
 
@@ -37,8 +44,8 @@ def _graph_src() -> str:
 # S50-A: runner escribe archivos al disco (paths S49-A y S49-C)
 # ---------------------------------------------------------------------------
 
-class TestS50AWriteOnRunnerPath:
 
+class TestS50AWriteOnRunnerPath:
     @pytest.mark.asyncio
     async def test_s49c_ollama_path_writes_files_to_disk(self, tmp_path):
         """Con stack_routing='ollama', _run_agent_with_tools escribe archivos al disco
@@ -56,7 +63,9 @@ class TestS50AWriteOnRunnerPath:
             "```\n"
         )
 
-        async def fake_runner(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def fake_runner(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             return {
                 "agent": "backend",
                 "output": code_output,
@@ -70,8 +79,13 @@ class TestS50AWriteOnRunnerPath:
 
         with patch.dict(g._AGENT_RUNNERS, {"backend": fake_runner}):
             result = await g._run_agent_with_tools(
-                "backend", "SDD", "comment",
-                mock_llm, "ctx", "", "es",
+                "backend",
+                "SDD",
+                "comment",
+                mock_llm,
+                "ctx",
+                "",
+                "es",
                 [MagicMock()],
                 str(tmp_path),
                 stack_routing="ollama",
@@ -85,8 +99,12 @@ class TestS50AWriteOnRunnerPath:
 
         # Y en los artifacts del resultado
         art_paths = [a["path"] for a in result.get("artifacts", [])]
-        assert any("service.py" in p for p in art_paths), "service.py debe estar en artifacts"
-        assert any("test_service.py" in p for p in art_paths), "test_service.py debe estar en artifacts"
+        assert any("service.py" in p for p in art_paths), (
+            "service.py debe estar en artifacts"
+        )
+        assert any("test_service.py" in p for p in art_paths), (
+            "test_service.py debe estar en artifacts"
+        )
 
     @pytest.mark.asyncio
     async def test_s49a_iter0_path_writes_files_to_disk(self, tmp_path):
@@ -104,7 +122,9 @@ class TestS50AWriteOnRunnerPath:
             "```\n"
         )
 
-        async def fake_runner(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def fake_runner(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             return {
                 "agent": "backend",
                 "output": code_output,
@@ -121,19 +141,30 @@ class TestS50AWriteOnRunnerPath:
         bound_llm.ainvoke = AsyncMock(return_value=response)
         mock_llm.bind_tools = MagicMock(return_value=bound_llm)
 
-        with patch("graph._extract_usage", return_value={"input": 0, "output": 0}), \
-             patch.dict(g._AGENT_RUNNERS, {"backend": fake_runner}):
+        with (
+            patch("graph._extract_usage", return_value={"input": 0, "output": 0}),
+            patch.dict(g._AGENT_RUNNERS, {"backend": fake_runner}),
+        ):
             result = await g._run_agent_with_tools(
-                "backend", "SDD", "comment",
-                mock_llm, "ctx", "", "es",
+                "backend",
+                "SDD",
+                "comment",
+                mock_llm,
+                "ctx",
+                "",
+                "es",
                 [MagicMock()],
                 str(tmp_path),
                 stack_routing="auto",  # no Ollama → bind_tools → iter 0 sin tools → S49-A
             )
 
         # Archivos deben estar en disco
-        assert (tmp_path / "src" / "calc.py").exists(), "src/calc.py debe estar en disco"
-        assert (tmp_path / "tests" / "test_calc.py").exists(), "tests/test_calc.py debe estar en disco"
+        assert (tmp_path / "src" / "calc.py").exists(), (
+            "src/calc.py debe estar en disco"
+        )
+        assert (tmp_path / "tests" / "test_calc.py").exists(), (
+            "tests/test_calc.py debe estar en disco"
+        )
 
         # Y en artifacts
         art_paths = [a["path"] for a in result.get("artifacts", [])]
@@ -144,7 +175,9 @@ class TestS50AWriteOnRunnerPath:
         """Si el runner ya retorna artifacts poblados, S50-A no llama _write_artifacts."""
         import graph as g
 
-        async def fake_runner_with_arts(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def fake_runner_with_arts(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             return {
                 "agent": "backend",
                 "output": "código",
@@ -158,25 +191,37 @@ class TestS50AWriteOnRunnerPath:
 
         write_arts_called = []
 
-        with patch.dict(g._AGENT_RUNNERS, {"backend": fake_runner_with_arts}), \
-             patch("graph._write_artifacts", side_effect=lambda *a, **kw: (write_arts_called.append(True) or [])):
+        with (
+            patch.dict(g._AGENT_RUNNERS, {"backend": fake_runner_with_arts}),
+            patch(
+                "graph._write_artifacts",
+                side_effect=lambda *a, **kw: write_arts_called.append(True) or [],
+            ),
+        ):
             await g._run_agent_with_tools(
-                "backend", "SDD", "comment",
-                mock_llm, "ctx", "", "es",
+                "backend",
+                "SDD",
+                "comment",
+                mock_llm,
+                "ctx",
+                "",
+                "es",
                 [MagicMock()],
                 str(tmp_path),
                 stack_routing="ollama",
             )
 
-        assert not write_arts_called, "_write_artifacts NO debe llamarse si el runner ya tiene artifacts"
+        assert not write_arts_called, (
+            "_write_artifacts NO debe llamarse si el runner ya tiene artifacts"
+        )
 
 
 # ---------------------------------------------------------------------------
 # S50-B: deduplicación de artefactos en deliver
 # ---------------------------------------------------------------------------
 
-class TestS50BDeduplicateArtifacts:
 
+class TestS50BDeduplicateArtifacts:
     @pytest.mark.asyncio
     async def test_deliver_deduplicates_duplicate_artifacts(self, tmp_path):
         """deliver no reporta el mismo archivo dos veces en la lista de artefactos."""
@@ -195,12 +240,20 @@ class TestS50BDeduplicateArtifacts:
 
         state = make_state(
             directory=str(tmp_path),
-            agent_results=[{
-                "agent": "backend",
-                "output": duplicate_output,
-                "artifacts": [],
-            }],
-            sdd={"summary": "Test", "requirements": [], "design": {}, "constraints": [], "tasks": []},
+            agent_results=[
+                {
+                    "agent": "backend",
+                    "output": duplicate_output,
+                    "artifacts": [],
+                }
+            ],
+            sdd={
+                "summary": "Test",
+                "requirements": [],
+                "design": {},
+                "constraints": [],
+                "tasks": [],
+            },
         )
 
         import graph as g
@@ -208,12 +261,17 @@ class TestS50BDeduplicateArtifacts:
         mock_llm_config = MagicMock()
         mock_llm_config.provider = "ollama"
 
-        with patch("graph.model_router") as mock_router, \
-             patch("graph.nats_client") as mock_nats, \
-             patch("graph._index_delivery_report", return_value=None), \
-             patch("graph._generate_delivery_report", return_value=str(tmp_path / "report.md")), \
-             patch("graph.lessons") as mock_lessons, \
-             patch("graph._export_finetune_record", return_value=None):
+        with (
+            patch("graph.model_router") as mock_router,
+            patch("graph.nats_client") as mock_nats,
+            patch("graph._index_delivery_report", return_value=None),
+            patch(
+                "graph._generate_delivery_report",
+                return_value=str(tmp_path / "report.md"),
+            ),
+            patch("graph.lessons") as mock_lessons,
+            patch("graph._export_finetune_record", return_value=None),
+        ):
             mock_router.resolve = AsyncMock(return_value=mock_llm_config)
             mock_router.get_llm_with_context = AsyncMock(return_value=MagicMock())
             mock_nats.publish_deliver = AsyncMock(return_value=None)
@@ -227,7 +285,9 @@ class TestS50BDeduplicateArtifacts:
             if deliv.get("type") == "implementation":
                 arts = deliv.get("artifacts", [])
                 paths = [a["path"] for a in arts]
-                assert len(paths) == len(set(paths)), f"Hay rutas duplicadas en artifacts: {paths}"
+                assert len(paths) == len(set(paths)), (
+                    f"Hay rutas duplicadas en artifacts: {paths}"
+                )
 
     def test_deliver_dedup_logic_in_graph_src(self):
         """graph.py tiene el código S50-B de deduplicación."""
@@ -240,8 +300,8 @@ class TestS50BDeduplicateArtifacts:
 # S50-C: Pydantic v2 en template
 # ---------------------------------------------------------------------------
 
-class TestS50CPydanticV2Template:
 
+class TestS50CPydanticV2Template:
     def test_backend_template_uses_field_validator(self):
         """system_backend.md menciona @field_validator (Pydantic v2)."""
         content = _backend_template()
@@ -251,7 +311,11 @@ class TestS50CPydanticV2Template:
         """system_backend.md marca @validator como DEPRECADO."""
         content = _backend_template()
         assert "@validator" in content  # aparece como ejemplo del ❌ incorrecto
-        assert "DEPRECADO" in content or "deprecado" in content.lower() or "Deprecated" in content
+        assert (
+            "DEPRECADO" in content
+            or "deprecado" in content.lower()
+            or "Deprecated" in content
+        )
 
     def test_backend_template_shows_pydantic_v2_example(self):
         """system_backend.md muestra ejemplo completo de @field_validator con @classmethod."""
@@ -269,8 +333,8 @@ class TestS50CPydanticV2Template:
 # S50-D: floats con ejemplos explícitos
 # ---------------------------------------------------------------------------
 
-class TestS50DFloatExamples:
 
+class TestS50DFloatExamples:
     def test_backend_template_has_imc_float_example(self):
         """system_backend.md tiene el ejemplo del IMC con valor correcto 21.97."""
         content = _backend_template()

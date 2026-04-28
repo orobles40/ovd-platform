@@ -1,9 +1,12 @@
 """
 S21 — Tests del nodo describe_image y la inyección en analyze_fr.
 """
+
 from __future__ import annotations
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _make_state(**kwargs) -> dict:
@@ -21,6 +24,7 @@ def _make_state(**kwargs) -> dict:
 # ---------------------------------------------------------------------------
 # describe_image — no-op paths
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_describe_image_noop_sin_imagen():
@@ -73,6 +77,7 @@ async def test_describe_image_noop_si_vision_disabled():
 # describe_image — happy path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_describe_image_llama_modelo_y_retorna_descripcion():
     """Con imagen y visión habilitada, llama al modelo y retorna descripción."""
@@ -81,7 +86,9 @@ async def test_describe_image_llama_modelo_y_retorna_descripcion():
     state = _make_state(image_base64="iVBORw0KGgoAAAANSUhEUgA=")
 
     mock_response = MagicMock()
-    mock_response.content = "Formulario con campo email, campo password y botón azul centrado."
+    mock_response.content = (
+        "Formulario con campo email, campo password y botón azul centrado."
+    )
 
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -93,7 +100,10 @@ async def test_describe_image_llama_modelo_y_retorna_descripcion():
         result = await g.describe_image(state)
 
     assert result["image_base64"] == ""  # bytes limpios
-    assert result["image_description"] == "Formulario con campo email, campo password y botón azul centrado."
+    assert (
+        result["image_description"]
+        == "Formulario con campo email, campo password y botón azul centrado."
+    )
 
 
 @pytest.mark.asyncio
@@ -122,6 +132,7 @@ async def test_describe_image_limpia_base64_tras_procesar():
 # describe_image — error handling
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_describe_image_error_no_rompe_ciclo():
     """Si el modelo falla, retorna {} sin propagar la excepción."""
@@ -145,6 +156,7 @@ async def test_describe_image_error_no_rompe_ciclo():
 # ---------------------------------------------------------------------------
 # _build_fr_content — inyección en analyze_fr
 # ---------------------------------------------------------------------------
+
 
 def test_build_fr_content_sin_imagen():
     """Sin imagen, retorna solo el Feature Request."""

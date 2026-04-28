@@ -3,6 +3,7 @@ Tests S69 — S69-A: _ensure_fastapi_main_task inyecta src/main.py cuando falta
             S69-B: template system_sdd.md tiene tabla verificación obligatoria al inicio
             S69-C: _validate_artifacts_imports auto-genera src/main.py si broken import es src.main
 """
+
 import pathlib
 import sys
 import textwrap
@@ -13,13 +14,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from graph import _ensure_fastapi_main_task, _validate_artifacts_imports
 
-
 # ---------------------------------------------------------------------------
 # S69-A: _ensure_fastapi_main_task
 # ---------------------------------------------------------------------------
 
+
 def _fr_fastapi() -> dict:
-    return {"raw": "Sistema con autenticación JWT usando FastAPI. API REST endpoints.", "type": "feature"}
+    return {
+        "raw": "Sistema con autenticación JWT usando FastAPI. API REST endpoints.",
+        "type": "feature",
+    }
 
 
 def _fr_no_fastapi() -> dict:
@@ -33,8 +37,15 @@ def _sdd_without_main() -> dict:
         "design": {},
         "constraints": [],
         "tasks": [
-            {"id": "T1", "agent": "backend", "title": "Crear auth models", "file": "src/auth/models.py",
-             "description": "Pydantic models para auth", "depends_on": [], "estimated_complexity": "low"},
+            {
+                "id": "T1",
+                "agent": "backend",
+                "title": "Crear auth models",
+                "file": "src/auth/models.py",
+                "description": "Pydantic models para auth",
+                "depends_on": [],
+                "estimated_complexity": "low",
+            },
         ],
     }
 
@@ -46,10 +57,24 @@ def _sdd_with_main() -> dict:
         "design": {},
         "constraints": [],
         "tasks": [
-            {"id": "T0", "agent": "backend", "title": "Crear src/main.py", "file": "src/main.py",
-             "description": "app FastAPI con routers", "depends_on": [], "estimated_complexity": "low"},
-            {"id": "T1", "agent": "backend", "title": "Crear auth models", "file": "src/auth/models.py",
-             "description": "Pydantic models", "depends_on": [], "estimated_complexity": "low"},
+            {
+                "id": "T0",
+                "agent": "backend",
+                "title": "Crear src/main.py",
+                "file": "src/main.py",
+                "description": "app FastAPI con routers",
+                "depends_on": [],
+                "estimated_complexity": "low",
+            },
+            {
+                "id": "T1",
+                "agent": "backend",
+                "title": "Crear auth models",
+                "file": "src/auth/models.py",
+                "description": "Pydantic models",
+                "depends_on": [],
+                "estimated_complexity": "low",
+            },
         ],
     }
 
@@ -99,7 +124,10 @@ def test_s69a_detecta_keyword_api_rest():
 
 def test_s69a_detecta_keyword_endpoint():
     """S69-A: 'endpoint' en FR dispara la inyección."""
-    fr = {"raw": "Implementar un endpoint REST para consultar beneficios.", "type": "feature"}
+    fr = {
+        "raw": "Implementar un endpoint REST para consultar beneficios.",
+        "type": "feature",
+    }
     sdd = _sdd_without_main()
     result = _ensure_fastapi_main_task(sdd, fr)
     files = [t["file"] for t in result["tasks"]]
@@ -133,13 +161,17 @@ def test_s69b_tabla_verificacion_al_inicio():
     idx_tabla = template.find("VERIFICACIÓN OBLIGATORIA")
     idx_arquitecto = template.find("Eres un arquitecto")
     assert idx_tabla != -1, "Tabla VERIFICACIÓN OBLIGATORIA no encontrada"
-    assert idx_tabla < idx_arquitecto, "Tabla debe aparecer ANTES de 'Eres un arquitecto'"
+    assert idx_tabla < idx_arquitecto, (
+        "Tabla debe aparecer ANTES de 'Eres un arquitecto'"
+    )
 
 
 def test_s69b_tabla_menciona_main_py():
     """S69-B: template menciona src/main.py como obligatorio."""
     template = (TEMPLATES_DIR / "system_sdd.md").read_text(encoding="utf-8")
-    assert "src/main.py" in template[:2000], "src/main.py debe estar en los primeros 2000 chars del template"
+    assert "src/main.py" in template[:2000], (
+        "src/main.py debe estar en los primeros 2000 chars del template"
+    )
 
 
 def test_s69b_tabla_menciona_fastapi_condicion():
@@ -153,6 +185,7 @@ def test_s69b_tabla_menciona_fastapi_condicion():
 # S69-C: auto-generación de src/main.py desde _validate_artifacts_imports
 # ---------------------------------------------------------------------------
 
+
 def test_s69c_autogenera_main_py(tmp_path):
     """S69-C: cuando import roto es src.main y archivo no existe, se genera src/main.py."""
     src = tmp_path / "src"
@@ -164,7 +197,9 @@ def test_s69c_autogenera_main_py(tmp_path):
     test_file.write_text("from src.main import app\nclient = app\n")
 
     agent_results = [{"artifacts": [{"path": "tests/test_app.py"}]}]
-    ok, feedback = _validate_artifacts_imports(agent_results, str(tmp_path), ["tests/test_app.py"])
+    ok, feedback = _validate_artifacts_imports(
+        agent_results, str(tmp_path), ["tests/test_app.py"]
+    )
 
     main_py = tmp_path / "src" / "main.py"
     assert main_py.exists(), "S69-C debe haber generado src/main.py"
@@ -179,7 +214,9 @@ def test_s69c_main_contiene_routers_detectados(tmp_path):
     (src / "auth").mkdir(parents=True)
     (src / "__init__.py").write_text("")
     (src / "auth" / "__init__.py").write_text("")
-    (src / "auth" / "router.py").write_text("from fastapi import APIRouter\nrouter = APIRouter()\n")
+    (src / "auth" / "router.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+    )
 
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

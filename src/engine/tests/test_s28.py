@@ -3,18 +3,23 @@ S28 — Tests para los fixes de routing de agentes y diagnóstico de pytest:
   S28-A: system_sdd.md prohíbe asignar agente devops a features de código puro
   S28-C: run_tests distingue exit codes de pytest (0/1/4/5) y los loguea claramente
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pathlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from tests.factories import make_state
 
+import pytest
+
+from tests.factories import make_state
 
 # ────────────────────────────────────────────────────────────────────────────
 # S28-A — system_sdd.md regla de agentes
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestSddTemplateAgentRule:
     """system_sdd.md contiene la regla que prohíbe devops para código puro."""
@@ -28,7 +33,9 @@ class TestSddTemplateAgentRule:
         content = self._read_template()
         assert "devops" in content
         # Debe mencionar restricción explícita
-        assert "EXCLUSIVAMENTE" in content or "SOLO" in content or "PROHIBIDO" in content
+        assert (
+            "EXCLUSIVAMENTE" in content or "SOLO" in content or "PROHIBIDO" in content
+        )
 
     def test_template_maps_python_to_backend(self):
         """El template mapea funciones Python al agente backend."""
@@ -43,7 +50,13 @@ class TestSddTemplateAgentRule:
         """El template limita devops a Dockerfile/CI/K8s/despliegue."""
         content = self._read_template()
         # Debe mencionar al menos uno de los contextos válidos para devops
-        infra_keywords = ["Dockerfile", "docker-compose", "CI/CD", "Kubernetes", "despliegue"]
+        infra_keywords = [
+            "Dockerfile",
+            "docker-compose",
+            "CI/CD",
+            "Kubernetes",
+            "despliegue",
+        ]
         assert any(kw in content for kw in infra_keywords), (
             f"Template debe mencionar contextos válidos para devops: {infra_keywords}"
         )
@@ -52,22 +65,31 @@ class TestSddTemplateAgentRule:
         """El template incluye prohibición explícita para FR sin infra."""
         content = self._read_template()
         # Debe decir algo como "si no menciona Docker/CI no incluyas devops"
-        assert "NO incluyas" in content or "no incluyas" in content or "PROHIBIDO" in content
+        assert (
+            "NO incluyas" in content
+            or "no incluyas" in content
+            or "PROHIBIDO" in content
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # S28-C — run_tests exit codes de pytest
 # ────────────────────────────────────────────────────────────────────────────
 
+
 def _make_test_state(tmp_path: pathlib.Path) -> dict:
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     (tmp_path / "tests" / "test_foo.py").write_text("def test_pass(): assert True")
     return make_state(
-        agent_results=[{
-            "agent": "backend",
-            "output": "",
-            "artifacts": [{"path": "tests/test_foo.py", "size": 30, "lang": "python"}],
-        }],
+        agent_results=[
+            {
+                "agent": "backend",
+                "output": "",
+                "artifacts": [
+                    {"path": "tests/test_foo.py", "size": 30, "lang": "python"}
+                ],
+            }
+        ],
         directory=str(tmp_path),
         test_retry_count=0,
     )
@@ -80,6 +102,7 @@ class TestRunTestsExitCodes:
     async def test_exit_0_marks_passed(self, tmp_path):
         """Exit code 0 → passed=True."""
         import graph as g
+
         state = _make_test_state(tmp_path)
 
         async def fake_exec(*args, **kwargs):
@@ -97,6 +120,7 @@ class TestRunTestsExitCodes:
     async def test_exit_1_marks_failed(self, tmp_path):
         """Exit code 1 (test failures) → passed=False."""
         import graph as g
+
         state = _make_test_state(tmp_path)
 
         async def fake_exec(*args, **kwargs):
@@ -113,8 +137,10 @@ class TestRunTestsExitCodes:
     @pytest.mark.asyncio
     async def test_exit_5_logs_warning_no_tests_found(self, tmp_path, caplog):
         """Exit code 5 (0 tests found) → passed=False + warning con diagnóstico."""
-        import graph as g
         import logging
+
+        import graph as g
+
         state = _make_test_state(tmp_path)
 
         async def fake_exec(*args, **kwargs):
@@ -129,7 +155,9 @@ class TestRunTestsExitCodes:
 
         assert result["test_results"]["passed"] is False
         # Debe haber un warning con diagnóstico de exit 5
-        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        warning_msgs = [
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        ]
         assert any("exit 5" in m or "0 tests" in m for m in warning_msgs), (
             f"Se esperaba warning sobre exit 5. Warnings encontrados: {warning_msgs}"
         )
@@ -137,13 +165,17 @@ class TestRunTestsExitCodes:
     @pytest.mark.asyncio
     async def test_exit_4_logs_collection_error(self, tmp_path, caplog):
         """Exit code 4 (collection error) → passed=False + warning con SyntaxError/ImportError."""
-        import graph as g
         import logging
+
+        import graph as g
+
         state = _make_test_state(tmp_path)
 
         async def fake_exec(*args, **kwargs):
             proc = MagicMock()
-            proc.communicate = AsyncMock(return_value=(b"ERROR collecting tests/test_foo.py\nSyntaxError", None))
+            proc.communicate = AsyncMock(
+                return_value=(b"ERROR collecting tests/test_foo.py\nSyntaxError", None)
+            )
             proc.returncode = 4
             return proc
 
@@ -152,15 +184,19 @@ class TestRunTestsExitCodes:
                 result = await g.run_tests(state)
 
         assert result["test_results"]["passed"] is False
-        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("exit 4" in m or "colección" in m or "collection" in m.lower() for m in warning_msgs), (
-            f"Se esperaba warning sobre exit 4. Warnings encontrados: {warning_msgs}"
-        )
+        warning_msgs = [
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any(
+            "exit 4" in m or "colección" in m or "collection" in m.lower()
+            for m in warning_msgs
+        ), f"Se esperaba warning sobre exit 4. Warnings encontrados: {warning_msgs}"
 
     @pytest.mark.asyncio
     async def test_pytest_cmd_has_no_conflicting_flags(self, tmp_path):
         """El comando pytest no tiene -v y -q simultáneamente (se anulan)."""
         import graph as g
+
         state = _make_test_state(tmp_path)
         captured_args: list = []
 

@@ -31,7 +31,9 @@ GAPs implementados:
 Estados: idle → analyzing → generating_sdd → pending_approval →
          executing → security_review → qa_review → [escalated] → delivering → done
 """
+
 from __future__ import annotations
+
 import asyncio
 import hashlib
 import json as _json
@@ -46,28 +48,32 @@ import uuid
 from typing import Any
 
 import psycopg  # S29-A: persistencia de ciclos desde deliver
-
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 log = logging.getLogger("ovd-graph")
-from typing_extensions import Annotated, TypedDict
-
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI   # S21: usado en describe_image (visión)
-from pydantic import BaseModel, Field, field_validator
-from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI  # S21: usado en describe_image (visión)
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.types import interrupt, Send, Command
-import model_router
-import template_loader
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, Send, interrupt
+from pydantic import BaseModel, Field, field_validator
+from typing_extensions import Annotated, TypedDict
+
 import github_helper
+import lessons  # S41 — lecciones aprendidas por proyecto y agente
+import mcp_client  # Fase A — MCP tools (context7)
+import model_router
 import nats_client
 import telemetry  # Sprint 10 — GAP-A6
+import template_loader
 import web_researcher  # Sprint 11 — S11.B
-from tools import make_file_tools, read_project_context, calculate_expression  # S17T
-import mcp_client  # Fase A — MCP tools (context7)
-import lessons     # S41 — lecciones aprendidas por proyecto y agente
+from tools import calculate_expression, make_file_tools, read_project_context  # S17T
 
 # ---------------------------------------------------------------------------
 # Configuración operacional
@@ -88,14 +94,16 @@ _NODE_TIMEOUT: float = float(os.getenv("OVD_NODE_TIMEOUT_SECS", "120"))
 #   LLM pesados (agentes, security):   1200-1800s — qwen3-coder:30b puede tardar mucho
 #   LLM livianos (analyze, sdd, docs): 300-600s   — salida estructurada, contexto menor
 #   I/O puro (tests, deliver):         120-300s    — sin LLM, solo filesystem/subprocess
-_AGENTS_TIMEOUT: float   = float(os.getenv("OVD_AGENTS_TIMEOUT_SECS",   str(_NODE_TIMEOUT)))
+_AGENTS_TIMEOUT: float = float(os.getenv("OVD_AGENTS_TIMEOUT_SECS", str(_NODE_TIMEOUT)))
 _SECURITY_TIMEOUT: float = float(os.getenv("OVD_SECURITY_TIMEOUT_SECS", "1800"))
-_QA_TIMEOUT: float       = float(os.getenv("OVD_QA_TIMEOUT_SECS",       "1200"))
-_ANALYZE_TIMEOUT: float  = float(os.getenv("OVD_ANALYZE_TIMEOUT_SECS",  "300"))   # S41P.A
-_SDD_TIMEOUT: float      = float(os.getenv("OVD_SDD_TIMEOUT_SECS",      "600"))   # S41P.A
-_RESEARCH_TIMEOUT: float = float(os.getenv("OVD_RESEARCH_TIMEOUT_SECS", "180"))   # S41P.A
-_TESTS_TIMEOUT: float    = float(os.getenv("OVD_TESTS_TIMEOUT_SECS",    "300"))
-_DOCS_TIMEOUT: float     = float(os.getenv("OVD_DOCS_TIMEOUT_SECS",     "600"))
+_QA_TIMEOUT: float = float(os.getenv("OVD_QA_TIMEOUT_SECS", "1200"))
+_ANALYZE_TIMEOUT: float = float(os.getenv("OVD_ANALYZE_TIMEOUT_SECS", "300"))  # S41P.A
+_SDD_TIMEOUT: float = float(os.getenv("OVD_SDD_TIMEOUT_SECS", "600"))  # S41P.A
+_RESEARCH_TIMEOUT: float = float(
+    os.getenv("OVD_RESEARCH_TIMEOUT_SECS", "180")
+)  # S41P.A
+_TESTS_TIMEOUT: float = float(os.getenv("OVD_TESTS_TIMEOUT_SECS", "300"))
+_DOCS_TIMEOUT: float = float(os.getenv("OVD_DOCS_TIMEOUT_SECS", "600"))
 
 # S43-D: flags adicionales por runner — centralizados para facilitar mantenimiento.
 # Cada runner puede tener flags extra que se agregan al comando base.
@@ -104,15 +112,17 @@ _DOCS_TIMEOUT: float     = float(os.getenv("OVD_DOCS_TIMEOUT_SECS",     "600"))
 _RUNNER_FLAGS: dict[str, list[str]] = {
     "pytest": ["--no-header", "--import-mode=importlib"],
     "vitest": ["--reporter=verbose"],
-    "cargo":  [],
+    "cargo": [],
 }
 
 # ---------------------------------------------------------------------------
 # Schemas de structured output
 # ---------------------------------------------------------------------------
 
+
 class FRAnalysisOutput(BaseModel):
     """Resultado estructurado del analisis del Feature Request."""
+
     fr_type: str = Field(
         description="Tipo de cambio: 'bug', 'feature', 'refactor', 'security', 'performance'",
     )
@@ -137,6 +147,7 @@ class FRAnalysisOutput(BaseModel):
 
 class AgentRouterOutput(BaseModel):
     """Decide que agentes especializados ejecutar para este FR."""
+
     agents: list[str] = Field(
         description=(
             "Lista de agentes a ejecutar. Valores permitidos: "
@@ -151,6 +162,7 @@ class AgentRouterOutput(BaseModel):
 
 class SecurityAuditOutput(BaseModel):
     """Resultado estructurado de la auditoria de seguridad (GAP-001)."""
+
     passed: bool = Field(
         description="True si no se encontraron vulnerabilidades criticas o altas",
     )
@@ -189,6 +201,7 @@ class SecurityAuditOutput(BaseModel):
 
 class SDDRequirement(BaseModel):
     """Un requisito funcional o no-funcional del SDD."""
+
     id: str = Field(description="Identificador unico, ej: 'REQ-001'")
     type: str = Field(description="'functional' | 'non_functional'")
     description: str = Field(description="Descripcion clara del requisito")
@@ -201,6 +214,7 @@ class SDDRequirement(BaseModel):
 
 class SDDConstraint(BaseModel):
     """Una restriccion tecnica del proyecto."""
+
     id: str = Field(description="Identificador unico, ej: 'CON-001'")
     category: str = Field(
         description="Categoria: 'security', 'performance', 'compatibility', 'technology', 'compliance'",
@@ -211,12 +225,15 @@ class SDDConstraint(BaseModel):
 
 class SDDTask(BaseModel):
     """Una tarea de implementacion del SDD."""
+
     id: str = Field(description="Identificador unico, ej: 'TASK-001'")
     agent: str = Field(
         description="Agente responsable: 'frontend' | 'backend' | 'database' | 'devops'",
     )
     title: str = Field(description="Titulo breve de la tarea")
-    description: str = Field(description="Descripcion detallada de lo que se debe implementar")
+    description: str = Field(
+        description="Descripcion detallada de lo que se debe implementar"
+    )
     depends_on: list[str] = Field(
         default_factory=list,
         description="IDs de tareas que deben completarse antes (ej: ['TASK-001'])",
@@ -228,6 +245,7 @@ class SDDTask(BaseModel):
 
 class SDDOutput(BaseModel):
     """Los 4 artefactos separados del SDD (GAP-007)."""
+
     # Artefacto 1: Requisitos
     requirements: list[SDDRequirement] = Field(
         description="Lista de requisitos funcionales y no funcionales",
@@ -258,6 +276,7 @@ class SDDOutput(BaseModel):
 
 class QAReviewOutput(BaseModel):
     """Resultado estructurado de la revision QA de calidad."""
+
     passed: bool = Field(
         description="True si el resultado pasa todos los criterios de calidad",
     )
@@ -293,11 +312,15 @@ class QAReviewOutput(BaseModel):
             stripped = v.strip()
             if not stripped:
                 return []
-            lines = [ln.strip().lstrip("-•* ") for ln in stripped.splitlines() if ln.strip()]
+            lines = [
+                ln.strip().lstrip("-•* ") for ln in stripped.splitlines() if ln.strip()
+            ]
             return lines if lines else [stripped]
         return v
 
-    @field_validator("issues", "missing_requirements", "code_quality_issues", mode="before")
+    @field_validator(
+        "issues", "missing_requirements", "code_quality_issues", mode="before"
+    )
     @classmethod
     def _coerce_list_fields(cls, v: object) -> list[str]:
         return cls._coerce_str_list(v)
@@ -306,6 +329,7 @@ class QAReviewOutput(BaseModel):
 # ---------------------------------------------------------------------------
 # Reducers para fan-out nativo (GAP-002)
 # ---------------------------------------------------------------------------
+
 
 def _list_reset_or_add(existing: list, update: list | None) -> list:
     """
@@ -357,6 +381,7 @@ def _keep_best_qa(existing: dict, update: dict) -> dict:
 # State del grafo
 # ---------------------------------------------------------------------------
 
+
 class OVDState(TypedDict):
     # Input
     session_id: str
@@ -364,16 +389,20 @@ class OVDState(TypedDict):
     project_id: str
     directory: str
     feature_request: str
-    project_context: str   # bloque Markdown del Project Profile con restricciones (S8: generado por ContextResolver)
-    jwt_token: str         # JWT del Bridge para consultar config de agentes (GAP-013a)
-    language: str          # Idioma de los prompts del sistema: "es" | "en" | "pt" (FASE 5.C)
-    auto_approve: bool     # P5.A: si True, salta el interrupt de aprobación humana
+    project_context: str  # bloque Markdown del Project Profile con restricciones (S8: generado por ContextResolver)
+    jwt_token: str  # JWT del Bridge para consultar config de agentes (GAP-013a)
+    language: str  # Idioma de los prompts del sistema: "es" | "en" | "pt" (FASE 5.C)
+    auto_approve: bool  # P5.A: si True, salta el interrupt de aprobación humana
 
     # Sprint 8 — Stack Registry routing (GAP-A1 + GAP-A3)
-    stack_routing: str          # routing efectivo resuelto por ContextResolver: auto|ollama|claude|openai
-    stack_db_engine: str        # motor de BD del workspace (para logging)
-    stack_db_version: str       # versión del motor de BD (para logging)
-    stack_restrictions: list    # restricciones activas inyectadas en project_context (para debug)
+    stack_routing: (
+        str  # routing efectivo resuelto por ContextResolver: auto|ollama|claude|openai
+    )
+    stack_db_engine: str  # motor de BD del workspace (para logging)
+    stack_db_version: str  # versión del motor de BD (para logging)
+    stack_restrictions: (
+        list  # restricciones activas inyectadas en project_context (para debug)
+    )
 
     # S42-E — Stack-aware template selection
     # Lenguaje del stack tecnológico del proyecto: "python", "typescript", "java", "go", etc.
@@ -384,13 +413,13 @@ class OVDState(TypedDict):
 
     # Sprint 10 — OTEL trace_id (GAP-A6)
     # Propagado desde api.py para correlacionar spans de todos los nodos del ciclo
-    trace_id: str               # trace_id hexadecimal (32 chars) del span raíz del ciclo
+    trace_id: str  # trace_id hexadecimal (32 chars) del span raíz del ciclo
 
     # S6 — Integración GitHub via PAT
-    github_token:  str     # PAT del proyecto (viene del Project Profile via Bridge)
-    github_repo:   str     # URL del repo, ej: https://github.com/org/repo
-    github_branch: str     # branch base (default: "main")
-    github_pr:     dict    # resultado del PR creado por create_pr (pr_url, branch, files)
+    github_token: str  # PAT del proyecto (viene del Project Profile via Bridge)
+    github_repo: str  # URL del repo, ej: https://github.com/org/repo
+    github_branch: str  # branch base (default: "main")
+    github_pr: dict  # resultado del PR creado por create_pr (pr_url, branch, files)
 
     # GAP-006: contexto recuperado del RAG para el proyecto (inyectado en generate_sdd)
     rag_context: str
@@ -419,11 +448,13 @@ class OVDState(TypedDict):
     # Intermedios
     fr_analysis: dict[str, Any]
     sdd: dict[str, Any]
-    approval_decision: str          # "approved" | "rejected" | "revision_requested" | ""
+    approval_decision: str  # "approved" | "rejected" | "revision_requested" | ""
     approval_comment: str
     # Iterative SDD review: historial de revisiones del arquitecto
-    revision_count:   int            # número de veces que se ha revisado el SDD (0 = primera generación)
-    revision_history: list[dict]     # [{"round": int, "comment": str}]
+    revision_count: (
+        int  # número de veces que se ha revisado el SDD (0 = primera generación)
+    )
+    revision_history: list[dict]  # [{"round": int, "comment": str}]
 
     # GAP-002: fan-out nativo LangGraph
     # selected_agents: agentes elegidos por route_agents para el ciclo actual
@@ -441,18 +472,20 @@ class OVDState(TypedDict):
     # GAP-001: resultado de la auditoria de seguridad independiente
     security_result: dict[str, Any]
 
-    qa_result: Annotated[dict, _keep_best_qa]  # S57-A: preserva el mejor score del ciclo
+    qa_result: Annotated[
+        dict, _keep_best_qa
+    ]  # S57-A: preserva el mejor score del ciclo
 
     # GAP-005: contadores de reintentos (max 3 antes de escalar)
-    security_retry_count: int       # reintentos de security_audit → execute_agents
-    qa_retry_count: int             # reintentos de qa_review → execute_agents
-    retry_feedback: str             # feedback acumulado para los agentes en reintentos
+    security_retry_count: int  # reintentos de security_audit → execute_agents
+    qa_retry_count: int  # reintentos de qa_review → execute_agents
+    retry_feedback: str  # feedback acumulado para los agentes en reintentos
 
     escalation_resolution: str
 
     # S22 — run_tests: ejecución real de tests generados
-    test_results: dict[str, Any]    # {passed, output, runner, retry_round, error}
-    test_retry_count: int           # 0..2, máx 2 rondas de retry vía route_agents
+    test_results: dict[str, Any]  # {passed, output, runner, retry_round, error}
+    test_retry_count: int  # 0..2, máx 2 rondas de retry vía route_agents
 
     # S53-B — Selective Send: agentes a re-ejecutar en retry de tests (subset de selected_agents)
     # Si vacío o no definido → route_agents usa todos los agentes del SDD (comportamiento normal)
@@ -469,7 +502,7 @@ class OVDState(TypedDict):
     security_scan_results: dict[str, Any]  # {tools_run, findings, blocked}
 
     # S22 — generate_docs: documentación automática post-QA
-    generated_docs: list[dict]      # [{type, content, path}]
+    generated_docs: list[dict]  # [{type, content, path}]
 
     # FASE 4.D: uso de tokens por agente — reducer fusiona los dicts en paralelo
     # Formato: { "frontend": { "input": N, "output": N }, "backend": {...} }
@@ -480,8 +513,10 @@ class OVDState(TypedDict):
 
     # Output
     deliverables: list[dict]
-    status: Annotated[str, lambda x, y: y]  # S63-A: last-write-wins, evita InvalidUpdateError
-    messages: list[dict]            # historial de mensajes para el TUI
+    status: Annotated[
+        str, lambda x, y: y
+    ]  # S63-A: last-write-wins, evita InvalidUpdateError
+    messages: list[dict]  # historial de mensajes para el TUI
 
 
 def _extract_usage(response: Any) -> dict[str, int]:
@@ -499,32 +534,45 @@ def _extract_usage(response: Any) -> dict[str, int]:
     um = getattr(response, "usage_metadata", None)
     if um and isinstance(um, dict):
         return {
-            "input":  um.get("input_tokens",  0),
+            "input": um.get("input_tokens", 0),
             "output": um.get("output_tokens", 0),
         }
 
     # 2 + 3. response_metadata: ChatOpenAI usa "token_usage", Anthropic usa "usage"
-    meta  = getattr(response, "response_metadata", {}) or {}
+    meta = getattr(response, "response_metadata", {}) or {}
     usage = meta.get("token_usage") or meta.get("usage") or {}
     return {
-        "input":  usage.get("input_tokens",  0) or usage.get("prompt_tokens",     0),
+        "input": usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
         "output": usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
     }
 
 
 # P3.A — Tasas de costo por provider (USD por 1K tokens, aproximadas)
-_COST_PER_1K_INPUT:  dict[str, float] = {"claude": 0.003,  "openai": 0.005,  "ollama": 0.0, "custom": 0.0}
-_COST_PER_1K_OUTPUT: dict[str, float] = {"claude": 0.015,  "openai": 0.015,  "ollama": 0.0, "custom": 0.0}
+_COST_PER_1K_INPUT: dict[str, float] = {
+    "claude": 0.003,
+    "openai": 0.005,
+    "ollama": 0.0,
+    "custom": 0.0,
+}
+_COST_PER_1K_OUTPUT: dict[str, float] = {
+    "claude": 0.015,
+    "openai": 0.015,
+    "ollama": 0.0,
+    "custom": 0.0,
+}
 
 
 def _estimate_cost(token_usage: dict, provider: str) -> float:
     """P3.A — Estima el costo en USD según el uso de tokens y el provider."""
-    total_in  = sum(v.get("input", 0)  for v in token_usage.values() if isinstance(v, dict))
-    total_out = sum(v.get("output", 0) for v in token_usage.values() if isinstance(v, dict))
-    cost = (
-        (total_in  / 1000) * _COST_PER_1K_INPUT.get(provider,  0.0) +
-        (total_out / 1000) * _COST_PER_1K_OUTPUT.get(provider, 0.0)
+    total_in = sum(
+        v.get("input", 0) for v in token_usage.values() if isinstance(v, dict)
     )
+    total_out = sum(
+        v.get("output", 0) for v in token_usage.values() if isinstance(v, dict)
+    )
+    cost = (total_in / 1000) * _COST_PER_1K_INPUT.get(provider, 0.0) + (
+        total_out / 1000
+    ) * _COST_PER_1K_OUTPUT.get(provider, 0.0)
     return round(cost, 6)
 
 
@@ -532,7 +580,9 @@ def _estimate_cost(token_usage: dict, provider: str) -> float:
 # Helper: truncado de contexto para modelos con ventana pequeña (P2.B)
 # ---------------------------------------------------------------------------
 
-_MAX_CONTEXT_CHARS = int(os.environ.get("OVD_MAX_CONTEXT_TOKENS", "28000")) * 4  # ~4 chars/token
+_MAX_CONTEXT_CHARS = (
+    int(os.environ.get("OVD_MAX_CONTEXT_TOKENS", "28000")) * 4
+)  # ~4 chars/token
 
 
 def _truncate(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
@@ -571,11 +621,13 @@ async def invoke_structured(
     """
     retries = max_retries if max_retries is not None else _INVOKE_MAX_RETRIES
     schema_hint = _json.dumps(output_class.model_json_schema(), indent=2)
-    hint_msg = HumanMessage(content=(
-        "IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido "
-        f"que cumpla exactamente este schema:\n```json\n{schema_hint}\n```\n"
-        "Sin texto adicional, sin markdown, sin explicaciones."
-    ))
+    hint_msg = HumanMessage(
+        content=(
+            "IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido "
+            f"que cumpla exactamente este schema:\n```json\n{schema_hint}\n```\n"
+            "Sin texto adicional, sin markdown, sin explicaciones."
+        )
+    )
 
     attempt_state = {"count": 0}
 
@@ -593,7 +645,10 @@ async def invoke_structured(
         except Exception as exc:
             log.warning(
                 "invoke_structured: intento %d/%d falló (%s: %s) — reintentando con backoff",
-                n + 1, retries + 1, type(exc).__name__, str(exc)[:120],
+                n + 1,
+                retries + 1,
+                type(exc).__name__,
+                str(exc)[:120],
             )
             raise
 
@@ -604,37 +659,46 @@ async def invoke_structured(
 # Nodos del grafo
 # ---------------------------------------------------------------------------
 
+
 async def clone_repo(state: OVDState) -> dict:
     """
     S6 — G1.B: Si github_repo está configurado, clona o actualiza el repo
     antes de analyze_fr. Actualiza state["directory"] con la ruta local.
     No-op si github_repo está vacío.
     """
-    github_repo   = state.get("github_repo", "")
-    github_token  = state.get("github_token", "")
+    github_repo = state.get("github_repo", "")
+    github_token = state.get("github_token", "")
     github_branch = state.get("github_branch", "") or "main"
 
     if not github_repo or not github_token:
         return {}  # sin config GitHub — continuar con directory existente
 
     try:
-        local_dir = github_helper.clone_or_pull(github_repo, github_token, github_branch)
+        local_dir = github_helper.clone_or_pull(
+            github_repo, github_token, github_branch
+        )
         log.info("clone_repo: repo disponible en %s", local_dir)
         return {
             "directory": local_dir,
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": f"Repositorio clonado: {github_repo} (branch: {github_branch})",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": f"Repositorio clonado: {github_repo} (branch: {github_branch})",
+                }
+            ],
         }
     except Exception as e:
         log.error("clone_repo: error clonando repo — %s", e)
         # No fallar el ciclo — continuar con directory original
         return {
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": f"Advertencia: no se pudo clonar el repo ({e}). Continuando sin contexto de repositorio.",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": f"Advertencia: no se pudo clonar el repo ({e}). Continuando sin contexto de repositorio.",
+                }
+            ],
         }
 
 
@@ -642,8 +706,10 @@ async def clone_repo(state: OVDState) -> dict:
 # S21 — Visión: pre-procesador de imágenes adjuntas al Feature Request
 # ---------------------------------------------------------------------------
 
-_VISION_MODEL   = os.environ.get("OVD_VISION_MODEL", "qwen2.5vl:7b")
-_VISION_URL     = os.environ.get("OVD_VISION_OLLAMA_URL", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+_VISION_MODEL = os.environ.get("OVD_VISION_MODEL", "qwen2.5vl:7b")
+_VISION_URL = os.environ.get(
+    "OVD_VISION_OLLAMA_URL", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+)
 _VISION_ENABLED = os.environ.get("OVD_VISION_ENABLED", "true").lower() == "true"
 
 _VISION_PROMPT = (
@@ -663,7 +729,11 @@ async def describe_image(state: OVDState) -> dict:
     - Si OVD_VISION_ENABLED=false → no-op.
     En todos los no-op, image_base64 se limpia del estado para no arrastrar datos grandes.
     """
-    if not _VISION_ENABLED or not state.get("image_base64") or state.get("image_description"):
+    if (
+        not _VISION_ENABLED
+        or not state.get("image_base64")
+        or state.get("image_description")
+    ):
         return {"image_base64": ""}  # limpiar aunque sea no-op
 
     log.info("describe_image: procesando imagen con %s", _VISION_MODEL)
@@ -679,23 +749,32 @@ async def describe_image(state: OVDState) -> dict:
     )
 
     try:
-        response = await llm_vision.ainvoke([
-            HumanMessage(content=[
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{state['image_base64']}"},
-                },
-                {"type": "text", "text": _VISION_PROMPT},
-            ])
-        ])
+        response = await llm_vision.ainvoke(
+            [
+                HumanMessage(
+                    content=[
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{state['image_base64']}"
+                            },
+                        },
+                        {"type": "text", "text": _VISION_PROMPT},
+                    ]
+                )
+            ]
+        )
         description = response.content
         log.info("describe_image: descripción generada (%d chars)", len(description))
         return {
-            "image_base64": "",           # limpiar bytes crudos — ya no se necesitan
+            "image_base64": "",  # limpiar bytes crudos — ya no se necesitan
             "image_description": description,
         }
     except Exception as e:
-        log.warning("describe_image: error procesando imagen — %s. Continuando sin descripción visual.", e)
+        log.warning(
+            "describe_image: error procesando imagen — %s. Continuando sin descripción visual.",
+            e,
+        )
         return {"image_base64": ""}
 
 
@@ -713,39 +792,61 @@ async def analyze_fr(state: OVDState) -> dict:
     project_ctx = state.get("project_context", "")
 
     # GAP-004: calcular constraints_version como hash del project_context
-    constraints_version = hashlib.md5(project_ctx.encode()).hexdigest()[:8] if project_ctx else "no-profile"
+    constraints_version = (
+        hashlib.md5(project_ctx.encode()).hexdigest()[:8]
+        if project_ctx
+        else "no-profile"
+    )
 
     async with telemetry.node_span("analyze_fr", state) as span:
         llm = await model_router.get_llm_with_context(
-            "analyzer", state.get("org_id", ""), state.get("project_id", ""),
-            state.get("jwt_token", ""), state.get("stack_routing", "auto"),
+            "analyzer",
+            state.get("org_id", ""),
+            state.get("project_id", ""),
+            state.get("jwt_token", ""),
+            state.get("stack_routing", "auto"),
         )
         try:
             result: FRAnalysisOutput = await asyncio.wait_for(
-                invoke_structured(llm, [
-                    SystemMessage(content=template_loader.render(
-                        "system_analyzer",
-                        language=state.get("language", "es"),
-                        project_context=project_ctx,
-                    )),
-                    HumanMessage(content=_build_fr_content(state)),
-                ], FRAnalysisOutput),
+                invoke_structured(
+                    llm,
+                    [
+                        SystemMessage(
+                            content=template_loader.render(
+                                "system_analyzer",
+                                language=state.get("language", "es"),
+                                project_context=project_ctx,
+                            )
+                        ),
+                        HumanMessage(content=_build_fr_content(state)),
+                    ],
+                    FRAnalysisOutput,
+                ),
                 timeout=_ANALYZE_TIMEOUT,  # S41P.A
             )
         except asyncio.TimeoutError:
-            log.error("analyze_fr: timeout tras %.0fs — retornando análisis mínimo", _ANALYZE_TIMEOUT)
+            log.error(
+                "analyze_fr: timeout tras %.0fs — retornando análisis mínimo",
+                _ANALYZE_TIMEOUT,
+            )
             result = FRAnalysisOutput(
-                fr_type="feature", complexity="medium", components=[], oracle_involved=False,
-                risks=[], summary=f"[Timeout en análisis tras {_ANALYZE_TIMEOUT:.0f}s. Revisa el LLM.]",
+                fr_type="feature",
+                complexity="medium",
+                components=[],
+                oracle_involved=False,
+                risks=[],
+                summary=f"[Timeout en análisis tras {_ANALYZE_TIMEOUT:.0f}s. Revisa el LLM.]",
             )
 
-        span.set_attributes({
-            "ovd.fr_type":    result.fr_type,
-            "ovd.complexity": result.complexity,
-            "ovd.oracle_involved": result.oracle_involved,
-            "ovd.risks_count": len(result.risks),
-            "ovd.constraints_version": constraints_version,
-        })
+        span.set_attributes(
+            {
+                "ovd.fr_type": result.fr_type,
+                "ovd.complexity": result.complexity,
+                "ovd.oracle_involved": result.oracle_involved,
+                "ovd.risks_count": len(result.risks),
+                "ovd.constraints_version": constraints_version,
+            }
+        )
 
     analysis = {
         "raw": result.summary,
@@ -761,20 +862,23 @@ async def analyze_fr(state: OVDState) -> dict:
         "fr_analysis": analysis,
         "constraints_version": constraints_version,
         "uncertainty_register": [],  # GAP-004: inicializar registro vacio
-        "security_retry_count": 0,   # GAP-005: inicializar contadores
+        "security_retry_count": 0,  # GAP-005: inicializar contadores
         "qa_retry_count": 0,
         "retry_feedback": "",
-        "token_usage": {},   # FASE 4.D: inicializar acumulador de tokens
+        "token_usage": {},  # FASE 4.D: inicializar acumulador de tokens
         "cycle_start_ts": time.time(),  # P5.C: timestamp inicio del ciclo
         "status": "analyzed",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Analisis completado — Tipo: {result.fr_type}, "
-                f"Complejidad: {result.complexity}, "
-                f"Constraints version: {constraints_version}\n{result.summary}"
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Analisis completado — Tipo: {result.fr_type}, "
+                    f"Complejidad: {result.complexity}, "
+                    f"Constraints version: {constraints_version}\n{result.summary}"
+                ),
+            }
+        ],
     }
     # N1.B — publicar session.started (fire-and-forget)
     await nats_client.publish_started({**state, "fr_analysis": analysis})
@@ -803,7 +907,10 @@ def _should_run_web_research(state: OVDState) -> bool:
     analysis = state.get("fr_analysis", {})
     if analysis.get("fr_type") == "security":
         return True
-    if analysis.get("oracle_involved") and analysis.get("complexity") in ("high", "critical"):
+    if analysis.get("oracle_involved") and analysis.get("complexity") in (
+        "high",
+        "critical",
+    ):
         return True
     return False
 
@@ -863,7 +970,7 @@ async def web_research_node(state: OVDState) -> dict:
       5. Agrega la síntesis al rag_context para que generate_sdd lo use
     """
     if not _should_run_web_research(state):
-        return {}   # no-op — continuar sin búsqueda
+        return {}  # no-op — continuar sin búsqueda
 
     async with telemetry.node_span("web_research", state) as span:
         queries = _build_research_queries(state)
@@ -871,8 +978,8 @@ async def web_research_node(state: OVDState) -> dict:
         span.set_attribute("ovd.web_research.queries", str(queries[:2]))
 
         bridge_url = _OVD_BRIDGE_URL
-        jwt_token  = state.get("jwt_token", "")
-        org_id     = state.get("org_id", "")
+        jwt_token = state.get("jwt_token", "")
+        org_id = state.get("org_id", "")
         project_id = state.get("project_id")
 
         # S11.H — cargar fuentes curadas configuradas para este proyecto
@@ -898,20 +1005,29 @@ async def web_research_node(state: OVDState) -> dict:
             span.set_attribute("ovd.web_research.results_count", len(findings.results))
             span.set_attribute("ovd.web_research.indexed", findings.indexed)
         except asyncio.TimeoutError:
-            log.warning("web_research_node: timeout tras %.0fs — omitiendo investigación web", _RESEARCH_TIMEOUT)
+            log.warning(
+                "web_research_node: timeout tras %.0fs — omitiendo investigación web",
+                _RESEARCH_TIMEOUT,
+            )
             return {
-                "messages": state.get("messages", []) + [{
-                    "role": "agent",
-                    "content": f"Investigación web omitida por timeout ({_RESEARCH_TIMEOUT:.0f}s).",
-                }],
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": f"Investigación web omitida por timeout ({_RESEARCH_TIMEOUT:.0f}s).",
+                    }
+                ],
             }
         except Exception as e:
             log.warning("web_research_node: error en búsqueda web — %s", e)
             return {
-                "messages": state.get("messages", []) + [{
-                    "role": "agent",
-                    "content": f"Investigación web omitida por error: {e}",
-                }],
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": f"Investigación web omitida por error: {e}",
+                    }
+                ],
             }
 
     if not findings.synthesis:
@@ -921,8 +1037,7 @@ async def web_research_node(state: OVDState) -> dict:
     existing_rag = state.get("rag_context", "")
     separator = "\n\n---\n\n" if existing_rag else ""
     enriched_rag = (
-        f"{existing_rag}{separator}"
-        f"## Investigación web reciente\n{findings.synthesis}"
+        f"{existing_rag}{separator}## Investigación web reciente\n{findings.synthesis}"
     )
 
     return {
@@ -931,23 +1046,42 @@ async def web_research_node(state: OVDState) -> dict:
             {"title": r.title, "url": r.url, "snippet": r.snippet[:200]}
             for r in findings.results[:10]
         ],
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Investigación web completada — {len(findings.results)} resultados, "
-                f"{findings.indexed} indexado(s) en RAG. "
-                f"Proveedor: {findings.results[0].url.split('/')[2] if findings.results else 'N/A'}"
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Investigación web completada — {len(findings.results)} resultados, "
+                    f"{findings.indexed} indexado(s) en RAG. "
+                    f"Proveedor: {findings.results[0].url.split('/')[2] if findings.results else 'N/A'}"
+                ),
+            }
+        ],
     }
 
 
 _DB_RESTRICTION_KEYWORDS = (
-    "oracle", "fetch_first", "lateral join", "listagg", "rownum",
-    "python-oracledb", "oracledb", "thick mode", "cx_oracle",
-    "no_json", "no_fetch", "no_lateral", "no_listagg",
-    "no_with_function", "no_window", "use_rownum", "no_merge",
-    "tns", "sqlnet", "wallet", "oracle_home",
+    "oracle",
+    "fetch_first",
+    "lateral join",
+    "listagg",
+    "rownum",
+    "python-oracledb",
+    "oracledb",
+    "thick mode",
+    "cx_oracle",
+    "no_json",
+    "no_fetch",
+    "no_lateral",
+    "no_listagg",
+    "no_with_function",
+    "no_window",
+    "use_rownum",
+    "no_merge",
+    "tns",
+    "sqlnet",
+    "wallet",
+    "oracle_home",
 )
 
 
@@ -980,22 +1114,50 @@ def _strip_db_restrictions(project_ctx: str, oracle_involved: bool = False) -> s
     return result
 
 
-_INFRA_FILE_PATTERNS = frozenset({
-    "src/__init__.py", "src/database.py", "src/main.py",
-    "src/auth/__init__.py", "src/auth/dependencies.py",
-})
+_INFRA_FILE_PATTERNS = frozenset(
+    {
+        "src/__init__.py",
+        "src/database.py",
+        "src/main.py",
+        "src/auth/__init__.py",
+        "src/auth/dependencies.py",
+    }
+)
 
 
 def _is_infra_task(task: dict) -> bool:
     """S68-C: identifica tareas de infraestructura que no cuentan contra el cap de complejidad."""
-    combined = (task.get("description", "") + " " + task.get("title", "") + " " + task.get("file", "")).lower()
-    return any(p in combined for p in ("src/__init__", "src/database.py", "src/main.py", "src/auth/dependencies.py"))
+    combined = (
+        task.get("description", "")
+        + " "
+        + task.get("title", "")
+        + " "
+        + task.get("file", "")
+    ).lower()
+    return any(
+        p in combined
+        for p in (
+            "src/__init__",
+            "src/database.py",
+            "src/main.py",
+            "src/auth/dependencies.py",
+        )
+    )
 
 
 def _is_test_task_sdd(task: dict) -> bool:
     """S81-C: identifica tareas de tests — no cuentan contra el cap (equivalen a verification steps)."""
-    _text = (task.get("title", "") + " " + task.get("file", "") + " " + task.get("description", "")).lower()
-    return any(kw in _text for kw in ("test_", "tests/", "pytest", "unitari", "test suite", "test_"))
+    _text = (
+        task.get("title", "")
+        + " "
+        + task.get("file", "")
+        + " "
+        + task.get("description", "")
+    ).lower()
+    return any(
+        kw in _text
+        for kw in ("test_", "tests/", "pytest", "unitari", "test suite", "test_")
+    )
 
 
 def _normalize_task_signatures(sdd: dict) -> dict:
@@ -1043,7 +1205,9 @@ def _normalize_task_signatures(sdd: dict) -> dict:
             if any(kw in desc_lower for kw in keywords):
                 injections.append(hint)
         if injections:
-            task["description"] = task.get("description", "") + "\n\n" + " | ".join(injections)
+            task["description"] = (
+                task.get("description", "") + "\n\n" + " | ".join(injections)
+            )
     return sdd
 
 
@@ -1051,11 +1215,25 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
     """S69-A: si el FR menciona FastAPI y no hay tarea para src/main.py, inyectarla como primera tarea backend."""
     fr_raw = fr_analysis.get("raw", "").lower()
     fr_type = fr_analysis.get("type", "").lower()
-    _fastapi_keywords = ("fastapi", "api rest", "endpoint", "router", "uvicorn", "api-rest")
+    _fastapi_keywords = (
+        "fastapi",
+        "api rest",
+        "endpoint",
+        "router",
+        "uvicorn",
+        "api-rest",
+    )
     if not any(kw in fr_raw or kw in fr_type for kw in _fastapi_keywords):
         return sdd
     has_main = any(
-        "main.py" in (t.get("file", "") + " " + t.get("title", "") + " " + t.get("description", "")).lower()
+        "main.py"
+        in (
+            t.get("file", "")
+            + " "
+            + t.get("title", "")
+            + " "
+            + t.get("description", "")
+        ).lower()
         for t in sdd.get("tasks", [])
     )
     if not has_main:
@@ -1065,7 +1243,9 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             _f = _t.get("file", "")
             if _f.endswith("router.py") or "/router" in _f:
                 _mod = _f.replace("/", ".").removesuffix(".py")
-                _router_hints.append(f"from {_mod} import router as {_f.split('/')[-2]}_router")
+                _router_hints.append(
+                    f"from {_mod} import router as {_f.split('/')[-2]}_router"
+                )
         # S80-D / S81-D: incluir auth_router SOLO si el SDD tiene EXACTAMENTE src/auth/router.py.
         # Verificación por path exacto — evita falsos positivos con auth/service.py u otros.
         _has_auth_router_in_sdd = any(
@@ -1077,12 +1257,16 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             _auth_hint = "from src.auth.router import router as auth_router"
             if _auth_hint not in _router_hints:
                 _router_hints.insert(0, _auth_hint)
-                log.warning("generate_sdd: S80-D auth_router inyectado en TASK-INFRA-MAIN hints")
+                log.warning(
+                    "generate_sdd: S80-D auth_router inyectado en TASK-INFRA-MAIN hints"
+                )
         # S70-B: solo incluir include_router() si hay router.py explícito en el SDD.
         if _router_hints:
             _main_desc = (
                 "Crea src/main.py con app = FastAPI() e include_router() para los routers del SDD."
-                " Importa SOLO estos routers que SÍ están en el SDD: " + ", ".join(_router_hints) + "."
+                " Importa SOLO estos routers que SÍ están en el SDD: "
+                + ", ".join(_router_hints)
+                + "."
             )
         else:
             # S70-B: sin router.py en SDD → main.py mínimo sin imports de routers fantasma
@@ -1091,16 +1275,21 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
                 " IMPORTANTE: no importes módulos router que no estén definidos en el SDD."
                 " Este archivo es el entry point de la app; los routers se integrarán cuando el SDD los incluya."
             )
-        sdd["tasks"].insert(0, {
-            "id": "TASK-INFRA-MAIN",
-            "agent": "backend",
-            "title": "Crear src/main.py — entry point FastAPI",
-            "description": _main_desc,
-            "file": "src/main.py",
-            "depends_on": [],
-            "estimated_complexity": "low",
-        })
-        log.warning("generate_sdd: S69-A src/main.py inyectado como TASK-INFRA-MAIN (no estaba en SDD del LLM)")
+        sdd["tasks"].insert(
+            0,
+            {
+                "id": "TASK-INFRA-MAIN",
+                "agent": "backend",
+                "title": "Crear src/main.py — entry point FastAPI",
+                "description": _main_desc,
+                "file": "src/main.py",
+                "depends_on": [],
+                "estimated_complexity": "low",
+            },
+        )
+        log.warning(
+            "generate_sdd: S69-A src/main.py inyectado como TASK-INFRA-MAIN (no estaba en SDD del LLM)"
+        )
     else:
         # S80-D / S81-D: si main.py ya existe en SDD y el SDD tiene src/auth/router.py exacto,
         # garantizar que la descripción de main.py mencione auth_router
@@ -1111,14 +1300,19 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
         )
         if _has_auth_router_in_sdd_else:
             for _t in sdd.get("tasks", []):
-                if "main.py" in _t.get("file", "").lower() or "main.py" in _t.get("title", "").lower():
+                if (
+                    "main.py" in _t.get("file", "").lower()
+                    or "main.py" in _t.get("title", "").lower()
+                ):
                     if "auth_router" not in _t.get("description", ""):
                         _t["description"] = (
-                            _t.get("description", "") +
-                            " OBLIGATORIO: incluir 'from src.auth.router import router as auth_router'"
+                            _t.get("description", "")
+                            + " OBLIGATORIO: incluir 'from src.auth.router import router as auth_router'"
                             " y app.include_router(auth_router, prefix='/auth') en main.py."
                         )
-                        log.warning("generate_sdd: S80-D auth_router hint agregado a tarea main.py existente")
+                        log.warning(
+                            "generate_sdd: S80-D auth_router hint agregado a tarea main.py existente"
+                        )
                     break
     return sdd
 
@@ -1129,8 +1323,7 @@ def _ensure_contracts_models_task(sdd: dict) -> dict:
     Sin models.py, service.py y router.py no tienen dónde importar ORM classes → phantom imports.
     """
     has_contracts_module = any(
-        "contracts" in t.get("file", "").lower()
-        for t in sdd.get("tasks", [])
+        "contracts" in t.get("file", "").lower() for t in sdd.get("tasks", [])
     )
     if not has_contracts_module:
         return sdd
@@ -1145,22 +1338,27 @@ def _ensure_contracts_models_task(sdd: dict) -> dict:
         -1,
     )
     _insert_at = _db_idx + 1 if _db_idx >= 0 else 0
-    sdd["tasks"].insert(_insert_at, {
-        "id": "TASK-INFRA-CONTRACTS-MODELS",
-        "agent": "backend",
-        "title": "Crear src/contracts/models.py con ORM classes y schemas Pydantic",
-        "description": (
-            "Crea src/contracts/models.py con EXACTAMENTE estas clases ORM (importa Base desde src.database):\n"
-            "- ContractORM(Base): __tablename__='contracts', columnas id, rut_empleado, tipo_contrato (int), org_id, activo (bool)\n"
-            "- BenefitORM(Base): __tablename__='benefits', columnas id, contrato_id (FK contracts.id), codigo (int), valor (float), org_id\n"
-            "Y estos schemas Pydantic: ContractCreate, ContractUpdate, ContractResponse, BenefitCreate, BenefitResponse.\n"
-            "NUNCA definas ContractORM ni BenefitORM en service.py — solo en este archivo."
-        ),
-        "file": "src/contracts/models.py",
-        "depends_on": [],
-        "estimated_complexity": "low",
-    })
-    log.warning("generate_sdd: S82-B src/contracts/models.py inyectado como TASK-INFRA-CONTRACTS-MODELS")
+    sdd["tasks"].insert(
+        _insert_at,
+        {
+            "id": "TASK-INFRA-CONTRACTS-MODELS",
+            "agent": "backend",
+            "title": "Crear src/contracts/models.py con ORM classes y schemas Pydantic",
+            "description": (
+                "Crea src/contracts/models.py con EXACTAMENTE estas clases ORM (importa Base desde src.database):\n"
+                "- ContractORM(Base): __tablename__='contracts', columnas id, rut_empleado, tipo_contrato (int), org_id, activo (bool)\n"
+                "- BenefitORM(Base): __tablename__='benefits', columnas id, contrato_id (FK contracts.id), codigo (int), valor (float), org_id\n"
+                "Y estos schemas Pydantic: ContractCreate, ContractUpdate, ContractResponse, BenefitCreate, BenefitResponse.\n"
+                "NUNCA definas ContractORM ni BenefitORM en service.py — solo en este archivo."
+            ),
+            "file": "src/contracts/models.py",
+            "depends_on": [],
+            "estimated_complexity": "low",
+        },
+    )
+    log.warning(
+        "generate_sdd: S82-B src/contracts/models.py inyectado como TASK-INFRA-CONTRACTS-MODELS"
+    )
     return sdd
 
 
@@ -1177,35 +1375,45 @@ def _ensure_contracts_service_task(sdd: dict) -> dict:
     if not has_contracts_models:
         return sdd
     has_contracts_service = any(
-        "contracts/service" in t.get("file", "") or t.get("file", "").endswith("contracts_service.py")
+        "contracts/service" in t.get("file", "")
+        or t.get("file", "").endswith("contracts_service.py")
         for t in sdd.get("tasks", [])
     )
     if has_contracts_service:
         return sdd
     _models_idx = next(
-        (i for i, t in enumerate(sdd["tasks"]) if t.get("file", "").rstrip("/").endswith("contracts/models.py")),
+        (
+            i
+            for i, t in enumerate(sdd["tasks"])
+            if t.get("file", "").rstrip("/").endswith("contracts/models.py")
+        ),
         -1,
     )
     _insert_at = _models_idx + 1 if _models_idx >= 0 else 0
-    sdd["tasks"].insert(_insert_at, {
-        "id": "TASK-INFRA-CONTRACTS-SERVICE",
-        "agent": "backend",
-        "title": "Crear src/contracts/service.py con CRUD completo",
-        "description": (
-            "Crea src/contracts/service.py con estas funciones (importa ContractORM, BenefitORM de src.contracts.models):\n"
-            "- create_contract(data: ContractCreate, db: Session) -> ContractORM\n"
-            "- get_contract_by_rut(rut: str, org_id: int, db: Session) -> list[ContractORM]\n"
-            "- update_contract(contract_id: int, data: ContractUpdate, db: Session) -> ContractORM\n"
-            "- delete_contract(contract_id: int, db: Session) -> bool\n"
-            "- list_benefits(contract_id: int, db: Session) -> list[BenefitORM]\n"
-            "- create_benefit(contract_id: int, data: BenefitCreate, db: Session) -> BenefitORM\n"
-            "NUNCA definas ContractORM ni BenefitORM aquí — solo en contracts/models.py."
-        ),
-        "file": "src/contracts/service.py",
-        "depends_on": [],
-        "estimated_complexity": "medium",
-    })
-    log.warning("generate_sdd: S86-A src/contracts/service.py inyectado como TASK-INFRA-CONTRACTS-SERVICE")
+    sdd["tasks"].insert(
+        _insert_at,
+        {
+            "id": "TASK-INFRA-CONTRACTS-SERVICE",
+            "agent": "backend",
+            "title": "Crear src/contracts/service.py con CRUD completo",
+            "description": (
+                "Crea src/contracts/service.py con estas funciones (importa ContractORM, BenefitORM de src.contracts.models):\n"
+                "- create_contract(data: ContractCreate, db: Session) -> ContractORM\n"
+                "- get_contract_by_rut(rut: str, org_id: int, db: Session) -> list[ContractORM]\n"
+                "- update_contract(contract_id: int, data: ContractUpdate, db: Session) -> ContractORM\n"
+                "- delete_contract(contract_id: int, db: Session) -> bool\n"
+                "- list_benefits(contract_id: int, db: Session) -> list[BenefitORM]\n"
+                "- create_benefit(contract_id: int, data: BenefitCreate, db: Session) -> BenefitORM\n"
+                "NUNCA definas ContractORM ni BenefitORM aquí — solo en contracts/models.py."
+            ),
+            "file": "src/contracts/service.py",
+            "depends_on": [],
+            "estimated_complexity": "medium",
+        },
+    )
+    log.warning(
+        "generate_sdd: S86-A src/contracts/service.py inyectado como TASK-INFRA-CONTRACTS-SERVICE"
+    )
     return sdd
 
 
@@ -1220,35 +1428,45 @@ def _ensure_contracts_router_task(sdd: dict) -> dict:
     if not has_contracts_service:
         return sdd
     has_contracts_router = any(
-        "contracts/router" in t.get("file", "") or t.get("file", "").endswith("contracts_router.py")
+        "contracts/router" in t.get("file", "")
+        or t.get("file", "").endswith("contracts_router.py")
         for t in sdd.get("tasks", [])
     )
     if has_contracts_router:
         return sdd
     _service_idx = next(
-        (i for i, t in enumerate(sdd["tasks"]) if "contracts/service" in t.get("file", "")),
+        (
+            i
+            for i, t in enumerate(sdd["tasks"])
+            if "contracts/service" in t.get("file", "")
+        ),
         -1,
     )
     _insert_at = _service_idx + 1 if _service_idx >= 0 else 0
-    sdd["tasks"].insert(_insert_at, {
-        "id": "TASK-INFRA-CONTRACTS-ROUTER",
-        "agent": "backend",
-        "title": "Crear src/contracts/router.py con endpoints CRUD contratos",
-        "description": (
-            "Crea src/contracts/router.py con APIRouter() y endpoints:\n"
-            "- POST /contratos (create_contract)\n"
-            "- GET /contratos/rut/{rut} (get_contract_by_rut)\n"
-            "- PUT /contratos/{id} (update_contract)\n"
-            "- DELETE /contratos/{id} (delete_contract)\n"
-            "- GET /contratos/{id}/beneficios (list_benefits)\n"
-            "- POST /contratos/{id}/beneficios (create_benefit)\n"
-            "Importa desde src.contracts.service. Usa Depends(get_db) y Depends(get_current_user)."
-        ),
-        "file": "src/contracts/router.py",
-        "depends_on": [],
-        "estimated_complexity": "medium",
-    })
-    log.warning("generate_sdd: S86-B src/contracts/router.py inyectado como TASK-INFRA-CONTRACTS-ROUTER")
+    sdd["tasks"].insert(
+        _insert_at,
+        {
+            "id": "TASK-INFRA-CONTRACTS-ROUTER",
+            "agent": "backend",
+            "title": "Crear src/contracts/router.py con endpoints CRUD contratos",
+            "description": (
+                "Crea src/contracts/router.py con APIRouter() y endpoints:\n"
+                "- POST /contratos (create_contract)\n"
+                "- GET /contratos/rut/{rut} (get_contract_by_rut)\n"
+                "- PUT /contratos/{id} (update_contract)\n"
+                "- DELETE /contratos/{id} (delete_contract)\n"
+                "- GET /contratos/{id}/beneficios (list_benefits)\n"
+                "- POST /contratos/{id}/beneficios (create_benefit)\n"
+                "Importa desde src.contracts.service. Usa Depends(get_db) y Depends(get_current_user)."
+            ),
+            "file": "src/contracts/router.py",
+            "depends_on": [],
+            "estimated_complexity": "medium",
+        },
+    )
+    log.warning(
+        "generate_sdd: S86-B src/contracts/router.py inyectado como TASK-INFRA-CONTRACTS-ROUTER"
+    )
     return sdd
 
 
@@ -1300,18 +1518,27 @@ def _build_dependency_context(task: dict, written_context: dict[str, str]) -> st
         path_lower = path.lower()
         is_models = "models.py" in path_lower
         is_schema = "schema" in path_lower
-        is_dep_match = any(dep.lower() in path_lower or path_lower.endswith(dep.lower()) for dep in deps)
+        is_dep_match = any(
+            dep.lower() in path_lower or path_lower.endswith(dep.lower())
+            for dep in deps
+        )
         # Inyectar models.py para service.py/router.py (el patrón más común de fallo)
-        is_consumer = any(kw in task_file.lower() for kw in ("service", "router", "test_"))
+        is_consumer = any(
+            kw in task_file.lower() for kw in ("service", "router", "test_")
+        )
         if is_dep_match or (is_models and is_consumer) or (is_schema and is_consumer):
             relevant.append((path, content))
     if not relevant:
         return ""
-    lines = ["[S83-F — CONTEXTO DE ARCHIVOS YA GENERADOS — úsalos como referencia exacta]\n"]
+    lines = [
+        "[S83-F — CONTEXTO DE ARCHIVOS YA GENERADOS — úsalos como referencia exacta]\n"
+    ]
     for path, content in relevant[:3]:  # máximo 3 archivos para no saturar el contexto
         preview = content[:2000] + ("...[truncado]" if len(content) > 2000 else "")
         lines.append(f"```python:{path}\n{preview}\n```\n")
-    lines.append("[FIN CONTEXTO S83-F — importa exactamente los nombres de clases/funciones que ves arriba]\n\n")
+    lines.append(
+        "[FIN CONTEXTO S83-F — importa exactamente los nombres de clases/funciones que ves arriba]\n\n"
+    )
     return "".join(lines)
 
 
@@ -1321,35 +1548,44 @@ def _ensure_auth_login_task(sdd: dict, fr_analysis: dict) -> dict:
     Sin auth/router.py, main.py no puede incluir auth_router → phantom import.
     """
     fr_lower = (fr_analysis.get("raw", "") + " " + fr_analysis.get("type", "")).lower()
-    if not any(kw in fr_lower for kw in ("login", "autenticaci", "jwt", "auth", "token")):
+    if not any(
+        kw in fr_lower for kw in ("login", "autenticaci", "jwt", "auth", "token")
+    ):
         return sdd
     has_auth_router = any(
-        "auth/router" in t.get("file", "") or t.get("file", "").endswith("auth_router.py")
+        "auth/router" in t.get("file", "")
+        or t.get("file", "").endswith("auth_router.py")
         for t in sdd.get("tasks", [])
     )
     if has_auth_router:
         return sdd
     # Buscar idx de database.py para insertar después
     _db_idx = next(
-        (i for i, t in enumerate(sdd["tasks"]) if "database.py" in t.get("file", "")), -1
+        (i for i, t in enumerate(sdd["tasks"]) if "database.py" in t.get("file", "")),
+        -1,
     )
     _insert_at = _db_idx + 1 if _db_idx >= 0 else 0
-    sdd["tasks"].insert(_insert_at, {
-        "id": "TASK-INFRA-AUTH-ROUTER",
-        "agent": "backend",
-        "title": "Crear src/auth/router.py con POST /auth/login JWT",
-        "description": (
-            "Crea src/auth/router.py con endpoint POST /auth/login.\n"
-            "Usa APIRouter(). Recibe LoginRequest(rut, password), valida RUT con validate_rut(),\n"
-            "consulta UserORM en BD (db.query(UserORM).filter(UserORM.rut==clean_rut(body.rut)).first()),\n"
-            "verifica password con CryptContext(bcrypt), retorna TokenResponse con JWT (python-jose).\n"
-            "Sigue el ejemplo de auth/router.py en system_backend_python.md sección login."
-        ),
-        "file": "src/auth/router.py",
-        "depends_on": [],
-        "estimated_complexity": "medium",
-    })
-    log.warning("generate_sdd: S83-E src/auth/router.py inyectado como TASK-INFRA-AUTH-ROUTER")
+    sdd["tasks"].insert(
+        _insert_at,
+        {
+            "id": "TASK-INFRA-AUTH-ROUTER",
+            "agent": "backend",
+            "title": "Crear src/auth/router.py con POST /auth/login JWT",
+            "description": (
+                "Crea src/auth/router.py con endpoint POST /auth/login.\n"
+                "Usa APIRouter(). Recibe LoginRequest(rut, password), valida RUT con validate_rut(),\n"
+                "consulta UserORM en BD (db.query(UserORM).filter(UserORM.rut==clean_rut(body.rut)).first()),\n"
+                "verifica password con CryptContext(bcrypt), retorna TokenResponse con JWT (python-jose).\n"
+                "Sigue el ejemplo de auth/router.py en system_backend_python.md sección login."
+            ),
+            "file": "src/auth/router.py",
+            "depends_on": [],
+            "estimated_complexity": "medium",
+        },
+    )
+    log.warning(
+        "generate_sdd: S83-E src/auth/router.py inyectado como TASK-INFRA-AUTH-ROUTER"
+    )
     return sdd
 
 
@@ -1360,7 +1596,8 @@ def _ensure_auth_models_task(sdd: dict) -> dict:
     Sin este archivo, todos los tests fallan con ImportError.
     """
     has_auth_router = any(
-        "auth/router" in t.get("file", "") or t.get("file", "").endswith("auth_router.py")
+        "auth/router" in t.get("file", "")
+        or t.get("file", "").endswith("auth_router.py")
         for t in sdd.get("tasks", [])
     )
     if not has_auth_router:
@@ -1375,23 +1612,28 @@ def _ensure_auth_models_task(sdd: dict) -> dict:
     _router_idx = next(
         (i for i, t in enumerate(sdd["tasks"]) if "auth/router" in t.get("file", "")), 0
     )
-    sdd["tasks"].insert(_router_idx, {
-        "id": "TASK-INFRA-AUTH-MODELS",
-        "agent": "backend",
-        "title": "Crear src/auth/models.py con UserORM y schemas de auth",
-        "description": (
-            "Crea src/auth/models.py con:\n"
-            "- UserORM(Base): tabla 'users' con id, rut(String unique), email, password_hash,\n"
-            "  nombre, rol, activo, org_id, created_at.\n"
-            "- TokenResponse(BaseModel): access_token, token_type='bearer', expires_in=3600.\n"
-            "- LoginRequest(BaseModel): rut, password.\n"
-            "Sigue el ejemplo en system_backend_python.md sección S84-C."
-        ),
-        "file": "src/auth/models.py",
-        "depends_on": [],
-        "estimated_complexity": "low",
-    })
-    log.warning("generate_sdd: S84-F src/auth/models.py inyectado como TASK-INFRA-AUTH-MODELS")
+    sdd["tasks"].insert(
+        _router_idx,
+        {
+            "id": "TASK-INFRA-AUTH-MODELS",
+            "agent": "backend",
+            "title": "Crear src/auth/models.py con UserORM y schemas de auth",
+            "description": (
+                "Crea src/auth/models.py con:\n"
+                "- UserORM(Base): tabla 'users' con id, rut(String unique), email, password_hash,\n"
+                "  nombre, rol, activo, org_id, created_at.\n"
+                "- TokenResponse(BaseModel): access_token, token_type='bearer', expires_in=3600.\n"
+                "- LoginRequest(BaseModel): rut, password.\n"
+                "Sigue el ejemplo en system_backend_python.md sección S84-C."
+            ),
+            "file": "src/auth/models.py",
+            "depends_on": [],
+            "estimated_complexity": "low",
+        },
+    )
+    log.warning(
+        "generate_sdd: S84-F src/auth/models.py inyectado como TASK-INFRA-AUTH-MODELS"
+    )
     return sdd
 
 
@@ -1401,6 +1643,7 @@ def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]
     Retorna (missing_routers, fix_content_to_append).
     """
     import re as _re
+
     _wdir = pathlib.Path(work_dir)
     routers = list(_wdir.glob("src/*/router.py"))
     main_py = _wdir / "src" / "main.py"
@@ -1412,11 +1655,11 @@ def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]
     for router_file in routers:
         module_name = router_file.parent.name
         has_import = _re.search(
-            rf'from\s+src\.{_re.escape(module_name)}\.router\s+import',
+            rf"from\s+src\.{_re.escape(module_name)}\.router\s+import",
             main_content,
         )
         has_include = _re.search(
-            rf'include_router\s*\(\s*\w*{_re.escape(module_name)}',
+            rf"include_router\s*\(\s*\w*{_re.escape(module_name)}",
             main_content,
         )
         if not (has_import and has_include):
@@ -1433,7 +1676,12 @@ def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]
     fix_snippet = "\n".join(fix_lines)
 
     try:
-        new_content = main_content.rstrip() + "\n\n# S77-C: routers auto-inyectados\n" + fix_snippet + "\n"
+        new_content = (
+            main_content.rstrip()
+            + "\n\n# S77-C: routers auto-inyectados\n"
+            + fix_snippet
+            + "\n"
+        )
         main_py.write_text(new_content, encoding="utf-8")
         log.warning(
             "[S77-C] main.py auto-inyectado con routers faltantes: %s",
@@ -1459,7 +1707,9 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
     _orm_manifest: dict[str, str] = {}
     for _models_file in _wdir.glob("src/**/models.py"):
         try:
-            _tree = _ast.parse(_models_file.read_text(encoding="utf-8", errors="replace"))
+            _tree = _ast.parse(
+                _models_file.read_text(encoding="utf-8", errors="replace")
+            )
         except SyntaxError:
             continue
         for _node in _ast.walk(_tree):
@@ -1478,9 +1728,13 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
     if not _orm_manifest:
         # S80-A: manifest vacío → verificar si service.py importa nombres que terminan en ORM
         _orm_imports_in_services: list[str] = []
-        for _svc_file in list(_wdir.glob("src/**/service.py")) + list(_wdir.glob("src/**/router.py")):
+        for _svc_file in list(_wdir.glob("src/**/service.py")) + list(
+            _wdir.glob("src/**/router.py")
+        ):
             try:
-                _tree = _ast.parse(_svc_file.read_text(encoding="utf-8", errors="replace"))
+                _tree = _ast.parse(
+                    _svc_file.read_text(encoding="utf-8", errors="replace")
+                )
             except SyntaxError:
                 continue
             for _node in _ast.walk(_tree):
@@ -1509,7 +1763,9 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
         return True, ""
 
     _issues: list[str] = []
-    for _svc_file in list(_wdir.glob("src/**/service.py")) + list(_wdir.glob("src/**/router.py")):
+    for _svc_file in list(_wdir.glob("src/**/service.py")) + list(
+        _wdir.glob("src/**/router.py")
+    ):
         try:
             _tree = _ast.parse(_svc_file.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
@@ -1521,14 +1777,25 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
                 continue
             for _alias in _node.names:
                 _imported = _alias.asname or _alias.name
-                if _imported.endswith(("Request", "Response", "Schema", "Create", "Update")):
+                if _imported.endswith(
+                    ("Request", "Response", "Schema", "Create", "Update")
+                ):
                     continue
                 if _imported not in _orm_manifest:
-                    _candidates = [k for k in _orm_manifest if (
-                        k.lower().replace("orm", "") == _imported.lower().replace("orm", "")
-                        or k.lower()[:5] == _imported.lower()[:5]
-                    )]
-                    _hint = f" (¿quisiste decir: {', '.join(_candidates)}?)" if _candidates else ""
+                    _candidates = [
+                        k
+                        for k in _orm_manifest
+                        if (
+                            k.lower().replace("orm", "")
+                            == _imported.lower().replace("orm", "")
+                            or k.lower()[:5] == _imported.lower()[:5]
+                        )
+                    ]
+                    _hint = (
+                        f" (¿quisiste decir: {', '.join(_candidates)}?)"
+                        if _candidates
+                        else ""
+                    )
                     _issues.append(
                         f"  - {_svc_file.relative_to(_wdir)}: "
                         f"importa `{_imported}` que no existe en models.py{_hint}"
@@ -1564,11 +1831,15 @@ def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
     _content = _db_file.read_text(encoding="utf-8", errors="replace")
     _fr_lower = fr_text.lower()
 
-    _fr_wants_postgres = any(kw in _fr_lower for kw in ("postgresql", "postgres", "psycopg"))
+    _fr_wants_postgres = any(
+        kw in _fr_lower for kw in ("postgresql", "postgres", "psycopg")
+    )
     _fr_wants_oracle = any(kw in _fr_lower for kw in ("oracle", "oracledb", "xepdb"))
 
     _has_oracle_url = "oracle" in _content.lower() or "oracledb" in _content.lower()
-    _has_postgres_url = "postgresql" in _content.lower() or "psycopg" in _content.lower()
+    _has_postgres_url = (
+        "postgresql" in _content.lower() or "psycopg" in _content.lower()
+    )
 
     _issues: list[str] = []
     if _fr_wants_postgres and _has_oracle_url and not _has_postgres_url:
@@ -1594,10 +1865,18 @@ def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
         # S84-A-v2: reescribir database.py en disco con URL PostgreSQL correcta
         try:
             import re as _re_db
+
             _new_content = _content
             # Eliminar líneas Oracle init
-            _new_content = _re_db.sub(r"^import oracledb\b[^\n]*\n?", "", _new_content, flags=_re_db.MULTILINE)
-            _new_content = _re_db.sub(r"^oracledb\.init_oracle_client\([^\)]*\)\n?", "", _new_content, flags=_re_db.MULTILINE)
+            _new_content = _re_db.sub(
+                r"^import oracledb\b[^\n]*\n?", "", _new_content, flags=_re_db.MULTILINE
+            )
+            _new_content = _re_db.sub(
+                r"^oracledb\.init_oracle_client\([^\)]*\)\n?",
+                "",
+                _new_content,
+                flags=_re_db.MULTILINE,
+            )
             # Reemplazar Oracle URL con PostgreSQL
             _new_content = _re_db.sub(
                 r"oracle\+oracledb://[^\s'\"]+",
@@ -1612,7 +1891,9 @@ def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
             )
             if _new_content != _content:
                 _db_file.write_text(_new_content, encoding="utf-8")
-                log.warning("[S84-A-v2] database.py reescrito: Oracle URL → PostgreSQL (FR exige PostgreSQL)")
+                log.warning(
+                    "[S84-A-v2] database.py reescrito: Oracle URL → PostgreSQL (FR exige PostgreSQL)"
+                )
         except Exception as _e:
             log.warning("[S84-A-v2] error al reescribir database.py: %s", _e)
 
@@ -1630,6 +1911,7 @@ def _verify_no_stub_endpoints(work_dir: str) -> tuple[bool, str]:
     Retorna (ok, feedback_para_retry). Si ok=True, no hay stubs.
     """
     import re as _re
+
     _wdir = pathlib.Path(work_dir)
     _candidates = list(_wdir.glob("src/main.py")) + list(_wdir.glob("src/*/router.py"))
     if not _candidates:
@@ -1637,10 +1919,10 @@ def _verify_no_stub_endpoints(work_dir: str) -> tuple[bool, str]:
 
     # Patrón: decorator HTTP + def nombre(...): \n         pass  o  ...
     _stub_re = _re.compile(
-        r'@(?:app|router)\.\w+[^\n]*\n'
-        r'(?:[ \t]*(?:@[^\n]+\n))*'          # decoradores adicionales opcionales
-        r'[ \t]*(?:async\s+)?def\s+(\w+)[^\n]*:\n'
-        r'[ \t]+(pass|\.\.\.)\s*(?:\n|$)',
+        r"@(?:app|router)\.\w+[^\n]*\n"
+        r"(?:[ \t]*(?:@[^\n]+\n))*"  # decoradores adicionales opcionales
+        r"[ \t]*(?:async\s+)?def\s+(\w+)[^\n]*:\n"
+        r"[ \t]+(pass|\.\.\.)\s*(?:\n|$)",
         _re.MULTILINE,
     )
     found_stubs: list[str] = []
@@ -1679,34 +1961,38 @@ def _ensure_test_task(sdd: dict, fr_analysis: dict) -> dict:
 
     # Identificar módulo principal del backend para nombrar el test
     backend_tasks = [
-        t for t in sdd.get("tasks", [])
-        if t.get("agent") == "backend" and "src/" in t.get("file", "")
+        t
+        for t in sdd.get("tasks", [])
+        if t.get("agent") == "backend"
+        and "src/" in t.get("file", "")
         and not _is_infra_task(t)
     ]
     main_module = "main"
     if backend_tasks:
         main_file = backend_tasks[0].get("file", "src/main.py")
-        main_module = (
-            main_file.replace("src/", "").replace(".py", "").replace("/", "_")
-        )
+        main_module = main_file.replace("src/", "").replace(".py", "").replace("/", "_")
 
     test_depends = [t["id"] for t in backend_tasks[:3] if t.get("id")]
-    sdd["tasks"].append({
-        "id": "TASK-INFRA-TESTS",
-        "agent": "backend",
-        "title": "Tests pytest para módulos principales",
-        "description": (
-            f"Crear tests/test_{main_module}.py con pytest y conftest.py. "
-            "conftest.py: fixture db (SQLite en memoria), fixture client (TestClient + override get_db). "
-            "tests: test happy path endpoint principal, test validación de input inválido, "
-            "test sin autenticación retorna 401. "
-            "IMPORTANTE: importar solo módulos que existan en esta entrega."
-        ),
-        "file": f"tests/test_{main_module}.py",
-        "depends_on": test_depends,
-        "estimated_complexity": "low",
-    })
-    log.warning("generate_sdd: S74-B TASK-INFRA-TESTS inyectada — tests/test_%s.py", main_module)
+    sdd["tasks"].append(
+        {
+            "id": "TASK-INFRA-TESTS",
+            "agent": "backend",
+            "title": "Tests pytest para módulos principales",
+            "description": (
+                f"Crear tests/test_{main_module}.py con pytest y conftest.py. "
+                "conftest.py: fixture db (SQLite en memoria), fixture client (TestClient + override get_db). "
+                "tests: test happy path endpoint principal, test validación de input inválido, "
+                "test sin autenticación retorna 401. "
+                "IMPORTANTE: importar solo módulos que existan en esta entrega."
+            ),
+            "file": f"tests/test_{main_module}.py",
+            "depends_on": test_depends,
+            "estimated_complexity": "low",
+        }
+    )
+    log.warning(
+        "generate_sdd: S74-B TASK-INFRA-TESTS inyectada — tests/test_%s.py", main_module
+    )
     return sdd
 
 
@@ -1721,8 +2007,8 @@ async def generate_sdd(state: OVDState) -> dict:
     Si revision_count > 0, incorpora el feedback del arquitecto (approval_comment)
     para regenerar el SDD en ciclos de revisión iterativa (S15-TUI).
     """
-    project_ctx    = state.get("project_context", "")
-    rag_ctx        = state.get("rag_context", "")
+    project_ctx = state.get("project_context", "")
+    rag_ctx = state.get("rag_context", "")
     revision_count = state.get("revision_count", 0)
     revision_comment = state.get("approval_comment", "")
 
@@ -1740,14 +2026,16 @@ async def generate_sdd(state: OVDState) -> dict:
         rag_ctx = _strip_db_restrictions(rag_ctx, oracle_involved=False)
         log.warning(
             "generate_sdd: S63-C rag_context filtrado (oracle_involved=False) — %d chars → %d chars",
-            _rag_ctx_original_len, len(rag_ctx),
+            _rag_ctx_original_len,
+            len(rag_ctx),
         )
 
     # S63-C: instrucción afirmativa cuando oracle_involved=False — más robusta que negación
     _sdd_oracle_note = (
         "[S63-C] Este FR es Python puro sin base de datos. Sin Oracle, sin oracledb, sin thick mode.\n"
         "Los únicos constraints aplicables son los de Python/FastAPI listados abajo.\n\n"
-        if not _oracle_involved else ""
+        if not _oracle_involved
+        else ""
     )
 
     # Construir el bloque de revisión si corresponde
@@ -1770,35 +2058,53 @@ async def generate_sdd(state: OVDState) -> dict:
             span.set_attribute("ovd.sdd.revision_round", revision_count)
 
         llm = await model_router.get_llm_with_context(
-            "sdd", state.get("org_id", ""), state.get("project_id", ""),
-            state.get("jwt_token", ""), state.get("stack_routing", "auto"),
+            "sdd",
+            state.get("org_id", ""),
+            state.get("project_id", ""),
+            state.get("jwt_token", ""),
+            state.get("stack_routing", "auto"),
         )
         try:
             result: SDDOutput = await asyncio.wait_for(
-                invoke_structured(llm, [
-                    SystemMessage(content=_sdd_oracle_note + template_loader.render(
-                        "system_sdd",
-                        language=state.get("language", "es"),
-                        project_context=project_ctx,
-                        rag_context=rag_ctx,
-                    )),
-                    HumanMessage(content=human_content),
-                ], SDDOutput),
+                invoke_structured(
+                    llm,
+                    [
+                        SystemMessage(
+                            content=_sdd_oracle_note
+                            + template_loader.render(
+                                "system_sdd",
+                                language=state.get("language", "es"),
+                                project_context=project_ctx,
+                                rag_context=rag_ctx,
+                            )
+                        ),
+                        HumanMessage(content=human_content),
+                    ],
+                    SDDOutput,
+                ),
                 timeout=_SDD_TIMEOUT,  # S41P.A
             )
         except asyncio.TimeoutError:
-            log.error("generate_sdd: timeout tras %.0fs — retornando SDD mínimo", _SDD_TIMEOUT)
+            log.error(
+                "generate_sdd: timeout tras %.0fs — retornando SDD mínimo", _SDD_TIMEOUT
+            )
             result = SDDOutput(
                 summary=f"[Timeout en SDD tras {_SDD_TIMEOUT:.0f}s. Revisa el LLM.]",
-                requirements=[], design_overview="", design_diagrams=[],
-                constraints=[], tasks=[],
+                requirements=[],
+                design_overview="",
+                design_diagrams=[],
+                constraints=[],
+                tasks=[],
             )
 
         # Serializar los 4 artefactos como dicts para el estado
         sdd = {
             "summary": result.summary,
             "requirements": [r.dict() for r in result.requirements],
-            "design": {"overview": result.design_overview, "diagrams": result.design_diagrams},
+            "design": {
+                "overview": result.design_overview,
+                "diagrams": result.design_diagrams,
+            },
             "constraints": [c.dict() for c in result.constraints],
             "tasks": [t.dict() for t in result.tasks],
         }
@@ -1842,31 +2148,50 @@ async def generate_sdd(state: OVDState) -> dict:
             # S68-C: separar infra (siempre pasan) de negocio (sujeto al cap)
             # S81-C: tareas de tests también están protegidas del cap (son verification steps obligatorios)
             _infra = [t for t in _agent_tasks if _is_infra_task(t)]
-            _tests = [t for t in _agent_tasks if _is_test_task_sdd(t) and not _is_infra_task(t)]
-            _business = [t for t in _agent_tasks if not _is_infra_task(t) and not _is_test_task_sdd(t)]
+            _tests = [
+                t
+                for t in _agent_tasks
+                if _is_test_task_sdd(t) and not _is_infra_task(t)
+            ]
+            _business = [
+                t
+                for t in _agent_tasks
+                if not _is_infra_task(t) and not _is_test_task_sdd(t)
+            ]
             if _tests:
-                log.warning("generate_sdd: S81-C %d tarea(s) de tests protegidas del cap para agente=%s", len(_tests), _agent)
+                log.warning(
+                    "generate_sdd: S81-C %d tarea(s) de tests protegidas del cap para agente=%s",
+                    len(_tests),
+                    _agent,
+                )
             if len(_business) > _MAX_TASKS_PER_AGENT:
-                _trimmed_agents.append(f"{_agent}({len(_business)}→{_MAX_TASKS_PER_AGENT})")
-                _tasks_trimmed.extend(_infra + _tests + _business[:_MAX_TASKS_PER_AGENT])
+                _trimmed_agents.append(
+                    f"{_agent}({len(_business)}→{_MAX_TASKS_PER_AGENT})"
+                )
+                _tasks_trimmed.extend(
+                    _infra + _tests + _business[:_MAX_TASKS_PER_AGENT]
+                )
             else:
                 _tasks_trimmed.extend(_infra + _tests + _business)
         if _trimmed_agents:
             log.warning(
                 "generate_sdd: S66-B máx %d tareas/agente aplicado — recortados: %s",
-                _MAX_TASKS_PER_AGENT, ", ".join(_trimmed_agents),
+                _MAX_TASKS_PER_AGENT,
+                ", ".join(_trimmed_agents),
             )
             sdd["tasks"] = _tasks_trimmed
 
-        n_req   = len(sdd["requirements"])
+        n_req = len(sdd["requirements"])
         n_tasks = len(sdd["tasks"])
         n_agents = len({t["agent"] for t in sdd["tasks"]})
 
-        span.set_attributes({
-            "ovd.sdd.requirements_count": n_req,
-            "ovd.sdd.tasks_count":        n_tasks,
-            "ovd.sdd.agents_count":       n_agents,
-        })
+        span.set_attributes(
+            {
+                "ovd.sdd.requirements_count": n_req,
+                "ovd.sdd.tasks_count": n_tasks,
+                "ovd.sdd.agents_count": n_agents,
+            }
+        )
 
     summary_msg = (
         f"SDD generado: {n_req} requisito(s), {n_tasks} tarea(s) "
@@ -1875,20 +2200,25 @@ async def generate_sdd(state: OVDState) -> dict:
 
     revision_history = state.get("revision_history", [])
     if revision_count > 0 and revision_comment:
-        revision_history = revision_history + [{"round": revision_count, "comment": revision_comment}]
+        revision_history = revision_history + [
+            {"round": revision_count, "comment": revision_comment}
+        ]
 
     round_label = f" (revisión #{revision_count + 1})" if revision_count > 0 else ""
     return {
         "sdd": sdd,
         "status": "sdd_generated",
-        "approval_comment":  "",                    # limpiar para la próxima iteración
-        "revision_count":    revision_count + 1,
-        "revision_history":  revision_history,
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": f"SDD generado{round_label}: {n_req} requisito(s), {n_tasks} tarea(s) "
-                       f"para {n_agents} agente(s).",
-        }],
+        "approval_comment": "",  # limpiar para la próxima iteración
+        "revision_count": revision_count + 1,
+        "revision_history": revision_history,
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": f"SDD generado{round_label}: {n_req} requisito(s), {n_tasks} tarea(s) "
+                f"para {n_agents} agente(s).",
+            }
+        ],
     }
 
 
@@ -1906,30 +2236,37 @@ async def request_approval(state: OVDState) -> dict:
             "approval_decision": "approved",
             "approval_comment": "[auto-aprobado]",
             "status": "approved",
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": "SDD aprobado automáticamente (auto_approve=True).",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": "SDD aprobado automáticamente (auto_approve=True).",
+                }
+            ],
         }
 
     # interrupt() pausa el grafo — la ejecucion se resume cuando
     # el TUI llama a POST /session/{id}/approve
-    decision = interrupt({
-        "type": "pending_approval",
-        "permission_id": f"sdd_approval_{state['session_id']}",
-        "reason": "Aprobacion del SDD requerida antes de ejecutar los agentes",
-        "context": {
-            # GAP-007: exponer los 4 artefactos separados en el modal de aprobacion
-            "sdd_summary": state["sdd"].get("summary", ""),
-            "requirements_count": len(state["sdd"].get("requirements", [])),
-            "requirements": state["sdd"].get("requirements", []),
-            "design_overview": state["sdd"].get("design", {}).get("overview", "")[:800],
-            "constraints": state["sdd"].get("constraints", []),
-            "tasks": state["sdd"].get("tasks", []),
-            "fr_type": state["fr_analysis"].get("type", ""),
-            "complexity": state["fr_analysis"].get("complexity", ""),
-        },
-    })
+    decision = interrupt(
+        {
+            "type": "pending_approval",
+            "permission_id": f"sdd_approval_{state['session_id']}",
+            "reason": "Aprobacion del SDD requerida antes de ejecutar los agentes",
+            "context": {
+                # GAP-007: exponer los 4 artefactos separados en el modal de aprobacion
+                "sdd_summary": state["sdd"].get("summary", ""),
+                "requirements_count": len(state["sdd"].get("requirements", [])),
+                "requirements": state["sdd"].get("requirements", []),
+                "design_overview": state["sdd"]
+                .get("design", {})
+                .get("overview", "")[:800],
+                "constraints": state["sdd"].get("constraints", []),
+                "tasks": state["sdd"].get("tasks", []),
+                "fr_type": state["fr_analysis"].get("type", ""),
+                "complexity": state["fr_analysis"].get("complexity", ""),
+            },
+        }
+    )
 
     approval = decision.get("approved", False)
     comment = decision.get("comment", "")
@@ -1941,144 +2278,237 @@ async def request_approval(state: OVDState) -> dict:
         "approval_decision": "approved" if approval else "rejected",
         "approval_comment": comment,
         "status": "approved" if approval else "rejected",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": f"Decision de aprobacion: {'Aprobado' if approval else 'Rechazado'}. {comment}",
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": f"Decision de aprobacion: {'Aprobado' if approval else 'Rechazado'}. {comment}",
+            }
+        ],
     }
 
 
 def _log_runner_response(response: Any, agent_name: str) -> None:
     """S54-A: Diagnóstico de done_reason, tokens reales y presencia de fence :path."""
     meta = getattr(response, "response_metadata", {}) or {}
-    done_reason  = meta.get("done_reason", "unknown")
-    eval_count   = meta.get("eval_count", 0)
+    done_reason = meta.get("done_reason", "unknown")
+    eval_count = meta.get("eval_count", 0)
     prompt_count = meta.get("prompt_eval_count", 0)
-    content_len  = len(response.content) if response.content else 0
+    content_len = len(response.content) if response.content else 0
 
     log.warning(
         "S54-A runner[%s]: done_reason=%s eval_count=%d prompt_eval_count=%d output_len=%d",
-        agent_name, done_reason, eval_count, prompt_count, content_len,
+        agent_name,
+        done_reason,
+        eval_count,
+        prompt_count,
+        content_len,
     )
     if done_reason == "length":
         log.warning(
             "S54-A runner[%s]: TRUNCADO — output cortado por num_predict. "
             "Primeros 400 chars: %s",
-            agent_name, (response.content or "")[:400].replace("\n", "↵"),
+            agent_name,
+            (response.content or "")[:400].replace("\n", "↵"),
         )
 
     # Verificar presencia de fence :path (indicador de que el modelo siguió el formato)
     content = response.content or ""
-    has_path_fence = bool(
-        _re.search(r"```[\w+\-]*:[^\n`]+", content)
-    )
+    has_path_fence = bool(_re.search(r"```[\w+\-]*:[^\n`]+", content))
     if not has_path_fence and content_len > 50:
         log.warning(
             "S54-A runner[%s]: output NO contiene fence con :path — "
             "_write_artifacts no podrá escribir archivos. "
             "Primeros 500 chars: %s",
-            agent_name, content[:500].replace("\n", "↵"),
+            agent_name,
+            content[:500].replace("\n", "↵"),
         )
     else:
         import re as _re2
+
         paths_found = _re2.findall(r"```[\w+\-]*:([^\n`]+)", content)
-        log.warning("S54-A runner[%s]: fence :path encontrado en %d bloque(s): %s", agent_name, len(paths_found), paths_found)
+        log.warning(
+            "S54-A runner[%s]: fence :path encontrado en %d bloque(s): %s",
+            agent_name,
+            len(paths_found),
+            paths_found,
+        )
 
 
 async def _run_frontend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
+    sdd_content: str,
+    comment: str,
+    llm: Any,
+    project_ctx: str = "",
+    retry_feedback: str = "",
+    language: str = "es",
+    rag_context: str = "",
+    *,
+    stack_language: str = "",
 ) -> dict:
     """Agente especializado en frontend: segun el stack del proyecto."""
-    response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
-            "system_frontend",
-            language=language,
-            stack_language=stack_language,
-            project_context=project_ctx,
-            retry_feedback=retry_feedback,
-            rag_context=rag_context,
-        )),
-        HumanMessage(content=(
-            f"SDD Aprobado:\n{sdd_content}\n\n"
-            f"Comentario del arquitecto: {comment}\n\n"
-            "Implementa los artefactos frontend definidos en el SDD."
-        )),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=template_loader.render_composed(  # S58-pre: base + stack section
+                    "system_frontend",
+                    language=language,
+                    stack_language=stack_language,
+                    project_context=project_ctx,
+                    retry_feedback=retry_feedback,
+                    rag_context=rag_context,
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"SDD Aprobado:\n{sdd_content}\n\n"
+                    f"Comentario del arquitecto: {comment}\n\n"
+                    "Implementa los artefactos frontend definidos en el SDD."
+                )
+            ),
+        ]
+    )
     _log_runner_response(response, "frontend")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "frontend")
-    return {"agent": "frontend", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
+    return {
+        "agent": "frontend",
+        "output": response.content,
+        "artifacts": [],
+        "uncertainties": uncertainties,
+        "tokens": _extract_usage(response),
+    }
 
 
 async def _run_backend_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
+    sdd_content: str,
+    comment: str,
+    llm: Any,
+    project_ctx: str = "",
+    retry_feedback: str = "",
+    language: str = "es",
+    rag_context: str = "",
+    *,
+    stack_language: str = "",
 ) -> dict:
     """Agente especializado en backend: segun el stack del proyecto."""
-    response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
-            "system_backend",
-            language=language,
-            stack_language=stack_language,
-            project_context=project_ctx,
-            retry_feedback=retry_feedback,
-            rag_context=rag_context,
-        )),
-        HumanMessage(content=(
-            f"SDD Aprobado:\n{sdd_content}\n\n"
-            f"Comentario del arquitecto: {comment}\n\n"
-            "Implementa los artefactos backend definidos en el SDD."
-        )),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=template_loader.render_composed(  # S58-pre: base + stack section
+                    "system_backend",
+                    language=language,
+                    stack_language=stack_language,
+                    project_context=project_ctx,
+                    retry_feedback=retry_feedback,
+                    rag_context=rag_context,
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"SDD Aprobado:\n{sdd_content}\n\n"
+                    f"Comentario del arquitecto: {comment}\n\n"
+                    "Implementa los artefactos backend definidos en el SDD."
+                )
+            ),
+        ]
+    )
     _log_runner_response(response, "backend")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "backend")
-    return {"agent": "backend", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
+    return {
+        "agent": "backend",
+        "output": response.content,
+        "artifacts": [],
+        "uncertainties": uncertainties,
+        "tokens": _extract_usage(response),
+    }
 
 
 async def _run_database_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
+    sdd_content: str,
+    comment: str,
+    llm: Any,
+    project_ctx: str = "",
+    retry_feedback: str = "",
+    language: str = "es",
+    rag_context: str = "",
+    *,
+    stack_language: str = "",
 ) -> dict:
     """Agente especializado en base de datos: segun el motor del proyecto."""
-    response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
-            "system_database",
-            language=language,
-            stack_language=stack_language,
-            project_context=project_ctx,
-            retry_feedback=retry_feedback,
-            rag_context=rag_context,
-        )),
-        HumanMessage(content=(
-            f"SDD Aprobado:\n{sdd_content}\n\n"
-            f"Comentario del arquitecto: {comment}\n\n"
-            "Implementa los artefactos de base de datos definidos en el SDD."
-        )),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=template_loader.render_composed(  # S58-pre: base + stack section
+                    "system_database",
+                    language=language,
+                    stack_language=stack_language,
+                    project_context=project_ctx,
+                    retry_feedback=retry_feedback,
+                    rag_context=rag_context,
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"SDD Aprobado:\n{sdd_content}\n\n"
+                    f"Comentario del arquitecto: {comment}\n\n"
+                    "Implementa los artefactos de base de datos definidos en el SDD."
+                )
+            ),
+        ]
+    )
     _log_runner_response(response, "database")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "database")
-    return {"agent": "database", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
+    return {
+        "agent": "database",
+        "output": response.content,
+        "artifacts": [],
+        "uncertainties": uncertainties,
+        "tokens": _extract_usage(response),
+    }
 
 
 async def _run_devops_agent(
-    sdd_content: str, comment: str, llm: Any, project_ctx: str = "", retry_feedback: str = "", language: str = "es", rag_context: str = "", *, stack_language: str = ""
+    sdd_content: str,
+    comment: str,
+    llm: Any,
+    project_ctx: str = "",
+    retry_feedback: str = "",
+    language: str = "es",
+    rag_context: str = "",
+    *,
+    stack_language: str = "",
 ) -> dict:
     """Agente especializado en DevOps: segun el CI/CD del proyecto."""
-    response = await llm.ainvoke([
-        SystemMessage(content=template_loader.render_composed(  # S58-pre: base + stack section
-            "system_devops",
-            language=language,
-            stack_language=stack_language,
-            project_context=project_ctx,
-            retry_feedback=retry_feedback,
-            rag_context=rag_context,
-        )),
-        HumanMessage(content=(
-            f"SDD Aprobado:\n{sdd_content}\n\n"
-            f"Comentario del arquitecto: {comment}\n\n"
-            "Implementa los artefactos de infraestructura definidos en el SDD."
-        )),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=template_loader.render_composed(  # S58-pre: base + stack section
+                    "system_devops",
+                    language=language,
+                    stack_language=stack_language,
+                    project_context=project_ctx,
+                    retry_feedback=retry_feedback,
+                    rag_context=rag_context,
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"SDD Aprobado:\n{sdd_content}\n\n"
+                    f"Comentario del arquitecto: {comment}\n\n"
+                    "Implementa los artefactos de infraestructura definidos en el SDD."
+                )
+            ),
+        ]
+    )
     _log_runner_response(response, "devops")  # S54-A
     uncertainties = _extract_uncertainties(response.content, "devops")
-    return {"agent": "devops", "output": response.content, "artifacts": [], "uncertainties": uncertainties, "tokens": _extract_usage(response)}
+    return {
+        "agent": "devops",
+        "output": response.content,
+        "artifacts": [],
+        "uncertainties": uncertainties,
+        "tokens": _extract_usage(response),
+    }
 
 
 def _extract_uncertainties(code_output: str, agent: str) -> list[dict]:
@@ -2092,18 +2522,27 @@ def _extract_uncertainties(code_output: str, agent: str) -> list[dict]:
         stripped = line.strip()
         if "UNCERTAINTY:" in stripped.upper():
             idx = stripped.upper().index("UNCERTAINTY:")
-            item_text = stripped[idx + len("UNCERTAINTY:"):].strip().lstrip("# /")
-            severity = "high" if any(w in item_text.lower() for w in ["critico", "critical", "seguridad", "security", "auth"]) else "medium"
-            uncertainties.append({"agent": agent, "item": item_text, "severity": severity})
+            item_text = stripped[idx + len("UNCERTAINTY:") :].strip().lstrip("# /")
+            severity = (
+                "high"
+                if any(
+                    w in item_text.lower()
+                    for w in ["critico", "critical", "seguridad", "security", "auth"]
+                )
+                else "medium"
+            )
+            uncertainties.append(
+                {"agent": agent, "item": item_text, "severity": severity}
+            )
     return uncertainties
 
 
 # Mapa de nombre → funcion de agente
 _AGENT_RUNNERS = {
     "frontend": _run_frontend_agent,
-    "backend":  _run_backend_agent,
+    "backend": _run_backend_agent,
     "database": _run_database_agent,
-    "devops":   _run_devops_agent,
+    "devops": _run_devops_agent,
 }
 
 # S47: grupos de ejecución por capa — aplica a cualquier stack
@@ -2133,7 +2572,7 @@ def _extract_expected_files_from_task(description: str) -> list[str]:
     Retorna lista de rutas únicas en orden de aparición.
     """
     paths = _re.findall(
-        r'\b(?:src|tests|app|lib|pkg)/[\w/\-\.]+\.(?:py|ts|tsx|js|jsx|sql|yaml|yml|json|toml|ini|cfg)\b',
+        r"\b(?:src|tests|app|lib|pkg)/[\w/\-\.]+\.(?:py|ts|tsx|js|jsx|sql|yaml|yml|json|toml|ini|cfg)\b",
         description,
     )
     # Dedup preservando orden
@@ -2158,12 +2597,16 @@ def _filter_requirements_for_task(requirements: list, task: dict) -> list:
     if not depends_on:
         return requirements
     # depends_on puede ser lista de task IDs o req IDs — filtrar req IDs (REQ-*)
-    req_ids = {d for d in depends_on if isinstance(d, str) and d.upper().startswith("REQ-")}
+    req_ids = {
+        d for d in depends_on if isinstance(d, str) and d.upper().startswith("REQ-")
+    }
     if not req_ids:
         return requirements
     filtered = [r for r in requirements if r.get("id", "") in req_ids]
     # Siempre incluir must-requirements para no perder criterios críticos
-    must_reqs = [r for r in requirements if r.get("priority", "") == "must" and r not in filtered]
+    must_reqs = [
+        r for r in requirements if r.get("priority", "") == "must" and r not in filtered
+    ]
     return filtered + must_reqs
 
 
@@ -2200,7 +2643,8 @@ def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> st
             from_sdd.add(f)
 
     from_written: list[str] = [
-        f for f in (written_files or [])
+        f
+        for f in (written_files or [])
         if f.endswith(".py") and not f.startswith("tests/")
     ]
 
@@ -2261,13 +2705,24 @@ def _build_single_task_sdd_content(
         # Detectar extensión para el lang del fence
         def _lang_for(path: str) -> str:
             ext = path.rsplit(".", 1)[-1] if "." in path else ""
-            return {"py": "python", "ts": "typescript", "tsx": "typescript",
-                    "js": "javascript", "jsx": "javascript", "sql": "sql",
-                    "yaml": "yaml", "yml": "yaml", "toml": "toml",
-                    "json": "json", "ini": "ini", "cfg": "ini"}.get(ext, ext)
+            return {
+                "py": "python",
+                "ts": "typescript",
+                "tsx": "typescript",
+                "js": "javascript",
+                "jsx": "javascript",
+                "sql": "sql",
+                "yaml": "yaml",
+                "yml": "yaml",
+                "toml": "toml",
+                "json": "json",
+                "ini": "ini",
+                "cfg": "ini",
+            }.get(ext, ext)
 
         fence_examples = "\n".join(
-            f"```{_lang_for(f)}:{f}\n# tu implementación aquí\n```" for f in expected_files
+            f"```{_lang_for(f)}:{f}\n# tu implementación aquí\n```"
+            for f in expected_files
         )
         fence_hint = (
             f"\n\n[S54-B] FORMATO OBLIGATORIO — Genera EXACTAMENTE {len(expected_files)} archivo(s) "
@@ -2279,7 +2734,8 @@ def _build_single_task_sdd_content(
         )
         log.debug(
             "_build_single_task_sdd_content: S54-B inyectando fence hint para %d archivo(s): %s",
-            len(expected_files), expected_files,
+            len(expected_files),
+            expected_files,
         )
 
         # S65-B: ORM guard — calcular antes de combinar con los demás hints
@@ -2290,8 +2746,20 @@ def _build_single_task_sdd_content(
         )
         _orm_hint_b = ""
         if _has_database_py_b and agent_name == "backend":
-            _td_lower_b = task.get("description", "").lower() + task.get("title", "").lower()
-            _needs_orm_b = any(kw in _td_lower_b for kw in ("model", "service", "repositor", "contract", "entidad", "tabla"))
+            _td_lower_b = (
+                task.get("description", "").lower() + task.get("title", "").lower()
+            )
+            _needs_orm_b = any(
+                kw in _td_lower_b
+                for kw in (
+                    "model",
+                    "service",
+                    "repositor",
+                    "contract",
+                    "entidad",
+                    "tabla",
+                )
+            )
             if _needs_orm_b:
                 _orm_hint_b = (
                     "\n\n[S65-B] REGLA CRÍTICA — ORM OBLIGATORIO:\n"
@@ -2307,7 +2775,9 @@ def _build_single_task_sdd_content(
 
         # S55-C: para tareas de tests, agregar instrucción explícita de round() para floats.
         _task_desc_lower = task_desc.lower()
-        _is_test_task = any(kw in _task_desc_lower for kw in ("test", "pytest", "unitari", "spec"))
+        _is_test_task = any(
+            kw in _task_desc_lower for kw in ("test", "pytest", "unitari", "spec")
+        )
         if _is_test_task:
             float_hint = (
                 "\n\n[S55-C] REGLA CRÍTICA PARA VALORES FLOAT EN TESTS:\n"
@@ -2330,7 +2800,10 @@ def _build_single_task_sdd_content(
     )
     if _has_database_py and agent_name == "backend":
         _td_lower = task.get("description", "").lower() + task.get("title", "").lower()
-        _needs_orm = any(kw in _td_lower for kw in ("model", "service", "repositor", "contract", "entidad", "tabla"))
+        _needs_orm = any(
+            kw in _td_lower
+            for kw in ("model", "service", "repositor", "contract", "entidad", "tabla")
+        )
         if _needs_orm:
             orm_hint = (
                 "\n\n[S65-B] REGLA CRÍTICA — ORM OBLIGATORIO:\n"
@@ -2371,15 +2844,21 @@ async def route_agents(state: OVDState) -> dict:
     if selective_agents and test_retry_count > 0:
         log.info(
             "route_agents: S53-B selective retry — solo ejecutar agentes=%s (test_retry_count=%d)",
-            selective_agents, test_retry_count,
+            selective_agents,
+            test_retry_count,
         )
         # S61-D: preservar resultados de agentes NO retried (frontend, database si backend falla).
         # Resetear solo los resultados del agente que se va a re-ejecutar.
         _prev_results = state.get("agent_results", [])
-        _kept_results = [r for r in _prev_results if r.get("agent") not in selective_agents]
+        _kept_results = [
+            r for r in _prev_results if r.get("agent") not in selective_agents
+        ]
         if _kept_results:
-            log.info("route_agents: S61-D preservando %d resultado(s) de agentes no-retried: %s",
-                     len(_kept_results), [r.get("agent") for r in _kept_results])
+            log.info(
+                "route_agents: S61-D preservando %d resultado(s) de agentes no-retried: %s",
+                len(_kept_results),
+                [r.get("agent") for r in _kept_results],
+            )
         # Primero reseteamos (None), luego el reducer acumulará los _kept_results via Send()
         # No podemos devolver lista directamente porque route_agents no es agent_executor.
         # Solución: devolver None para resetear y guardar kept en campo temporal.
@@ -2391,15 +2870,20 @@ async def route_agents(state: OVDState) -> dict:
             "_dispatch_now": [],
             "selective_retry_agents": [],  # limpiar para no interferir con ciclos siguientes
             "status": "routing",
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": f"S53-B: re-ejecutando solo agente(s) {selective_agents} (test retry selectivo)...",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": f"S53-B: re-ejecutando solo agente(s) {selective_agents} (test retry selectivo)...",
+                }
+            ],
         }
 
     # GAP-007: si el SDD tiene tareas por agente, usarlas directamente
     tasks_from_sdd = sdd.get("tasks", [])
-    sdd_agents = list({t.get("agent") for t in tasks_from_sdd if t.get("agent") in _AGENT_RUNNERS})
+    sdd_agents = list(
+        {t.get("agent") for t in tasks_from_sdd if t.get("agent") in _AGENT_RUNNERS}
+    )
 
     if sdd_agents:
         selected = sdd_agents
@@ -2407,7 +2891,11 @@ async def route_agents(state: OVDState) -> dict:
     else:
         # Fallback: router LLM elige agentes segun el analisis del FR
         router_base = await model_router.get_llm_with_context(
-            "backend", org_id, project_id, jwt_token, state.get("stack_routing", "auto"),
+            "backend",
+            org_id,
+            project_id,
+            jwt_token,
+            state.get("stack_routing", "auto"),
         )
         sdd_summary = (
             f"## Summary\n{sdd.get('summary', '')}\n\n"
@@ -2416,21 +2904,27 @@ async def route_agents(state: OVDState) -> dict:
         router_result: AgentRouterOutput = await invoke_structured(
             router_base,
             [
-                SystemMessage(content=template_loader.render(
-                    "system_router",
-                    language=state.get("language", "es"),
-                )),
-                HumanMessage(content=(
-                    f"FR type: {analysis.get('type', 'feature')}\n"
-                    f"Complexity: {analysis.get('complexity', 'medium')}\n"
-                    f"Components: {', '.join(analysis.get('components', []))}\n"
-                    f"Oracle involved: {analysis.get('oracle_involved', False)}\n\n"
-                    f"SDD (resumen):\n{sdd_summary[:2000]}"
-                )),
+                SystemMessage(
+                    content=template_loader.render(
+                        "system_router",
+                        language=state.get("language", "es"),
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"FR type: {analysis.get('type', 'feature')}\n"
+                        f"Complexity: {analysis.get('complexity', 'medium')}\n"
+                        f"Components: {', '.join(analysis.get('components', []))}\n"
+                        f"Oracle involved: {analysis.get('oracle_involved', False)}\n\n"
+                        f"SDD (resumen):\n{sdd_summary[:2000]}"
+                    )
+                ),
             ],
             AgentRouterOutput,
         )
-        selected = [a for a in router_result.agents if a in _AGENT_RUNNERS] or ["backend"]
+        selected = [a for a in router_result.agents if a in _AGENT_RUNNERS] or [
+            "backend"
+        ]
         routing_note = f"Router activo: {', '.join(selected)}"
 
     retry_info = ""
@@ -2445,7 +2939,9 @@ async def route_agents(state: OVDState) -> dict:
     pending = group2 if group1 else []
     dispatch_note = ""
     if group1 and group2:
-        dispatch_note = f" | server-side primero: {group1}, client-side después: {group2}"
+        dispatch_note = (
+            f" | server-side primero: {group1}, client-side después: {group2}"
+        )
 
     return {
         # GAP-002: None activa el reset en el reducer _list_reset_or_add
@@ -2453,30 +2949,37 @@ async def route_agents(state: OVDState) -> dict:
         "selected_agents": selected,
         "pending_agents": pending,  # S47: agentes client-side que esperan al grupo 1
         "status": "routing",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": f"{routing_note} ({len(selected)} agente(s)){retry_info}{dispatch_note} — iniciando fan-out...",
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": f"{routing_note} ({len(selected)} agente(s)){retry_info}{dispatch_note} — iniciando fan-out...",
+            }
+        ],
     }
 
 
 def _make_agent_sends(agents: list[str], state: OVDState) -> list[Send]:
     """Helper: genera los Send() para una lista de agentes dado el estado actual."""
     shared = {
-        "sdd":             state.get("sdd", {}),
-        "org_id":          state.get("org_id", ""),
-        "project_id":      state.get("project_id", ""),
-        "jwt_token":       state.get("jwt_token", ""),
+        "sdd": state.get("sdd", {}),
+        "org_id": state.get("org_id", ""),
+        "project_id": state.get("project_id", ""),
+        "jwt_token": state.get("jwt_token", ""),
         "project_context": state.get("project_context", ""),
-        "retry_feedback":  state.get("retry_feedback", ""),
+        "retry_feedback": state.get("retry_feedback", ""),
         "approval_comment": state.get("approval_comment", ""),
-        "language":        state.get("language", "es"),
-        "stack_language":  state.get("stack_language", ""),  # S42-E
-        "directory":       state.get("directory", ""),
-        "session_id":      state.get("session_id", ""),
-        "feature_request": state.get("feature_request", ""),  # S82-F: necesario para parche Oracle→PG
+        "language": state.get("language", "es"),
+        "stack_language": state.get("stack_language", ""),  # S42-E
+        "directory": state.get("directory", ""),
+        "session_id": state.get("session_id", ""),
+        "feature_request": state.get(
+            "feature_request", ""
+        ),  # S82-F: necesario para parche Oracle→PG
     }
-    return [Send("agent_executor", {**shared, "current_agent": agent}) for agent in agents]
+    return [
+        Send("agent_executor", {**shared, "current_agent": agent}) for agent in agents
+    ]
 
 
 def _dispatch_agents(state: OVDState) -> list[Send]:
@@ -2496,12 +2999,19 @@ def _dispatch_agents(state: OVDState) -> list[Send]:
     group2 = [a for a in selected if a in _CLIENT_SIDE_AGENTS]
 
     if group1:
-        log.info("S47 _dispatch_agents: grupo 1 server-side=%s | pendientes client-side=%s", group1, group2)
+        log.info(
+            "S47 _dispatch_agents: grupo 1 server-side=%s | pendientes client-side=%s",
+            group1,
+            group2,
+        )
         # group2 se guarda en pending_agents vía el nodo route_agents (actualizado allí)
         return _make_agent_sends(group1, state)
     else:
         # Solo hay agentes client-side (caso edge: SDD solo tiene frontend)
-        log.info("S47 _dispatch_agents: solo client-side=%s, despachando directamente", group2)
+        log.info(
+            "S47 _dispatch_agents: solo client-side=%s, despachando directamente",
+            group2,
+        )
         return _make_agent_sends(group2, state)
 
 
@@ -2527,7 +3037,9 @@ async def _agent_executor_impl(state: OVDState) -> dict:
     jwt_token = state.get("jwt_token", "")
     retry_feedback = state.get("retry_feedback", "")
     language = state.get("language", "es")
-    stack_language = state.get("stack_language", "")  # S42-E: lenguaje del stack del proyecto
+    stack_language = state.get(
+        "stack_language", ""
+    )  # S42-E: lenguaje del stack del proyecto
     rag_context = state.get("rag_context", "")  # RAG-03: contexto de entregas previas
 
     # PP-01: verificar presupuesto de tokens del ciclo antes de invocar el agente
@@ -2535,32 +3047,41 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         existing_usage = state.get("token_usage", {})
         tokens_so_far = sum(
             v.get("input", 0) + v.get("output", 0)
-            for v in existing_usage.values() if isinstance(v, dict)
+            for v in existing_usage.values()
+            if isinstance(v, dict)
         )
         if tokens_so_far >= _CYCLE_BUDGET_TOKENS:
             log.warning(
                 "PP-01: agente '%s' omitido — presupuesto de tokens agotado (%d/%d)",
-                agent_name, tokens_so_far, _CYCLE_BUDGET_TOKENS,
+                agent_name,
+                tokens_so_far,
+                _CYCLE_BUDGET_TOKENS,
             )
             return {
-                "agent_results": [{
-                    "agent": agent_name,
-                    "output": (
-                        f"[Agente omitido: presupuesto de tokens del ciclo agotado "
-                        f"({tokens_so_far:,} / {_CYCLE_BUDGET_TOKENS:,} tokens). "
-                        f"Aumenta OVD_CYCLE_TOKEN_BUDGET para incluir este agente.]"
-                    ),
-                    "artifacts": [],
-                    "uncertainties": [],
-                    "tokens": {"input": 0, "output": 0},
-                    "skipped": True,
-                }],
+                "agent_results": [
+                    {
+                        "agent": agent_name,
+                        "output": (
+                            f"[Agente omitido: presupuesto de tokens del ciclo agotado "
+                            f"({tokens_so_far:,} / {_CYCLE_BUDGET_TOKENS:,} tokens). "
+                            f"Aumenta OVD_CYCLE_TOKEN_BUDGET para incluir este agente.]"
+                        ),
+                        "artifacts": [],
+                        "uncertainties": [],
+                        "tokens": {"input": 0, "output": 0},
+                        "skipped": True,
+                    }
+                ],
                 "token_usage": {agent_name: {"input": 0, "output": 0}},
             }
 
     # Obtener LLM configurado para este agente — S8: con Stack Registry routing
     llm = await model_router.get_llm_with_context(
-        agent_name, org_id, project_id, jwt_token, state.get("stack_routing", "auto"),
+        agent_name,
+        org_id,
+        project_id,
+        jwt_token,
+        state.get("stack_routing", "auto"),
     )
 
     # S6 — G1.C: inyectar contexto de archivos del repo si está disponible
@@ -2568,23 +3089,35 @@ async def _agent_executor_impl(state: OVDState) -> dict:
     if directory and state.get("github_repo", ""):
         repo_ctx = github_helper.read_repo_context(directory, agent_name)
         if repo_ctx:
-            project_ctx = (project_ctx + "\n\n" + repo_ctx).strip() if project_ctx else repo_ctx
+            project_ctx = (
+                (project_ctx + "\n\n" + repo_ctx).strip() if project_ctx else repo_ctx
+            )
 
     # S17T.C: leer archivos existentes del proyecto para enriquecer el contexto (base inicial)
     if directory:
         existing_ctx = read_project_context(directory, agent_name)
         if existing_ctx:
-            project_ctx = (project_ctx + "\n\n" + existing_ctx).strip() if project_ctx else existing_ctx
+            project_ctx = (
+                (project_ctx + "\n\n" + existing_ctx).strip()
+                if project_ctx
+                else existing_ctx
+            )
 
     # S41.B1: consultar lecciones de ciclos anteriores para este agente y proyecto
-    fr_text = state.get("feature_request", "") or state.get("fr_analysis", {}).get("raw", "")
+    fr_text = state.get("feature_request", "") or state.get("fr_analysis", {}).get(
+        "raw", ""
+    )
     lessons_context = await lessons.query_lessons_context(
         project_id=project_id,
         agent_name=agent_name,
         fr_text=fr_text,
     )
     if lessons_context:
-        log.info("agent_executor[%s]: S41 — %d chars de lecciones recuperadas", agent_name, len(lessons_context))
+        log.info(
+            "agent_executor[%s]: S41 — %d chars de lecciones recuperadas",
+            agent_name,
+            len(lessons_context),
+        )
 
     # Ejecutar el agente especializado
     runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
@@ -2617,13 +3150,15 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         agent_tasks = _topological_sort_tasks(agent_tasks)
         log.info(
             "agent_executor[%s]: S83-F orden topológico: %s",
-            agent_name, [t.get("id", "?") for t in agent_tasks],
+            agent_name,
+            [t.get("id", "?") for t in agent_tasks],
         )
 
     if len(agent_tasks) > 1:
         log.info(
             "agent_executor[%s]: S39-D — %d tareas, ejecutando una a la vez",
-            agent_name, len(agent_tasks),
+            agent_name,
+            len(agent_tasks),
         )
         all_artifacts: list[dict] = []
         all_output_parts: list[str] = []
@@ -2638,12 +3173,25 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             if directory:
                 updated_ctx = read_project_context(directory, agent_name)
                 if updated_ctx:
-                    task_project_ctx = (project_ctx + "\n\n" + updated_ctx).strip() if project_ctx else updated_ctx
+                    task_project_ctx = (
+                        (project_ctx + "\n\n" + updated_ctx).strip()
+                        if project_ctx
+                        else updated_ctx
+                    )
 
             # S64-B: pasar archivos ya escritos en este ciclo para construir manifest de módulos
-            _written_so_far = [a.get("path", "") for a in all_artifacts if isinstance(a, dict)]
+            _written_so_far = [
+                a.get("path", "") for a in all_artifacts if isinstance(a, dict)
+            ]
             task_sdd_content = _truncate(
-                _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks), written_files=_written_so_far)
+                _build_single_task_sdd_content(
+                    sdd,
+                    agent_name,
+                    task,
+                    i,
+                    len(agent_tasks),
+                    written_files=_written_so_far,
+                )
             )
 
             # S83-F: inyectar contenido real de archivos que esta tarea necesita (depends_on)
@@ -2652,7 +3200,9 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 task_sdd_content = _dep_context + task_sdd_content
                 log.warning(
                     "agent_executor[%s]: S83-F contexto de dependencias inyectado para tarea %s (%d chars)",
-                    agent_name, task.get("id", "?"), len(_dep_context),
+                    agent_name,
+                    task.get("id", "?"),
+                    len(_dep_context),
                 )
             # S68-B: inyectar correcciones de imports al INICIO del HumanMessage (alta atención)
             _correction_block = _extract_import_corrections(retry_feedback)
@@ -2660,28 +3210,48 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 task_sdd_content = _correction_block + task_sdd_content
                 log.warning(
                     "agent_executor[%s]: S68-B correcciones de imports inyectadas al inicio del prompt (tarea %d/%d)",
-                    agent_name, i + 1, len(agent_tasks),
+                    agent_name,
+                    i + 1,
+                    len(agent_tasks),
                 )
             # S51-A: tarea de tests → instrucción de prioridad máxima
-            _task_desc_lower = (task.get("description", "") + " " + task.get("id", "")).lower()
-            if any(kw in _task_desc_lower for kw in ("test", "pytest", "spec", "unitari")):
+            _task_desc_lower = (
+                task.get("description", "") + " " + task.get("id", "")
+            ).lower()
+            if any(
+                kw in _task_desc_lower for kw in ("test", "pytest", "spec", "unitari")
+            ):
                 task_sdd_content = (
                     "[PRIORIDAD MÁXIMA — S51-A] Esta tarea genera el archivo de tests. "
                     "DEBES incluir el bloque ```python:tests/test_<paquete>.py con al menos 3 casos de prueba. "
                     "No omitas este archivo bajo ninguna circunstancia.\n\n"
                 ) + task_sdd_content
-                log.info("agent_executor[%s]: S51-A tarea de tests detectada — instrucción de prioridad máxima inyectada", agent_name)
+                log.info(
+                    "agent_executor[%s]: S51-A tarea de tests detectada — instrucción de prioridad máxima inyectada",
+                    agent_name,
+                )
             log.info(
                 "agent_executor[%s]: S39-D tarea %d/%d — id=%s",
-                agent_name, i + 1, len(agent_tasks), task.get("id", "?"),
+                agent_name,
+                i + 1,
+                len(agent_tasks),
+                task.get("id", "?"),
             )
 
             try:
                 if tools:
                     task_result = await asyncio.wait_for(
                         _run_agent_with_tools(
-                            agent_name, task_sdd_content, comment, llm,
-                            task_project_ctx, retry_feedback, language, tools, directory, rag_context,
+                            agent_name,
+                            task_sdd_content,
+                            comment,
+                            llm,
+                            task_project_ctx,
+                            retry_feedback,
+                            language,
+                            tools,
+                            directory,
+                            rag_context,
                             stack_language=stack_language,  # S42-E
                             lessons_context=lessons_context,  # S41
                             stack_routing=state.get("stack_routing", "auto"),  # S49-C
@@ -2690,13 +3260,25 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     )
                 else:
                     task_result = await asyncio.wait_for(
-                        runner(task_sdd_content, comment, llm, task_project_ctx, retry_feedback, language, rag_context, stack_language=stack_language),
+                        runner(
+                            task_sdd_content,
+                            comment,
+                            llm,
+                            task_project_ctx,
+                            retry_feedback,
+                            language,
+                            rag_context,
+                            stack_language=stack_language,
+                        ),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
             except asyncio.TimeoutError:
                 log.error(
                     "agent_executor[%s]: S39-D timeout en tarea %d/%d (id=%s) — continuando",
-                    agent_name, i + 1, len(agent_tasks), task.get("id", "?"),
+                    agent_name,
+                    i + 1,
+                    len(agent_tasks),
+                    task.get("id", "?"),
                 )
                 task_result = {
                     "agent": agent_name,
@@ -2720,13 +3302,18 @@ async def _agent_executor_impl(state: OVDState) -> dict:
 
         # S51-C: verificar que si el SDD tenía tarea de tests se generó al menos un test_*.py
         _s51_test_tasks = [
-            t for t in agent_tasks
-            if any(kw in (t.get("description", "") + " " + t.get("id", "")).lower()
-                   for kw in ("test", "pytest", "spec", "unitari"))
+            t
+            for t in agent_tasks
+            if any(
+                kw in (t.get("description", "") + " " + t.get("id", "")).lower()
+                for kw in ("test", "pytest", "spec", "unitari")
+            )
         ]
         _s51_test_arts = [
-            a for a in all_artifacts
-            if "test_" in a.get("path", "").lower() or "/tests/" in a.get("path", "").lower()
+            a
+            for a in all_artifacts
+            if "test_" in a.get("path", "").lower()
+            or "/tests/" in a.get("path", "").lower()
         ]
         if _s51_test_tasks and not _s51_test_arts:
             log.warning(
@@ -2738,19 +3325,42 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 "[PRIORIDAD MÁXIMA — S51-C SEGUNDO INTENTO] El intento anterior NO generó el archivo de tests. "
                 "DEBES generar ahora el archivo ```python:tests/test_<paquete>.py``` con al menos 3 casos de prueba. "
                 "Este es tu único objetivo en este turno.\n\n"
-            ) + _truncate(_build_single_task_sdd_content(sdd, agent_name, _s51_retry_task, 0, 1, written_files=[a.get("path", "") for a in all_artifacts if isinstance(a, dict)]))
+            ) + _truncate(
+                _build_single_task_sdd_content(
+                    sdd,
+                    agent_name,
+                    _s51_retry_task,
+                    0,
+                    1,
+                    written_files=[
+                        a.get("path", "") for a in all_artifacts if isinstance(a, dict)
+                    ],
+                )
+            )
             # Refrescar contexto con archivos ya escritos
             _s51_ctx = task_project_ctx
             if directory:
                 _s51_updated = read_project_context(directory, agent_name)
                 if _s51_updated:
-                    _s51_ctx = (_s51_ctx + "\n\n" + _s51_updated).strip() if _s51_ctx else _s51_updated
+                    _s51_ctx = (
+                        (_s51_ctx + "\n\n" + _s51_updated).strip()
+                        if _s51_ctx
+                        else _s51_updated
+                    )
             try:
                 if tools:
                     _s51_result = await asyncio.wait_for(
                         _run_agent_with_tools(
-                            agent_name, _s51_retry_sdd, comment, llm,
-                            _s51_ctx, retry_feedback, language, tools, directory, rag_context,
+                            agent_name,
+                            _s51_retry_sdd,
+                            comment,
+                            llm,
+                            _s51_ctx,
+                            retry_feedback,
+                            language,
+                            tools,
+                            directory,
+                            rag_context,
                             stack_language=stack_language,
                             lessons_context=lessons_context,
                             stack_routing=state.get("stack_routing", "auto"),
@@ -2759,7 +3369,16 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     )
                 else:
                     _s51_result = await asyncio.wait_for(
-                        runner(_s51_retry_sdd, comment, llm, _s51_ctx, retry_feedback, language, rag_context, stack_language=stack_language),
+                        runner(
+                            _s51_retry_sdd,
+                            comment,
+                            llm,
+                            _s51_ctx,
+                            retry_feedback,
+                            language,
+                            rag_context,
+                            stack_language=stack_language,
+                        ),
                         timeout=_AGENTS_TIMEOUT,
                     )
                 all_artifacts.extend(_s51_result.get("artifacts", []))
@@ -2770,20 +3389,27 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                 total_tokens_all["output"] += _s51_t.get("output", 0)
                 log.info(
                     "agent_executor[%s]: S51-C retry completado — %d artifacts nuevos",
-                    agent_name, len(_s51_result.get("artifacts", [])),
+                    agent_name,
+                    len(_s51_result.get("artifacts", [])),
                 )
             except asyncio.TimeoutError:
-                log.error("agent_executor[%s]: S51-C retry timeout — sin tests", agent_name)
+                log.error(
+                    "agent_executor[%s]: S51-C retry timeout — sin tests", agent_name
+                )
 
         # S65-D: verificar que cada archivo del SDD fue escrito en disco
         _sdd_py_files = [
-            t.get("file", "") for t in agent_tasks
+            t.get("file", "")
+            for t in agent_tasks
             if t.get("file", "").endswith(".py") and t.get("file", "")
         ]
-        _written_paths = {a.get("path", "") for a in all_artifacts if isinstance(a, dict)}
+        _written_paths = {
+            a.get("path", "") for a in all_artifacts if isinstance(a, dict)
+        }
         _missing_sdd = []
         if directory:
             import pathlib as _pathlib_s65d
+
             _base_s65d = _pathlib_s65d.Path(directory)
             for _expected in _sdd_py_files:
                 _full = _base_s65d / _expected
@@ -2791,7 +3417,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     _missing_sdd.append(_expected)
         if _missing_sdd:
             _missing_msg = (
-                f"[S65-D] ARCHIVOS DEL SDD NO ESCRITOS EN DISCO:\n"
+                "[S65-D] ARCHIVOS DEL SDD NO ESCRITOS EN DISCO:\n"
                 + "\n".join(f"  - {f}" for f in _missing_sdd)
                 + "\nEl SDD declaró estas tareas pero los archivos no existen en el workspace. "
                 "Deben generarse con el fence ```python:ruta/exacta.py``` correcto."
@@ -2799,7 +3425,9 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             all_output_parts.append(_missing_msg)
             log.warning(
                 "agent_executor[%s]: S65-D — %d archivos del SDD no escritos: %s",
-                agent_name, len(_missing_sdd), _missing_sdd,
+                agent_name,
+                len(_missing_sdd),
+                _missing_sdd,
             )
 
         # S82-F: si FR menciona PostgreSQL pero database.py tiene Oracle URL → parchear en disco
@@ -2808,12 +3436,16 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             _fr_lower_db = _fr_for_db.lower()
             if any(kw in _fr_lower_db for kw in ("postgresql", "postgres", "psycopg")):
                 import pathlib as _pl_s82f
+
                 _db_file = _pl_s82f.Path(directory) / "src" / "database.py"
                 if _db_file.exists():
                     _db_content = _db_file.read_text(encoding="utf-8", errors="replace")
-                    _has_oracle = "oracle+oracledb://" in _db_content or "oracledb" in _db_content
+                    _has_oracle = (
+                        "oracle+oracledb://" in _db_content or "oracledb" in _db_content
+                    )
                     _has_pg = "postgresql" in _db_content or "psycopg" in _db_content
                     import re as _re_s82f
+
                     _fixed = _db_content
                     if _has_oracle and not _has_pg:
                         _fixed = _re_s82f.sub(
@@ -2829,7 +3461,10 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     # S93-fix: remover oracledb.init_oracle_client() aunque la URL ya sea PostgreSQL
                     if "oracledb.init_oracle_client" in _fixed:
                         _fixed = _re_s82f.sub(
-                            r"^oracledb\.init_oracle_client\([^\)]*\)\n?", "", _fixed, flags=_re_s82f.MULTILINE
+                            r"^oracledb\.init_oracle_client\([^\)]*\)\n?",
+                            "",
+                            _fixed,
+                            flags=_re_s82f.MULTILINE,
                         )
                         _fixed = _re_s82f.sub(r"import oracledb\n?", "", _fixed)
                         log.warning(
@@ -2856,21 +3491,41 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         async def _invoke_agent_logic() -> dict:
             if tools:
                 return await _run_agent_with_tools(
-                    agent_name, agent_sdd_content, comment, llm,
-                    project_ctx, retry_feedback, language, tools, directory, rag_context,
-                    stack_language=stack_language,   # S42-E
+                    agent_name,
+                    agent_sdd_content,
+                    comment,
+                    llm,
+                    project_ctx,
+                    retry_feedback,
+                    language,
+                    tools,
+                    directory,
+                    rag_context,
+                    stack_language=stack_language,  # S42-E
                     lessons_context=lessons_context,  # S41
                     stack_routing=state.get("stack_routing", "auto"),  # S49-C
                 )
-            return await runner(agent_sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context, stack_language=stack_language)
+            return await runner(
+                agent_sdd_content,
+                comment,
+                llm,
+                project_ctx,
+                retry_feedback,
+                language,
+                rag_context,
+                stack_language=stack_language,
+            )
 
         # S20 — GAP-R1 / S41P.A: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
         try:
-            result = await asyncio.wait_for(_invoke_agent_logic(), timeout=_AGENTS_TIMEOUT)
+            result = await asyncio.wait_for(
+                _invoke_agent_logic(), timeout=_AGENTS_TIMEOUT
+            )
         except asyncio.TimeoutError:
             log.error(
                 "agent_executor: TIMEOUT en nodo '%s' tras %.0fs — retornando resultado de error",
-                agent_name, _AGENTS_TIMEOUT,
+                agent_name,
+                _AGENTS_TIMEOUT,
             )
             result = {
                 "agent": agent_name,
@@ -2904,17 +3559,20 @@ def _agent_executor_error_result(agent_name: str, exc: Exception) -> dict:
     """S59-A/A4: resultado degradado cuando agent_executor lanza excepción no capturada."""
     log.error(
         "agent_executor[%s]: EXCEPCIÓN NO CAPTURADA — ciclo continúa con resultado degradado",
-        agent_name, exc_info=True,
+        agent_name,
+        exc_info=True,
     )
     return {
-        "agent_results": [{
-            "agent": agent_name,
-            "output": f"[S59-A ERROR]: {type(exc).__name__}: {exc}",
-            "artifacts": [],
-            "uncertainties": [],
-            "tokens": {"input": 0, "output": 0},
-            "error": "exception",
-        }],
+        "agent_results": [
+            {
+                "agent": agent_name,
+                "output": f"[S59-A ERROR]: {type(exc).__name__}: {exc}",
+                "artifacts": [],
+                "uncertainties": [],
+                "tokens": {"input": 0, "output": 0},
+                "error": "exception",
+            }
+        ],
         "uncertainty_register": [],
         "token_usage": {agent_name: {"input": 0, "output": 0}},
     }
@@ -2935,19 +3593,33 @@ async def agent_executor(state: OVDState) -> dict:
 
 # ─── S49-C helpers ────────────────────────────────────────────────────────────
 
+
 def _get_chat_ollama_class():
     """Retorna la clase ChatOllama si langchain_ollama está disponible, o object como fallback."""
     try:
         from langchain_ollama import ChatOllama
+
         return ChatOllama
     except ImportError:
         return type(None)
 
 
 _OLLAMA_MODEL_PATTERNS = (
-    "qwen", "llama", "mistral", "deepseek", "phi", "gemma", "codellama",
-    "nomic", "nous", "vicuna", "orca", "wizardcoder", "starcoder",
+    "qwen",
+    "llama",
+    "mistral",
+    "deepseek",
+    "phi",
+    "gemma",
+    "codellama",
+    "nomic",
+    "nous",
+    "vicuna",
+    "orca",
+    "wizardcoder",
+    "starcoder",
 )
+
 
 def _looks_like_ollama_model(model_name: str) -> bool:
     """Heurística: si el nombre del modelo contiene algún pattern típico de Ollama."""
@@ -2956,6 +3628,7 @@ def _looks_like_ollama_model(model_name: str) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 async def _run_agent_with_tools(
     agent_name: str,
@@ -2969,8 +3642,8 @@ async def _run_agent_with_tools(
     directory: str,
     rag_context: str = "",
     *,
-    stack_language: str = "",     # S42-E: lenguaje del stack para selección de template
-    lessons_context: str = "",    # S41: lecciones de ciclos anteriores del mismo proyecto
+    stack_language: str = "",  # S42-E: lenguaje del stack para selección de template
+    lessons_context: str = "",  # S41: lecciones de ciclos anteriores del mismo proyecto
     stack_routing: str = "auto",  # S49-C: routing del stack para detectar Ollama
 ) -> dict:
     """
@@ -2986,8 +3659,9 @@ async def _run_agent_with_tools(
     Límite de iteraciones: 8 (suficiente para un agente que escribe ~4 archivos
     con lectura previa de cada uno).
     """
-    from langchain_core.messages import ToolMessage
     import json as _json
+
+    from langchain_core.messages import ToolMessage
 
     _MAX_TOOL_ITERS = 8
 
@@ -2996,27 +3670,50 @@ async def _run_agent_with_tools(
     _is_ollama = (
         stack_routing == "ollama"
         or isinstance(llm, _get_chat_ollama_class())
-        or (hasattr(llm, "model") and _looks_like_ollama_model(getattr(llm, "model", "")))
+        or (
+            hasattr(llm, "model")
+            and _looks_like_ollama_model(getattr(llm, "model", ""))
+        )
     )
     if _is_ollama:
         log.info(
             "S49-C: agente '%s' — modelo Ollama detectado (stack_routing=%s), usando runner directo sin tool calling",
-            agent_name, stack_routing,
+            agent_name,
+            stack_routing,
         )
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         runner_result = await runner(
-            sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context,
+            sdd_content,
+            comment,
+            llm,
+            project_ctx,
+            retry_feedback,
+            language,
+            rag_context,
             stack_language=stack_language,
         )
         # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
         # Permite que run_tests detecte los test files correctamente via filesystem
-        if directory and not runner_result.get("artifacts") and runner_result.get("output"):
+        if (
+            directory
+            and not runner_result.get("artifacts")
+            and runner_result.get("output")
+        ):
             # S55-B: en rondas de retry (retry_feedback presente) preservar archivos existentes
             _preserve = bool(retry_feedback)
-            written_arts = _write_artifacts(runner_result["output"], directory, agent_name, preserve_nonempty=_preserve)
+            written_arts = _write_artifacts(
+                runner_result["output"],
+                directory,
+                agent_name,
+                preserve_nonempty=_preserve,
+            )
             if written_arts:
                 runner_result = dict(runner_result, artifacts=written_arts)
-                log.info("S50-A: agente '%s' S49-C — %d archivo(s) escritos al disco via runner", agent_name, len(written_arts))
+                log.info(
+                    "S50-A: agente '%s' S49-C — %d archivo(s) escritos al disco via runner",
+                    agent_name,
+                    len(written_arts),
+                )
         return runner_result
 
     # Intentar vincular herramientas — no todos los modelos lo soportan
@@ -3025,7 +3722,15 @@ async def _run_agent_with_tools(
     except (AttributeError, NotImplementedError, ValueError):
         # Fallback: el modelo no soporta tool calling → runner tradicional
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
-        return await runner(sdd_content, comment, llm, project_ctx, retry_feedback, language, rag_context)
+        return await runner(
+            sdd_content,
+            comment,
+            llm,
+            project_ctx,
+            retry_feedback,
+            language,
+            rag_context,
+        )
 
     system_prompt = template_loader.render_composed(  # S58-pre: base + stack section
         f"system_{agent_name}",
@@ -3059,7 +3764,7 @@ async def _run_agent_with_tools(
 
             # Acumular tokens
             usage = _extract_usage(response)
-            total_tokens["input"]  += usage.get("input", 0)
+            total_tokens["input"] += usage.get("input", 0)
             total_tokens["output"] += usage.get("output", 0)
 
             # Si no hay tool calls, terminamos
@@ -3072,29 +3777,50 @@ async def _run_agent_with_tools(
                     log.warning(
                         "S49-A: agente '%s' — modelo no usó tools en iter 0 (content=%d chars). "
                         "Switch a runner directo.",
-                        agent_name, len(final_output),
+                        agent_name,
+                        len(final_output),
                     )
                     _runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
                     _runner_result = await _runner(
-                        sdd_content, comment, llm, project_ctx,
-                        retry_feedback, language, rag_context,
+                        sdd_content,
+                        comment,
+                        llm,
+                        project_ctx,
+                        retry_feedback,
+                        language,
+                        rag_context,
                         stack_language=stack_language,
                     )
                     # S50-A: escribir archivos al disco durante execute_agents (no esperar a deliver)
                     # Permite que run_tests detecte los test files correctamente via filesystem
-                    if directory and not _runner_result.get("artifacts") and _runner_result.get("output"):
+                    if (
+                        directory
+                        and not _runner_result.get("artifacts")
+                        and _runner_result.get("output")
+                    ):
                         # S55-B: en rondas de retry (retry_feedback presente) preservar archivos existentes
                         _preserve = bool(retry_feedback)
-                        _written = _write_artifacts(_runner_result["output"], directory, agent_name, preserve_nonempty=_preserve)
+                        _written = _write_artifacts(
+                            _runner_result["output"],
+                            directory,
+                            agent_name,
+                            preserve_nonempty=_preserve,
+                        )
                         if _written:
                             _runner_result = dict(_runner_result, artifacts=_written)
-                            log.info("S50-A: agente '%s' S49-A — %d archivo(s) escritos al disco via runner", agent_name, len(_written))
+                            log.info(
+                                "S50-A: agente '%s' S49-A — %d archivo(s) escritos al disco via runner",
+                                agent_name,
+                                len(_written),
+                            )
                     return _runner_result
                 else:
                     log.info(
                         "S48-C: agente '%s' — terminó tool loop en iteración %d (sin más tool_calls). "
                         "written_files=%d",
-                        agent_name, _iter, len(written_files),
+                        agent_name,
+                        _iter,
+                        len(written_files),
                     )
                 break
 
@@ -3105,12 +3831,10 @@ async def _run_agent_with_tools(
             for tc in tool_calls:
                 tool_name = tc.get("name", "")
                 tool_args = tc.get("args", {})
-                tool_id   = tc.get("id", tool_name)
+                tool_id = tc.get("id", tool_name)
 
                 # Buscar la tool correspondiente
-                tool_fn = next(
-                    (t for t in tools if t.name == tool_name), None
-                )
+                tool_fn = next((t for t in tools if t.name == tool_name), None)
                 if tool_fn is None:
                     tool_result = f"ERROR: herramienta '{tool_name}' no encontrada."
                 else:
@@ -3125,24 +3849,39 @@ async def _run_agent_with_tools(
                         else:
                             tool_result = tool_fn.invoke(tool_args)
                         # Registrar archivos escritos (write_file y edit_file)
-                        if tool_name in ("write_file", "edit_file") and isinstance(tool_result, str):
+                        if tool_name in ("write_file", "edit_file") and isinstance(
+                            tool_result, str
+                        ):
                             if not tool_result.startswith("ERROR"):
                                 # write_file retorna la ruta absoluta
                                 rel = os.path.relpath(
-                                    tool_result if tool_name == "write_file" else
-                                    str((pathlib.Path(directory) / tool_args.get("path", "")).resolve()),
-                                    directory
+                                    tool_result
+                                    if tool_name == "write_file"
+                                    else str(
+                                        (
+                                            pathlib.Path(directory)
+                                            / tool_args.get("path", "")
+                                        ).resolve()
+                                    ),
+                                    directory,
                                 )
                                 if rel not in written_files:
                                     written_files.append(rel)
                     except Exception as e:
                         tool_result = f"ERROR al ejecutar {tool_name}: {e}"
-                        log.warning("S30-B: tool '%s' falló para agente '%s': %s", tool_name, agent_name, e)
+                        log.warning(
+                            "S30-B: tool '%s' falló para agente '%s': %s",
+                            tool_name,
+                            agent_name,
+                            e,
+                        )
 
-                messages.append(ToolMessage(
-                    content=str(tool_result),
-                    tool_call_id=tool_id,
-                ))
+                messages.append(
+                    ToolMessage(
+                        content=str(tool_result),
+                        tool_call_id=tool_id,
+                    )
+                )
 
             # S30-D: compresión de ventana de contexto — evita explosión a 48K+ tokens
             # Mantener: [SystemMessage, HumanMessage] + últimos 6 mensajes (3 exchanges)
@@ -3158,22 +3897,35 @@ async def _run_agent_with_tools(
     except Exception as e:
         log.error(
             "S17T tool calling falló para %s — usando fallback sin tools",
-            agent_name, exc_info=True,  # S59-A/A2: traceback completo
+            agent_name,
+            exc_info=True,  # S59-A/A2: traceback completo
         )
         runner = _AGENT_RUNNERS.get(agent_name, _run_backend_agent)
         return await runner(  # S46-B: pasar rag_context y stack_language que faltaban
-            sdd_content, comment, llm, project_ctx,
-            retry_feedback, language, rag_context,
+            sdd_content,
+            comment,
+            llm,
+            project_ctx,
+            retry_feedback,
+            language,
+            rag_context,
             stack_language=stack_language,
         )
 
     # S24-D / S30-B: logging de tracking post-ejecución
     log.info(
         "_run_agent_with_tools[%s]: written_files=%d %s | final_output=%d chars | total_tokens=%s",
-        agent_name, len(written_files), written_files[:5], len(final_output), total_tokens,
+        agent_name,
+        len(written_files),
+        written_files[:5],
+        len(final_output),
+        total_tokens,
     )
     if len(written_files) == 0:
-        log.warning("S30-B: agente '%s' no escribió ningún archivo via tools — fallback a output parsing", agent_name)
+        log.warning(
+            "S30-B: agente '%s' no escribió ningún archivo via tools — fallback a output parsing",
+            agent_name,
+        )
 
     # Construir artefactos desde archivos escritos via tool calls
     artifacts = _build_artifacts_from_files(written_files, directory)
@@ -3183,7 +3935,9 @@ async def _run_agent_with_tools(
         # S57-D: en rounds de retry, preservar archivos existentes con contenido válido
         # para evitar sobreescritura destructiva si el LLM genera output truncado o vacío
         artifacts = _write_artifacts(
-            final_output, directory, agent_name,
+            final_output,
+            directory,
+            agent_name,
             preserve_nonempty=bool(retry_feedback),  # S57-D
         )
 
@@ -3194,12 +3948,14 @@ async def _run_agent_with_tools(
         if artifacts:
             log.info(
                 "_run_agent_with_tools[%s]: S24-A post-scan encontró %d archivo(s) en disco",
-                agent_name, len(artifacts),
+                agent_name,
+                len(artifacts),
             )
 
     log.info(
         "_run_agent_with_tools[%s]: artifacts finales=%d",
-        agent_name, len(artifacts),
+        agent_name,
+        len(artifacts),
     )
 
     uncertainties = _extract_uncertainties(final_output, agent_name)
@@ -3222,15 +3978,19 @@ def _build_artifacts_from_files(written_files: list[str], directory: str) -> lis
             size = os.path.getsize(abs_path)
         except OSError:
             size = 0
-        artifacts.append({
-            "path": rel_path,
-            "size": size,
-            "language": _guess_language(rel_path),
-        })
+        artifacts.append(
+            {
+                "path": rel_path,
+                "size": size,
+                "language": _guess_language(rel_path),
+            }
+        )
     return artifacts
 
 
-def _scan_workspace_artifacts(directory: str, agent_start_ts: float | None = None) -> list[dict]:
+def _scan_workspace_artifacts(
+    directory: str, agent_start_ts: float | None = None
+) -> list[dict]:
     """S24-A — Escanea el directorio del workspace para descubrir archivos de implementación.
 
     Fallback cuando el tracking de tool calls no captura los archivos escritos
@@ -3239,9 +3999,26 @@ def _scan_workspace_artifacts(directory: str, agent_start_ts: float | None = Non
     Solo incluye archivos de código fuente (.py, .ts, .tsx, .js, .sql, etc.).
     Excluye: directorios ocultos, __pycache__, node_modules, *.md de entrega, .DS_Store.
     """
-    _SKIP_DIRS  = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
-    _CODE_EXTS  = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".yaml", ".yml",
-                   ".tf", ".sh", ".json", ".toml", ".ini", ".cfg", ".rs", ".go", ".java"}
+    _SKIP_DIRS = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+    _CODE_EXTS = {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".sql",
+        ".yaml",
+        ".yml",
+        ".tf",
+        ".sh",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".rs",
+        ".go",
+        ".java",
+    }
     _SKIP_FILES = {".DS_Store"}
 
     base = pathlib.Path(directory).expanduser().resolve()
@@ -3274,7 +4051,9 @@ def _scan_workspace_artifacts(directory: str, agent_start_ts: float | None = Non
         try:
             rel = str(abs_path.relative_to(base))
             size = abs_path.stat().st_size
-            artifacts.append({"path": rel, "size": size, "language": _guess_language(rel)})
+            artifacts.append(
+                {"path": rel, "size": size, "language": _guess_language(rel)}
+            )
         except (ValueError, OSError):
             continue
     return artifacts
@@ -3284,11 +4063,21 @@ def _guess_language(path: str) -> str:
     """Infiere el lenguaje desde la extensión del archivo."""
     ext = pathlib.Path(path).suffix.lower()
     return {
-        ".py": "python", ".ts": "typescript", ".tsx": "typescript",
-        ".js": "javascript", ".jsx": "javascript", ".sql": "sql",
-        ".yaml": "yaml", ".yml": "yaml", ".tf": "hcl",
-        ".sh": "bash", ".md": "markdown", ".json": "json",
-        ".toml": "toml", ".rs": "rust", ".go": "go",
+        ".py": "python",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".sql": "sql",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".tf": "hcl",
+        ".sh": "bash",
+        ".md": "markdown",
+        ".json": "json",
+        ".toml": "toml",
+        ".rs": "rust",
+        ".go": "go",
     }.get(ext, "text")
 
 
@@ -3301,8 +4090,8 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
     Si el modelo no generó datos útiles, retorna resultado neutro con score=75
     (indica que el análisis no fue concluyente, no que hay vulnerabilidades).
     """
-    import re as _re2
     import json as _json2
+    import re as _re2
 
     # 1. Intentar parsear JSON embebido en el texto
     json_match = _re2.search(r'\{[\s\S]*"score"[\s\S]*\}', raw)
@@ -3326,7 +4115,9 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
                 insecure_patterns=list(data.get("insecure_patterns", [])),
                 rls_compliant=bool(data.get("rls_compliant", True)),
                 remediation=list(data.get("remediation", [])),
-                summary=str(data.get("summary", "Análisis extraído del texto de respuesta.")),
+                summary=str(
+                    data.get("summary", "Análisis extraído del texto de respuesta.")
+                ),
             )
         except Exception:
             pass
@@ -3355,7 +4146,10 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
 
     log.warning(
         "security_audit: invoke_structured falló — usando fallback parser "
-        "(score=%d, severity=%s, passed=%s)", score, severity, passed
+        "(score=%d, severity=%s, passed=%s)",
+        score,
+        severity,
+        passed,
     )
     return SecurityAuditOutput(
         passed=passed,
@@ -3376,8 +4170,8 @@ def _parse_qa_fallback(raw: str) -> QAReviewOutput:
     Intenta extraer campos clave con regex del texto libre del LLM.
     Si no encuentra datos útiles, retorna resultado neutro (score=70, passed=True).
     """
-    import re as _re3
     import json as _json3
+    import re as _re3
 
     # 1. Intentar parsear JSON embebido en el texto
     json_match = _re3.search(r'\{[\s\S]*"score"[\s\S]*\}', raw)
@@ -3410,7 +4204,8 @@ def _parse_qa_fallback(raw: str) -> QAReviewOutput:
 
     log.warning(
         "qa_review: invoke_structured falló — usando fallback parser (score=%d, passed=%s)",
-        score, passed,
+        score,
+        passed,
     )
     return QAReviewOutput(
         passed=passed,
@@ -3436,7 +4231,9 @@ async def security_audit(state: OVDState) -> dict:
     # Antes (Nivel1-E) el bypass era solo en el router (post-ejecución). El nodo
     # seguía llamando al LLM y podía tardar 20+ min antes de hacer timeout.
     if int(os.environ.get("OVD_SECURITY_MIN_SCORE", "0")) == 0:
-        log.info("S48-A: OVD_SECURITY_MIN_SCORE=0 — security_audit bypaseado en dev (sin LLM)")
+        log.info(
+            "S48-A: OVD_SECURITY_MIN_SCORE=0 — security_audit bypaseado en dev (sin LLM)"
+        )
         return {
             "security_result": {
                 "passed": True,
@@ -3448,10 +4245,13 @@ async def security_audit(state: OVDState) -> dict:
             },
             "security_scan_results": {},
             "status": "security_reviewed",
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": "Security Audit — Score: 100/100, Severity: none, Passed: True (bypass dev S48-A)",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": "Security Audit — Score: 100/100, Severity: none, Passed: True (bypass dev S48-A)",
+                }
+            ],
         }
 
     project_ctx = state.get("project_context", "")
@@ -3461,7 +4261,11 @@ async def security_audit(state: OVDState) -> dict:
 
     # El agente de security usa su propia config — S8: con Stack Registry routing
     llm = await model_router.get_llm_with_context(
-        "security", org_id, project_id, jwt_token, state.get("stack_routing", "auto"),
+        "security",
+        org_id,
+        project_id,
+        jwt_token,
+        state.get("stack_routing", "auto"),
     )
 
     # S22 — Fase 1: Security scanning CLI (opcional, controlado por OVD_SECURITY_SCAN_ENABLED)
@@ -3485,21 +4289,45 @@ async def security_audit(state: OVDState) -> dict:
                     f"Bloqueado por scan: {scan_results.get('blocked', False)}"
                 )
         except Exception as scan_exc:
-            log.warning("security_audit: error en CLI scanning (%s), continuando sin scan", scan_exc)
+            log.warning(
+                "security_audit: error en CLI scanning (%s), continuando sin scan",
+                scan_exc,
+            )
 
     # S26-C / S31-A: filesystem-first — solo archivos del ciclo actual (mtime >= cycle_start_ts)
     sec_directory = state.get("directory", "")
     agent_code_parts: list[str] = []
     if sec_directory:
         base = pathlib.Path(sec_directory).expanduser().resolve()
-        _CODE_EXTS_SEC = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
-        _SKIP_SEC = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+        _CODE_EXTS_SEC = {
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".sql",
+            ".yaml",
+            ".yml",
+            ".go",
+            ".rs",
+            ".java",
+        }
+        _SKIP_SEC = {
+            "__pycache__",
+            "node_modules",
+            ".git",
+            ".venv",
+            "venv",
+            ".mypy_cache",
+        }
         sec_cycle_ts = state.get("cycle_start_ts", 0)
         if base.exists():
             for fp in sorted(base.rglob("*")):
                 if not fp.is_file():
                     continue
-                if any(part in _SKIP_SEC or part.startswith(".") for part in fp.relative_to(base).parts):
+                if any(
+                    part in _SKIP_SEC or part.startswith(".")
+                    for part in fp.relative_to(base).parts
+                ):
                     continue
                 if fp.suffix.lower() not in _CODE_EXTS_SEC:
                     continue
@@ -3520,20 +4348,25 @@ async def security_audit(state: OVDState) -> dict:
                 except (OSError, ValueError):
                     pass
             if agent_code_parts:
-                log.info("security_audit: S26-C/S31-A leyó %d archivo(s) del ciclo actual", len(agent_code_parts))
+                log.info(
+                    "security_audit: S26-C/S31-A leyó %d archivo(s) del ciclo actual",
+                    len(agent_code_parts),
+                )
     if not agent_code_parts:
         agent_code_parts = [r.get("output", "") for r in state.get("agent_results", [])]
     agent_code = _truncate("\n\n".join(agent_code_parts), 16000)
 
     messages = [
-        SystemMessage(content=template_loader.render(
-            "system_security",
-            language=state.get("language", "es"),
-            project_context=project_ctx,
-        )),
-        HumanMessage(content=(
-            f"Codigo generado por los agentes:\n{agent_code}{scan_context}"
-        )),
+        SystemMessage(
+            content=template_loader.render(
+                "system_security",
+                language=state.get("language", "es"),
+                project_context=project_ctx,
+            )
+        ),
+        HumanMessage(
+            content=(f"Codigo generado por los agentes:\n{agent_code}{scan_context}")
+        ),
     ]
 
     # S41P.A — Timeout diferenciado para security_audit (LLM pesado, puede tardar mucho)
@@ -3548,33 +4381,56 @@ async def security_audit(state: OVDState) -> dict:
                     "intentando fallback"
                 )
                 raw_resp = await llm.ainvoke(messages)
-                raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                raw_text = (
+                    raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                )
                 res = _parse_security_fallback(raw_text)
         except Exception as exc:
-            log.warning("security_audit: invoke_structured falló (%s) — usando fallback", exc)
+            log.warning(
+                "security_audit: invoke_structured falló (%s) — usando fallback", exc
+            )
             try:
                 raw_resp = await llm.ainvoke(messages)
-                raw_text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                raw_text = (
+                    raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                )
                 res = _parse_security_fallback(raw_text)
             except Exception as exc2:
-                log.error("security_audit: fallback también falló (%s) — resultado neutro", exc2)
+                log.error(
+                    "security_audit: fallback también falló (%s) — resultado neutro",
+                    exc2,
+                )
                 res = SecurityAuditOutput(
-                    passed=True, score=75, severity="none",
-                    vulnerabilities=[], secrets_found=[], insecure_patterns=[],
-                    rls_compliant=True, remediation=[],
+                    passed=True,
+                    score=75,
+                    severity="none",
+                    vulnerabilities=[],
+                    secrets_found=[],
+                    insecure_patterns=[],
+                    rls_compliant=True,
+                    remediation=[],
                     summary="Auditoría de seguridad no disponible (error de modelo).",
                 )
         return res
 
     result: SecurityAuditOutput
     try:
-        result = await asyncio.wait_for(_invoke_security_llm(), timeout=_SECURITY_TIMEOUT)
+        result = await asyncio.wait_for(
+            _invoke_security_llm(), timeout=_SECURITY_TIMEOUT
+        )
     except asyncio.TimeoutError:
-        log.error("security_audit: TIMEOUT tras %.0fs — resultado neutro", _SECURITY_TIMEOUT)
+        log.error(
+            "security_audit: TIMEOUT tras %.0fs — resultado neutro", _SECURITY_TIMEOUT
+        )
         result = SecurityAuditOutput(
-            passed=True, score=75, severity="none",
-            vulnerabilities=[], secrets_found=[], insecure_patterns=[],
-            rls_compliant=True, remediation=[],
+            passed=True,
+            score=75,
+            severity="none",
+            vulnerabilities=[],
+            secrets_found=[],
+            insecure_patterns=[],
+            rls_compliant=True,
+            remediation=[],
             summary=f"Auditoría de seguridad no disponible (timeout tras {_SECURITY_TIMEOUT:.0f}s).",
         )
 
@@ -3601,35 +4457,46 @@ async def security_audit(state: OVDState) -> dict:
 
     # S41.A3: indexar findings de seguridad como lecciones (fire-and-forget)
     if security.get("vulnerabilities"):
-        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
+        agent_names = [
+            r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")
+        ]
         # S59-A/A3: add_done_callback para detectar errores en tarea fire-and-forget
-        _lesson_task = asyncio.create_task(lessons.index_security_finding(
-            project_id=state.get("project_id", ""),
-            org_id=state.get("org_id", ""),
-            vulnerabilities=security.get("vulnerabilities", []),
-            severity=security.get("severity", "none"),
-            score=security.get("score", 0),
-            cycle_id=state.get("session_id", ""),
-            agent_names=agent_names,
-        ))
+        _lesson_task = asyncio.create_task(
+            lessons.index_security_finding(
+                project_id=state.get("project_id", ""),
+                org_id=state.get("org_id", ""),
+                vulnerabilities=security.get("vulnerabilities", []),
+                severity=security.get("severity", "none"),
+                score=security.get("score", 0),
+                cycle_id=state.get("session_id", ""),
+                agent_names=agent_names,
+            )
+        )
+
         def _on_lesson_done(t: asyncio.Task) -> None:
             if not t.cancelled() and (exc := t.exception()):
-                log.error("S59-A: lessons.index_security_finding error: %s", exc, exc_info=exc)
+                log.error(
+                    "S59-A: lessons.index_security_finding error: %s", exc, exc_info=exc
+                )
+
         _lesson_task.add_done_callback(_on_lesson_done)
 
     return {
         "security_result": security,
         "security_scan_results": scan_results,
         "status": "security_reviewed",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Security Audit — Score: {result.score}/100, "
-                f"Severity: {result.severity}, "
-                f"Passed: {result.passed}, "
-                f"Vulnerabilidades: {len(result.vulnerabilities)}\n{result.summary}"
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Security Audit — Score: {result.score}/100, "
+                    f"Severity: {result.severity}, "
+                    f"Passed: {result.passed}, "
+                    f"Vulnerabilidades: {len(result.vulnerabilities)}\n{result.summary}"
+                ),
+            }
+        ],
     }
 
 
@@ -3651,7 +4518,10 @@ def _summarize_for_qa(directory: str) -> str:
     for fp in sorted(work_dir.rglob("*")):
         if not fp.is_file():
             continue
-        if any(part in _SKIP_SUMM or part.startswith(".") for part in fp.relative_to(work_dir).parts):
+        if any(
+            part in _SKIP_SUMM or part.startswith(".")
+            for part in fp.relative_to(work_dir).parts
+        ):
             continue
         if fp.suffix.lower() not in _CODE_EXTS_SUMM:
             continue
@@ -3661,7 +4531,8 @@ def _summarize_for_qa(directory: str) -> str:
             rel = fp.relative_to(work_dir)
             source = fp.read_text(errors="replace")
             defs = [
-                line.strip() for line in source.splitlines()
+                line.strip()
+                for line in source.splitlines()
                 if line.strip().startswith(("def ", "class ", "async def "))
             ]
             if defs:
@@ -3704,14 +4575,19 @@ async def qa_review(state: OVDState) -> dict:
     if _test_retry_count > 0 and _qa_retry_count == 0 and _prev_qa.get("score", 0) > 0:
         log.info(
             "qa_review: S62-B test_retry_count=%d, qa_retry_count=%d — reutilizando QA previo (score=%d)",
-            _test_retry_count, _qa_retry_count, _prev_qa.get("score", 0),
+            _test_retry_count,
+            _qa_retry_count,
+            _prev_qa.get("score", 0),
         )
         return {"qa_result": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
 
     project_ctx = state.get("project_context", "")
     llm = await model_router.get_llm_with_context(
-        "qa", state.get("org_id", ""), state.get("project_id", ""),
-        state.get("jwt_token", ""), state.get("stack_routing", "auto"),
+        "qa",
+        state.get("org_id", ""),
+        state.get("project_id", ""),
+        state.get("jwt_token", ""),
+        state.get("stack_routing", "auto"),
     )
     # S23-C / S24-C: construir contexto de código para QA.
     # Estrategia (orden de prioridad):
@@ -3724,9 +4600,28 @@ async def qa_review(state: OVDState) -> dict:
     if qa_directory:
         # S24-C: leer archivos de código desde el workspace directamente
         import pathlib as _pl
+
         base = _pl.Path(qa_directory).expanduser().resolve()
-        _CODE_EXTS_QA = {".py", ".ts", ".tsx", ".js", ".sql", ".yaml", ".yml", ".go", ".rs", ".java"}
-        _SKIP_QA = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".mypy_cache"}
+        _CODE_EXTS_QA = {
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".sql",
+            ".yaml",
+            ".yml",
+            ".go",
+            ".rs",
+            ".java",
+        }
+        _SKIP_QA = {
+            "__pycache__",
+            "node_modules",
+            ".git",
+            ".venv",
+            "venv",
+            ".mypy_cache",
+        }
         file_blocks: list[str] = []
         # S31-A: solo archivos escritos en este ciclo (mtime >= cycle_start_ts - 5s buffer)
         cycle_ts = state.get("cycle_start_ts", 0)
@@ -3734,7 +4629,10 @@ async def qa_review(state: OVDState) -> dict:
             for fp in sorted(base.rglob("*")):
                 if not fp.is_file():
                     continue
-                if any(part in _SKIP_QA or part.startswith(".") for part in fp.relative_to(base).parts):
+                if any(
+                    part in _SKIP_QA or part.startswith(".")
+                    for part in fp.relative_to(base).parts
+                ):
                     continue
                 if fp.suffix.lower() not in _CODE_EXTS_QA:
                     continue
@@ -3756,15 +4654,19 @@ async def qa_review(state: OVDState) -> dict:
                     pass
         if file_blocks:
             agent_output_parts.append("\n\n".join(file_blocks))
-            log.info("qa_review: S24-C / S31-A leyó %d archivo(s) del ciclo actual para contexto QA", len(file_blocks))
+            log.info(
+                "qa_review: S24-C / S31-A leyó %d archivo(s) del ciclo actual para contexto QA",
+                len(file_blocks),
+            )
 
     # Fallback si no hay directory o no hay archivos en disco
     if not agent_output_parts:
         for r in state.get("agent_results", []):
-            output    = r.get("output", "")
+            output = r.get("output", "")
             artifacts = r.get("artifacts", [])
             if artifacts and qa_directory:
                 import pathlib as _pl2
+
                 base2 = _pl2.Path(qa_directory).expanduser().resolve()
                 fb: list[str] = []
                 for art in artifacts:
@@ -3775,7 +4677,9 @@ async def qa_review(state: OVDState) -> dict:
                     try:
                         fp2.relative_to(base2)
                         if fp2.exists():
-                            fb.append(f"```{fp2.suffix.lstrip('.')}:{p}\n{fp2.read_text(encoding='utf-8', errors='replace')}\n```")
+                            fb.append(
+                                f"```{fp2.suffix.lstrip('.')}:{p}\n{fp2.read_text(encoding='utf-8', errors='replace')}\n```"
+                            )
                     except (ValueError, OSError):
                         pass
                 if fb:
@@ -3791,7 +4695,9 @@ async def qa_review(state: OVDState) -> dict:
     # el QA recibe al menos los defs/clases públicos de los archivos en disco.
     qa_summary = _summarize_for_qa(qa_directory)
     if qa_summary:
-        log.info("qa_review: S39-B summary del workspace — %d líneas", qa_summary.count("\n"))
+        log.info(
+            "qa_review: S39-B summary del workspace — %d líneas", qa_summary.count("\n")
+        )
 
     # S56-A-fix: SDD del ciclo en SystemMessage como referencia primaria.
     # project_ctx se pasa como contexto secundario — previene que restricciones legacy
@@ -3800,28 +4706,49 @@ async def qa_review(state: OVDState) -> dict:
     _project_ctx_filtered = _strip_db_restrictions(project_ctx)
 
     # S74-C: determinar tipo de proyecto para contextualizar el QA
-    _fr_text_lower = (state.get("feature_request", "") + " " + state.get("fr_analysis", {}).get("raw", "")).lower()
-    _is_api_only = any(kw in _fr_text_lower for kw in ("api rest", "fastapi", "endpoint", "backend", "crud")) \
-                   and not any(kw in _fr_text_lower for kw in ("react", "vue", "svelte", "frontend", "angular", "ui"))
+    _fr_text_lower = (
+        state.get("feature_request", "")
+        + " "
+        + state.get("fr_analysis", {}).get("raw", "")
+    ).lower()
+    _is_api_only = any(
+        kw in _fr_text_lower
+        for kw in ("api rest", "fastapi", "endpoint", "backend", "crud")
+    ) and not any(
+        kw in _fr_text_lower
+        for kw in ("react", "vue", "svelte", "frontend", "angular", "ui")
+    )
     _project_type_hint = (
-        "\n\n[S74-C] CONTEXTO DEL PROYECTO: Este es un proyecto API REST (sin frontend).\n"
-        "- NO evalúes ausencia de componentes React/Vue/HTML — no aplica al FR\n"
-        "- SÍ evalúa: endpoints HTTP correctos, status codes, validaciones de entrada, JWT\n"
-        "- SÍ evalúa: tests pytest de endpoints con TestClient o tests de funciones puras\n"
-        "- NO marques como faltante el frontend si el FR no lo solicita"
-    ) if _is_api_only else ""
+        (
+            "\n\n[S74-C] CONTEXTO DEL PROYECTO: Este es un proyecto API REST (sin frontend).\n"
+            "- NO evalúes ausencia de componentes React/Vue/HTML — no aplica al FR\n"
+            "- SÍ evalúa: endpoints HTTP correctos, status codes, validaciones de entrada, JWT\n"
+            "- SÍ evalúa: tests pytest de endpoints con TestClient o tests de funciones puras\n"
+            "- NO marques como faltante el frontend si el FR no lo solicita"
+        )
+        if _is_api_only
+        else ""
+    )
 
     messages_qa = [
-        SystemMessage(content=template_loader.render(
-            "system_qa",
-            language=state.get("language", "es"),
-            project_context=_project_ctx_filtered + _project_type_hint,
-            cycle_sdd_context=_qa_sdd_block,
-        )),
-        HumanMessage(content=(
-            f"## Código generado:\n{_truncate(agent_output, 20000)}"
-            + (f"\n\n## Estructura workspace (S39-B):\n{_truncate(qa_summary, 3000)}" if qa_summary else "")
-        )),
+        SystemMessage(
+            content=template_loader.render(
+                "system_qa",
+                language=state.get("language", "es"),
+                project_context=_project_ctx_filtered + _project_type_hint,
+                cycle_sdd_context=_qa_sdd_block,
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"## Código generado:\n{_truncate(agent_output, 20000)}"
+                + (
+                    f"\n\n## Estructura workspace (S39-B):\n{_truncate(qa_summary, 3000)}"
+                    if qa_summary
+                    else ""
+                )
+            )
+        ),
     ]
 
     # S20 — GAP-R5 / S41P.A: fallback robusto con timeout diferenciado
@@ -3833,12 +4760,18 @@ async def qa_review(state: OVDState) -> dict:
                 raw_resp = await llm.ainvoke(messages_qa)
                 res = _parse_qa_fallback(raw_resp.content)
         except Exception as exc:
-            log.warning("qa_review: invoke_structured falló (%s: %s) — usando fallback", type(exc).__name__, str(exc)[:120])
+            log.warning(
+                "qa_review: invoke_structured falló (%s: %s) — usando fallback",
+                type(exc).__name__,
+                str(exc)[:120],
+            )
             try:
                 raw_resp = await llm.ainvoke(messages_qa)
                 res = _parse_qa_fallback(raw_resp.content)
             except Exception as exc2:
-                log.error("qa_review: fallback también falló (%s) — resultado neutro", exc2)
+                log.error(
+                    "qa_review: fallback también falló (%s) — resultado neutro", exc2
+                )
                 res = QAReviewOutput(
                     passed=True,
                     score=70,
@@ -3879,34 +4812,48 @@ async def qa_review(state: OVDState) -> dict:
     if qa_directory:
         _route_issues = _check_fastapi_route_ordering(qa_directory)
         if _route_issues:
-            log.warning("qa_review: S65-C — %d problema(s) de orden de rutas FastAPI detectados", len(_route_issues))
-            qa["issues"] = list(qa.get("issues", [])) + [f"[S65-C] {iss}" for iss in _route_issues]
+            log.warning(
+                "qa_review: S65-C — %d problema(s) de orden de rutas FastAPI detectados",
+                len(_route_issues),
+            )
+            qa["issues"] = list(qa.get("issues", [])) + [
+                f"[S65-C] {iss}" for iss in _route_issues
+            ]
 
     # S41.A2: indexar issues de QA como lecciones (fire-and-forget)
-    all_issues = result.issues + result.missing_requirements + result.code_quality_issues
+    all_issues = (
+        result.issues + result.missing_requirements + result.code_quality_issues
+    )
     if all_issues:
-        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
-        asyncio.create_task(lessons.index_qa_finding(
-            project_id=state.get("project_id", ""),
-            org_id=state.get("org_id", ""),
-            issues=all_issues,
-            score=result.score,
-            cycle_id=state.get("session_id", ""),
-            agent_names=agent_names,
-        ))
+        agent_names = [
+            r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")
+        ]
+        asyncio.create_task(
+            lessons.index_qa_finding(
+                project_id=state.get("project_id", ""),
+                org_id=state.get("org_id", ""),
+                issues=all_issues,
+                score=result.score,
+                cycle_id=state.get("session_id", ""),
+                agent_names=agent_names,
+            )
+        )
 
     return {
         "qa_result": qa,
         "status": "qa_done",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"QA completado — Score: {result.score}/100, "
-                f"Passed: {result.passed}, "
-                f"SDD compliance: {result.sdd_compliance}, "
-                f"Issues: {len(result.issues)}\n{result.summary}"
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"QA completado — Score: {result.score}/100, "
+                    f"Passed: {result.passed}, "
+                    f"SDD compliance: {result.sdd_compliance}, "
+                    f"Issues: {len(result.issues)}\n{result.summary}"
+                ),
+            }
+        ],
     }
 
 
@@ -3919,26 +4866,28 @@ async def handle_escalation(state: OVDState) -> dict:
     qa_result = state.get("qa_result", {})
     uncertainties = state.get("uncertainty_register", [])
 
-    resolution = interrupt({
-        "type": "escalated",
-        "reason": (
-            f"Se agotaron los reintentos (security: {state.get('security_retry_count', 0)}, "
-            f"qa: {state.get('qa_retry_count', 0)}) — requiere supervision del arquitecto"
-        ),
-        "context": {
-            "security_passed": security_result.get("passed", True),
-            "security_score": security_result.get("score", 100),
-            "security_severity": security_result.get("severity", "none"),
-            "security_vulnerabilities": security_result.get("vulnerabilities", []),
-            "security_remediation": security_result.get("remediation", []),
-            "qa_passed": qa_result.get("passed", True),
-            "qa_score": qa_result.get("score", 100),
-            "qa_issues": qa_result.get("issues", []),
-            "missing_requirements": qa_result.get("missing_requirements", []),
-            "uncertainty_register": uncertainties,
-            "retry_feedback": state.get("retry_feedback", ""),
-        },
-    })
+    resolution = interrupt(
+        {
+            "type": "escalated",
+            "reason": (
+                f"Se agotaron los reintentos (security: {state.get('security_retry_count', 0)}, "
+                f"qa: {state.get('qa_retry_count', 0)}) — requiere supervision del arquitecto"
+            ),
+            "context": {
+                "security_passed": security_result.get("passed", True),
+                "security_score": security_result.get("score", 100),
+                "security_severity": security_result.get("severity", "none"),
+                "security_vulnerabilities": security_result.get("vulnerabilities", []),
+                "security_remediation": security_result.get("remediation", []),
+                "qa_passed": qa_result.get("passed", True),
+                "qa_score": qa_result.get("score", 100),
+                "qa_issues": qa_result.get("issues", []),
+                "missing_requirements": qa_result.get("missing_requirements", []),
+                "uncertainty_register": uncertainties,
+                "retry_feedback": state.get("retry_feedback", ""),
+            },
+        }
+    )
 
     reason = (
         f"Se agotaron los reintentos (security: {state.get('security_retry_count', 0)}, "
@@ -3953,16 +4902,20 @@ async def handle_escalation(state: OVDState) -> dict:
     return {
         "escalation_resolution": resolution.get("resolution", ""),
         "status": "escalation_resolved",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": f"Escalacion resuelta por el arquitecto: {resolution.get('resolution', '')}",
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": f"Escalacion resuelta por el arquitecto: {resolution.get('resolution', '')}",
+            }
+        ],
     }
 
 
 # ---------------------------------------------------------------------------
 # S65-C — Helper: verificación de orden de rutas FastAPI
 # ---------------------------------------------------------------------------
+
 
 def _check_fastapi_route_ordering(directory: str) -> list[str]:
     """S65-C: detecta rutas FastAPI estáticas eclipsadas por rutas paramétricas.
@@ -3973,8 +4926,8 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
     Retorna lista de issues (vacía si todo está correcto).
     """
     import ast as _ast
-    from pathlib import Path as _Path
     import re as _re
+    from pathlib import Path as _Path
 
     issues: list[str] = []
     base = _Path(directory)
@@ -3983,7 +4936,9 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
 
     for py_file in base.rglob("*.py"):
         rel = py_file.relative_to(base)
-        if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+        if any(
+            p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts
+        ):
             continue
         try:
             source = py_file.read_text(encoding="utf-8", errors="replace")
@@ -4001,12 +4956,20 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
                     continue
                 func = deco.func
                 method = ""
-                if isinstance(func, _ast.Attribute) and func.attr in ("get", "post", "put", "delete", "patch"):
+                if isinstance(func, _ast.Attribute) and func.attr in (
+                    "get",
+                    "post",
+                    "put",
+                    "delete",
+                    "patch",
+                ):
                     method = func.attr.upper()
                 if not method or not deco.args:
                     continue
                 first_arg = deco.args[0]
-                if not isinstance(first_arg, _ast.Constant) or not isinstance(first_arg.value, str):
+                if not isinstance(first_arg, _ast.Constant) or not isinstance(
+                    first_arg.value, str
+                ):
                     continue
                 routes.append((node.lineno, method, first_arg.value))
 
@@ -4037,6 +5000,7 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
 # S65-A — Helper: validación pre-pytest de imports
 # ---------------------------------------------------------------------------
 
+
 def _validate_artifacts_imports(
     agent_results: list[dict],
     directory: str,
@@ -4048,18 +5012,50 @@ def _validate_artifacts_imports(
     from pathlib import Path
 
     _stdlib = getattr(sys, "stdlib_module_names", set()) | {
-        "os", "sys", "re", "json", "datetime", "pathlib", "typing",
-        "collections", "itertools", "functools", "logging", "asyncio",
-        "threading", "subprocess", "io", "abc", "dataclasses", "enum",
-        "math", "random", "time", "uuid", "hashlib", "hmac", "base64",
-        "urllib", "http", "email", "html", "xml", "csv", "sqlite3",
-        "tempfile", "shutil", "glob", "copy", "inspect", "importlib",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "datetime",
+        "pathlib",
+        "typing",
+        "collections",
+        "itertools",
+        "functools",
+        "logging",
+        "asyncio",
+        "threading",
+        "subprocess",
+        "io",
+        "abc",
+        "dataclasses",
+        "enum",
+        "math",
+        "random",
+        "time",
+        "uuid",
+        "hashlib",
+        "hmac",
+        "base64",
+        "urllib",
+        "http",
+        "email",
+        "html",
+        "xml",
+        "csv",
+        "sqlite3",
+        "tempfile",
+        "shutil",
+        "glob",
+        "copy",
+        "inspect",
+        "importlib",
     }
     # S84-G: módulos mockeados por S70-C — S65-A no los reporta como rotos
     _s70c_mocked = {"oracledb", "cx_Oracle", "cx_oracle"}
     base = Path(directory)
     local_mods: set[str] = set()
-    for f in (written_files or []):
+    for f in written_files or []:
         if f.endswith(".py"):
             mod = f.replace("/", ".").removesuffix(".py")
             local_mods.add(mod)
@@ -4068,7 +5064,9 @@ def _validate_artifacts_imports(
     if base.exists():
         for py_file in base.rglob("*.py"):
             rel = py_file.relative_to(base)
-            if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+            if any(
+                p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts
+            ):
                 continue
             mod = str(rel).replace("/", ".").removesuffix(".py")
             local_mods.add(mod)
@@ -4080,7 +5078,9 @@ def _validate_artifacts_imports(
     if base.exists():
         for py_file in base.rglob("*.py"):
             rel = py_file.relative_to(base)
-            if any(p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts):
+            if any(
+                p in ("__pycache__", ".venv", "venv", "node_modules") for p in rel.parts
+            ):
                 continue
             mod_dotted = str(rel).replace("/", ".").removesuffix(".py")
             if mod_dotted not in local_mods:
@@ -4089,7 +5089,9 @@ def _validate_artifacts_imports(
                 src_text = py_file.read_text(encoding="utf-8", errors="replace")
                 tree2 = ast.parse(src_text)
                 for node2 in ast.walk(tree2):
-                    if isinstance(node2, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if isinstance(
+                        node2, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    ):
                         export_map.setdefault(node2.name, []).append(mod_dotted)
                     elif isinstance(node2, ast.Assign):
                         for t in node2.targets:
@@ -4117,7 +5119,7 @@ def _validate_artifacts_imports(
         return f"  → CORRECCIÓN: usa `from {target} import {', '.join(names)}`"
 
     broken: list[str] = []
-    for result in (agent_results or []):
+    for result in agent_results or []:
         for art in result.get("artifacts", []):
             path = art.get("path", "") if isinstance(art, dict) else str(art)
             if not path.endswith(".py"):
@@ -4136,7 +5138,9 @@ def _validate_artifacts_imports(
                 root = node.module.split(".")[0]
                 if root in _stdlib:
                     continue
-                if root in _s70c_mocked:  # S84-G: S70-C mockea estos módulos en conftest.py
+                if (
+                    root in _s70c_mocked
+                ):  # S84-G: S70-C mockea estos módulos en conftest.py
                     continue
                 if node.module in local_mods:
                     continue
@@ -4156,7 +5160,11 @@ def _validate_artifacts_imports(
         return True, ""
 
     # S87-diag: log explícito de los imports rotos para diagnóstico
-    log.warning("[S65-A] imports rotos detectados (%d):\n%s", len(broken), "\n".join(broken[:10]))
+    log.warning(
+        "[S65-A] imports rotos detectados (%d):\n%s",
+        len(broken),
+        "\n".join(broken[:10]),
+    )
 
     # S69-C: auto-generar src/main.py cuando el import roto es src.main y no existe en disco
     _main_py = base / "src" / "main.py"
@@ -4166,11 +5174,15 @@ def _validate_artifacts_imports(
         _router_imports: list[str] = []
         _router_includes: list[str] = []
         if base.exists():
-            for _rfile in sorted((base / "src").rglob("router.py") if (base / "src").exists() else []):
+            for _rfile in sorted(
+                (base / "src").rglob("router.py") if (base / "src").exists() else []
+            ):
                 _rrel = _rfile.relative_to(base)
                 _rmod = str(_rrel).replace("/", ".").removesuffix(".py")
                 _ralias = _rrel.parts[-2] if len(_rrel.parts) >= 2 else "router"
-                _router_imports.append(f"from {_rmod} import router as {_ralias}_router")
+                _router_imports.append(
+                    f"from {_rmod} import router as {_ralias}_router"
+                )
                 _router_includes.append(f"app.include_router({_ralias}_router)")
         _main_content = "from fastapi import FastAPI\n"
         for _ri in _router_imports:
@@ -4181,7 +5193,10 @@ def _validate_artifacts_imports(
         try:
             _main_py.parent.mkdir(parents=True, exist_ok=True)
             _main_py.write_text(_main_content, encoding="utf-8")
-            log.warning("_validate_artifacts_imports: S69-C src/main.py auto-generado con %d router(s)", len(_router_imports))
+            log.warning(
+                "_validate_artifacts_imports: S69-C src/main.py auto-generado con %d router(s)",
+                len(_router_imports),
+            )
             # Re-agregar src.main a local_mods para evitar falso positivo en esta ronda
             local_mods.update({"src.main", "src"})
             # Quitar broken lines que referenciaban src.main
@@ -4189,7 +5204,10 @@ def _validate_artifacts_imports(
             if not broken:
                 return True, ""
         except OSError as _e:
-            log.warning("_validate_artifacts_imports: S69-C no pudo escribir src/main.py — %s", _e)
+            log.warning(
+                "_validate_artifacts_imports: S69-C no pudo escribir src/main.py — %s",
+                _e,
+            )
 
     # S89-A: auto-generar src/contracts/models.py cuando falta y causa imports rotos
     _contracts_models_py = base / "src" / "contracts" / "models.py"
@@ -4246,13 +5264,18 @@ def _validate_artifacts_imports(
         try:
             _contracts_models_py.parent.mkdir(parents=True, exist_ok=True)
             _contracts_models_py.write_text(_contracts_models_content, encoding="utf-8")
-            log.warning("_validate_artifacts_imports: S89-A src/contracts/models.py auto-generado")
+            log.warning(
+                "_validate_artifacts_imports: S89-A src/contracts/models.py auto-generado"
+            )
             local_mods.update({"src.contracts.models", "src.contracts"})
             broken = [b for b in broken if "src.contracts.models" not in b]
             if not broken:
                 return True, ""
         except OSError as _e:
-            log.warning("_validate_artifacts_imports: S89-A no pudo escribir contracts/models.py — %s", _e)
+            log.warning(
+                "_validate_artifacts_imports: S89-A no pudo escribir contracts/models.py — %s",
+                _e,
+            )
 
     # S90-A: auto-generar src/auth/service.py cuando falta y router.py lo importa
     _auth_service_py = base / "src" / "auth" / "service.py"
@@ -4287,13 +5310,18 @@ def _validate_artifacts_imports(
         try:
             _auth_service_py.parent.mkdir(parents=True, exist_ok=True)
             _auth_service_py.write_text(_auth_service_content, encoding="utf-8")
-            log.warning("_validate_artifacts_imports: S90-A src/auth/service.py auto-generado")
+            log.warning(
+                "_validate_artifacts_imports: S90-A src/auth/service.py auto-generado"
+            )
             local_mods.update({"src.auth.service", "src.auth"})
             broken = [b for b in broken if "src.auth.service" not in b]
             if not broken:
                 return True, ""
         except OSError as _e:
-            log.warning("_validate_artifacts_imports: S90-A no pudo escribir auth/service.py — %s", _e)
+            log.warning(
+                "_validate_artifacts_imports: S90-A no pudo escribir auth/service.py — %s",
+                _e,
+            )
 
     # S91-A: auto-generar src/contracts/router.py cuando falta y main.py lo importa
     _contracts_router_py = base / "src" / "contracts" / "router.py"
@@ -4331,17 +5359,28 @@ def _validate_artifacts_imports(
         try:
             _contracts_router_py.parent.mkdir(parents=True, exist_ok=True)
             _contracts_router_py.write_text(_contracts_router_content, encoding="utf-8")
-            log.warning("_validate_artifacts_imports: S91-A src/contracts/router.py auto-generado")
+            log.warning(
+                "_validate_artifacts_imports: S91-A src/contracts/router.py auto-generado"
+            )
             local_mods.update({"src.contracts.router", "src.contracts"})
             broken = [b for b in broken if "src.contracts.router" not in b]
             if not broken:
                 return True, ""
         except OSError as _e:
-            log.warning("_validate_artifacts_imports: S91-A no pudo escribir contracts/router.py — %s", _e)
+            log.warning(
+                "_validate_artifacts_imports: S91-A no pudo escribir contracts/router.py — %s",
+                _e,
+            )
 
     # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
-    available = sorted(m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__"))[:20]
-    available_str = "\n".join(f"  - {m}" for m in available) if available else "  (ninguno detectado)"
+    available = sorted(
+        m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__")
+    )[:20]
+    available_str = (
+        "\n".join(f"  - {m}" for m in available)
+        if available
+        else "  (ninguno detectado)"
+    )
     feedback = (
         "[S65-A] IMPORTS ROTOS \u2014 detectados ANTES de pytest:\n"
         + "\n".join(broken[:12])
@@ -4359,6 +5398,7 @@ def _validate_artifacts_imports(
 # ---------------------------------------------------------------------------
 # S65-E — Helper: garantizar infraestructura mínima Python en el workspace
 # ---------------------------------------------------------------------------
+
 
 def _ensure_python_infrastructure(work_dir: str) -> list[str]:
     """S65-E: garantiza que requirements.txt y conftest.py existan en el workspace.
@@ -4390,6 +5430,7 @@ def _ensure_python_infrastructure(work_dir: str) -> list[str]:
 # S22 — Nodo run_tests: ejecución real de tests generados
 # ---------------------------------------------------------------------------
 
+
 async def run_tests(state: OVDState) -> dict:
     """S22 — Ejecuta los tests generados por los agentes y captura el resultado.
 
@@ -4402,12 +5443,16 @@ async def run_tests(state: OVDState) -> dict:
     import tempfile
 
     agent_results = state.get("agent_results", [])
-    directory     = state.get("directory", "")
-    retry_round   = state.get("test_retry_count", 0)
+    directory = state.get("directory", "")
+    retry_round = state.get("test_retry_count", 0)
 
     # S24-D: logging de estado antes de detectar runner
-    arts_counts = [(r.get("agent","?"), len(r.get("artifacts",[]))) for r in agent_results]
-    log.info("run_tests: directory='%s' | agent_results artifacts=%s", directory, arts_counts)
+    arts_counts = [
+        (r.get("agent", "?"), len(r.get("artifacts", []))) for r in agent_results
+    ]
+    log.info(
+        "run_tests: directory='%s' | agent_results artifacts=%s", directory, arts_counts
+    )
 
     runner = _detect_test_runner(agent_results, directory=directory)
 
@@ -4424,10 +5469,13 @@ async def run_tests(state: OVDState) -> dict:
                 "retry_round": retry_round,
             },
             "status": "tests_skipped",
-            "messages": state.get("messages", []) + [{
-                "role": "agent",
-                "content": "Tests: no se detectaron archivos de test — continuando sin ejecutar.",
-            }],
+            "messages": state.get("messages", [])
+            + [
+                {
+                    "role": "agent",
+                    "content": "Tests: no se detectaron archivos de test — continuando sin ejecutar.",
+                }
+            ],
         }
 
     # Escribir artefactos al directorio de trabajo (ya debería existir si S16T.A funcionó)
@@ -4440,14 +5488,17 @@ async def run_tests(state: OVDState) -> dict:
     if retry_round > 0 and directory:
         log.warning(
             "run_tests: S63-B — cleanup S42-B/S60-C movido a update_test_retry. "
-            "retry_round=%d, no se borran archivos aquí.", retry_round,
+            "retry_round=%d, no se borran archivos aquí.",
+            retry_round,
         )
 
     # S65-E: garantizar infraestructura mínima Python en el workspace
     if runner == "pytest" and work_dir:
         _infra_created = _ensure_python_infrastructure(work_dir)
         if _infra_created:
-            log.warning("run_tests: S65-E infraestructura mínima creada: %s", _infra_created)
+            log.warning(
+                "run_tests: S65-E infraestructura mínima creada: %s", _infra_created
+            )
 
     # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
     # S61-A: Si pytest.ini ya tiene `pythonpath`, NO inyectar sys.path.insert(0, "src"):
@@ -4464,15 +5515,19 @@ async def run_tests(state: OVDState) -> dict:
         if not _pytest_ini.exists():
             _pyproject_has_pytest = (
                 _pyproject.exists()
-                and "[tool.pytest.ini_options]" in _pyproject.read_text(encoding="utf-8", errors="replace")
+                and "[tool.pytest.ini_options]"
+                in _pyproject.read_text(encoding="utf-8", errors="replace")
             )
             if not _pyproject_has_pytest:
                 _pytest_ini.write_text("[pytest]\npythonpath = .\n", encoding="utf-8")
-                log.warning("run_tests: S62-A pytest.ini no encontrado — creado con pythonpath = .")
+                log.warning(
+                    "run_tests: S62-A pytest.ini no encontrado — creado con pythonpath = ."
+                )
 
         _has_pytest_pythonpath = (
             _pytest_ini.exists()
-            and "pythonpath" in _pytest_ini.read_text(encoding="utf-8", errors="replace")
+            and "pythonpath"
+            in _pytest_ini.read_text(encoding="utf-8", errors="replace")
         )
         _conftest_content = (
             "import sys, os\n"
@@ -4499,39 +5554,71 @@ async def run_tests(state: OVDState) -> dict:
                 "_mock_oracledb.version = '8.3.0'\n"
                 "sys.modules['oracledb'] = _mock_oracledb\n"
             )
-            log.warning("run_tests: S70-C oracledb detectado en workspace — mock inyectado en conftest.py")
+            log.warning(
+                "run_tests: S70-C oracledb detectado en workspace — mock inyectado en conftest.py"
+            )
 
         if _has_pytest_pythonpath:
             # S61-A: pytest.ini ya gestiona pythonpath — actualizar conftest solo con mock oracledb si aplica
             if _has_oracledb_import:
-                _existing_conf = _conftest.read_text(encoding="utf-8", errors="replace") if _conftest.exists() else ""
+                _existing_conf = (
+                    _conftest.read_text(encoding="utf-8", errors="replace")
+                    if _conftest.exists()
+                    else ""
+                )
                 if "oracledb" not in _existing_conf:
                     _conftest.write_text(
-                        _existing_conf.rstrip() + "\nimport sys\nfrom unittest.mock import MagicMock\n_mock_oracledb = MagicMock()\n_mock_oracledb.version = '8.3.0'\nsys.modules['oracledb'] = _mock_oracledb\n",
+                        _existing_conf.rstrip()
+                        + "\nimport sys\nfrom unittest.mock import MagicMock\n_mock_oracledb = MagicMock()\n_mock_oracledb.version = '8.3.0'\nsys.modules['oracledb'] = _mock_oracledb\n",
                         encoding="utf-8",
                     )
-                    log.warning("run_tests: S70-C oracledb mock añadido a conftest.py existente")
+                    log.warning(
+                        "run_tests: S70-C oracledb mock añadido a conftest.py existente"
+                    )
             else:
-                log.info("run_tests: S61-A pytest.ini tiene pythonpath — omitiendo inyección de conftest.py sys.path")
+                log.info(
+                    "run_tests: S61-A pytest.ini tiene pythonpath — omitiendo inyección de conftest.py sys.path"
+                )
         elif not _conftest.exists() or _conftest.stat().st_size == 0:
             _conftest.write_text(_conftest_content, encoding="utf-8")
-            log.info("run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s", _conftest)
+            log.info(
+                "run_tests: S27-A/S43-B conftest.py inyectado (Python/pytest) en %s",
+                _conftest,
+            )
         elif _is_retry_round:
             # S57-C: en rounds de retry, regenerar conftest.py para reflejar posible
             # reorganización del código por el agente. Si la estructura cambió, el
             # conftest viejo apunta a rutas incorrectas → ImportError inevitable.
             # S73-B: preservar mock oracledb si ya está correcto — no sobreescribir con versión sin import sys
-            _existing_retry = _conftest.read_text(encoding="utf-8", errors="replace") if _conftest.exists() else ""
-            _mock_already_ok = (
-                "import sys" in _existing_retry
-                and ("sys.modules['oracledb']" in _existing_retry or 'sys.modules["oracledb"]' in _existing_retry)
+            _existing_retry = (
+                _conftest.read_text(encoding="utf-8", errors="replace")
+                if _conftest.exists()
+                else ""
             )
-            if _mock_already_ok and "sys.modules['oracledb']" not in _conftest_content and 'sys.modules["oracledb"]' not in _conftest_content:
+            _mock_already_ok = "import sys" in _existing_retry and (
+                "sys.modules['oracledb']" in _existing_retry
+                or 'sys.modules["oracledb"]' in _existing_retry
+            )
+            if (
+                _mock_already_ok
+                and "sys.modules['oracledb']" not in _conftest_content
+                and 'sys.modules["oracledb"]' not in _conftest_content
+            ):
                 # Añadir el mock al contenido nuevo antes de escribir
-                _conftest_content = _conftest_content.rstrip() + "\nimport sys\nfrom unittest.mock import MagicMock\nsys.modules['oracledb'] = MagicMock()\n"
-                log.warning("run_tests: S73-B mock oracledb preservado en conftest regenerado retry_round=%d", retry_round)
+                _conftest_content = (
+                    _conftest_content.rstrip()
+                    + "\nimport sys\nfrom unittest.mock import MagicMock\nsys.modules['oracledb'] = MagicMock()\n"
+                )
+                log.warning(
+                    "run_tests: S73-B mock oracledb preservado en conftest regenerado retry_round=%d",
+                    retry_round,
+                )
             _conftest.write_text(_conftest_content, encoding="utf-8")
-            log.warning("run_tests: S57-C conftest.py regenerado en retry_round=%d — %s", retry_round, _conftest)
+            log.warning(
+                "run_tests: S57-C conftest.py regenerado en retry_round=%d — %s",
+                retry_round,
+                _conftest,
+            )
 
     # S65-A: validar imports antes de ejecutar el runner — detecta módulos fantasma
     # Solo para Python/pytest — el AST parser trabaja sobre .py
@@ -4553,7 +5640,8 @@ async def run_tests(state: OVDState) -> dict:
             _import_loop = (
                 retry_round >= 1
                 and "[S65-A] IMPORTS ROTOS" in _prev_import_error
-                and _import_feedback.split("\n")[1:4] == _prev_import_error.split("\n")[1:4]
+                and _import_feedback.split("\n")[1:4]
+                == _prev_import_error.split("\n")[1:4]
             )
             if _import_loop:
                 log.warning(
@@ -4562,6 +5650,7 @@ async def run_tests(state: OVDState) -> dict:
                     retry_round,
                 )
                 from langgraph.types import Command as _Command
+
                 return _Command(
                     update={
                         "test_results": {
@@ -4574,17 +5663,22 @@ async def run_tests(state: OVDState) -> dict:
                         "retry_feedback": _import_feedback,
                         "last_test_error": _import_feedback,
                         "status": "tests_failed",
-                        "messages": state.get("messages", []) + [{
-                            "role": "agent",
-                            "content": (
-                                f"S66-C: imports rotos sin cambio en ronda {retry_round + 1} — "
-                                "mismo error que round anterior. Pasando a generate_docs."
-                            ),
-                        }],
+                        "messages": state.get("messages", [])
+                        + [
+                            {
+                                "role": "agent",
+                                "content": (
+                                    f"S66-C: imports rotos sin cambio en ronda {retry_round + 1} — "
+                                    "mismo error que round anterior. Pasando a generate_docs."
+                                ),
+                            }
+                        ],
                     },
                     goto="generate_docs",
                 )
-            log.warning("run_tests: S65-A imports rotos detectados antes de pytest — omitiendo ejecución")
+            log.warning(
+                "run_tests: S65-A imports rotos detectados antes de pytest — omitiendo ejecución"
+            )
             return {
                 "test_results": {
                     "passed": False,
@@ -4595,31 +5689,41 @@ async def run_tests(state: OVDState) -> dict:
                 "retry_feedback": _import_feedback,
                 "last_test_error": _import_feedback,
                 "status": "tests_failed",
-                "messages": state.get("messages", []) + [{
-                    "role": "agent",
-                    "content": f"S65-A: imports rotos detectados — {_import_feedback[:200]}",
-                }],
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": f"S65-A: imports rotos detectados — {_import_feedback[:200]}",
+                    }
+                ],
             }
 
     # S77-C: verificar y auto-inyectar routers faltantes en main.py (post-execute)
     if runner == "pytest" and work_dir and retry_round == 0:
         _missing_routers, _ = _verify_main_includes_routers(work_dir)
         if _missing_routers:
-            log.warning("run_tests: S77-C routers faltantes detectados y auto-inyectados: %s", _missing_routers)
+            log.warning(
+                "run_tests: S77-C routers faltantes detectados y auto-inyectados: %s",
+                _missing_routers,
+            )
 
     # S78-B: detectar endpoints stub (pass/...) — agregar al retry_feedback antes de pytest
     _stub_feedback_s78b = ""
     if runner == "pytest" and work_dir and retry_round == 0:
         _stubs_ok, _stub_feedback_s78b = _verify_no_stub_endpoints(work_dir)
         if not _stubs_ok:
-            log.warning("run_tests: S78-B stubs detectados — se agregarán al retry_feedback")
+            log.warning(
+                "run_tests: S78-B stubs detectados — se agregarán al retry_feedback"
+            )
 
     # S79-A: verificar consistencia de nombres ORM antes de pytest (S80-A: incluye manifest vacío)
     _orm_feedback_s79a = ""
     if runner == "pytest" and work_dir and retry_round == 0:
         _orm_ok, _orm_feedback_s79a = _verify_orm_class_names(work_dir)
         if not _orm_ok:
-            log.warning("run_tests: S79-A/S80-A ORM naming inconsistencies detectadas — agregando al retry_feedback")
+            log.warning(
+                "run_tests: S79-A/S80-A ORM naming inconsistencies detectadas — agregando al retry_feedback"
+            )
 
     # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR
     # S80-B: sin restricción retry_round==0 — correr en todas las rondas
@@ -4629,7 +5733,9 @@ async def run_tests(state: OVDState) -> dict:
         _fr_text = state.get("feature_request", "") or ""
         _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(work_dir, _fr_text)
         if not _db_ok:
-            log.warning("run_tests: S79-C DATABASE_URL inconsistente con FR — agregando al retry_feedback")
+            log.warning(
+                "run_tests: S79-C DATABASE_URL inconsistente con FR — agregando al retry_feedback"
+            )
 
     # Ejecutar runner
     passed = False
@@ -4646,20 +5752,30 @@ async def run_tests(state: OVDState) -> dict:
                 _base = pathlib.Path(work_dir)
                 _all_tests = [str(fp) for fp in sorted(_base.rglob("test_*.py"))]
                 _cycle_tests = [
-                    str(fp) for fp in sorted(_base.rglob("test_*.py"))
+                    str(fp)
+                    for fp in sorted(_base.rglob("test_*.py"))
                     if fp.stat().st_mtime >= cycle_ts - 5
                 ]
                 if _cycle_tests:
                     # Hay tests nuevos del ciclo — ejecutar solo esos (evita contaminación)
                     _pytest_args = _cycle_tests
-                    log.info("run_tests: S31-C usando %d test file(s) del ciclo actual", len(_cycle_tests))
+                    log.info(
+                        "run_tests: S31-C usando %d test file(s) del ciclo actual",
+                        len(_cycle_tests),
+                    )
                 elif _all_tests:
                     # Proyecto real con tests pre-existentes — ejecutar todos (S32-A)
                     _pytest_args = [work_dir]
-                    log.info("run_tests: S32-A sin tests nuevos, %d test(s) pre-existentes → work_dir", len(_all_tests))
+                    log.info(
+                        "run_tests: S32-A sin tests nuevos, %d test(s) pre-existentes → work_dir",
+                        len(_all_tests),
+                    )
                 else:
                     # Sin ningún test file en el workspace → skip graceful
-                    log.warning("run_tests: S32-A sin test files en %s — passed=True con warning", work_dir)
+                    log.warning(
+                        "run_tests: S32-A sin test files en %s — passed=True con warning",
+                        work_dir,
+                    )
                     passed = True
                     output = "[Sin test files encontrados en el workspace — convención test_*.py]"
                     cmd = []  # no ejecutar pytest
@@ -4670,10 +5786,16 @@ async def run_tests(state: OVDState) -> dict:
             # S43-D: flags extra desde _RUNNER_FLAGS (centralizados a nivel módulo)
             _tb_mode = "long" if retry_round > 0 else "short"
             _extra_flags = _RUNNER_FLAGS.get("pytest", [])
-            cmd = ([sys.executable, "-m", "pytest"] + _pytest_args
-                   + [f"--tb={_tb_mode}", f"--rootdir={work_dir}"]
-                   + _extra_flags
-                   ) if _pytest_args else []
+            cmd = (
+                (
+                    [sys.executable, "-m", "pytest"]
+                    + _pytest_args
+                    + [f"--tb={_tb_mode}", f"--rootdir={work_dir}"]
+                    + _extra_flags
+                )
+                if _pytest_args
+                else []
+            )
         elif runner == "vitest":
             cmd = ["npx", "vitest", "run"] + _RUNNER_FLAGS.get("vitest", [])
         elif runner == "cargo":
@@ -4701,7 +5823,10 @@ async def run_tests(state: OVDState) -> dict:
                             "Verificar que los archivos sigan convención test_*.py con funciones def test_*(). "
                             "Archivos en workspace: %s",
                             work_dir,
-                            [str(p.relative_to(work_dir)) for p in pathlib.Path(work_dir).rglob("*.py")][:10],
+                            [
+                                str(p.relative_to(work_dir))
+                                for p in pathlib.Path(work_dir).rglob("*.py")
+                            ][:10],
                         )
                     elif rc == 4:
                         # S57-B: exit 4 = USAGE_ERROR (flags inválidos o directorio inexistente)
@@ -4709,25 +5834,29 @@ async def run_tests(state: OVDState) -> dict:
                         log.warning(
                             "run_tests: S57-B pytest exit 4 (USAGE_ERROR) — "
                             "flags inválidos o directorio inexistente. cmd=%s output=%s",
-                            cmd, output[:300],
+                            cmd,
+                            output[:300],
                         )
                     elif rc == 2:
-                        log.warning("run_tests: pytest exit 2 — ejecución interrumpida. Output: %s", output[:200])
+                        log.warning(
+                            "run_tests: pytest exit 2 — ejecución interrumpida. Output: %s",
+                            output[:200],
+                        )
                 # S57-B: cuando rc==1, distinguir entre collection error e AssertionError
                 if rc == 1 and not passed:
-                    _is_collection_error = (
-                        "collected 0 items" in output and (
-                            "ImportError" in output
-                            or "ModuleNotFoundError" in output
-                            or "attempted relative import" in output
-                            or "ERROR" in output
-                        )
+                    _is_collection_error = "collected 0 items" in output and (
+                        "ImportError" in output
+                        or "ModuleNotFoundError" in output
+                        or "attempted relative import" in output
+                        or "ERROR" in output
                     )
                     if _is_collection_error:
                         # S57-B: verdadero collection error — extraer ImportError para feedback
                         _import_errors = [
-                            line for line in output.splitlines()
-                            if "ImportError" in line or "ModuleNotFoundError" in line
+                            line
+                            for line in output.splitlines()
+                            if "ImportError" in line
+                            or "ModuleNotFoundError" in line
                             or "attempted relative import" in line
                         ]
                         log.warning(
@@ -4735,7 +5864,7 @@ async def run_tests(state: OVDState) -> dict:
                             " | ".join(_import_errors[:3]),
                         )
                         output = (
-                            f"[DIAGNÓSTICO S57-B] Error de colección (ImportError/ModuleNotFoundError):\n"
+                            "[DIAGNÓSTICO S57-B] Error de colección (ImportError/ModuleNotFoundError):\n"
                             + "\n".join(_import_errors[:5])
                             + f"\n\n{_get_import_error_diagnosis(runner)}\n\n"
                             + output
@@ -4743,14 +5872,22 @@ async def run_tests(state: OVDState) -> dict:
                     else:
                         # S33-B: fallos de aserción — extraer AssertionError para diagnóstico
                         _assert_lines = [
-                            line for line in output.splitlines()
-                            if "AssertionError" in line or (line.strip().startswith("assert ") and "==" in line)
-                            or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
+                            line
+                            for line in output.splitlines()
+                            if "AssertionError" in line
+                            or (line.strip().startswith("assert ") and "==" in line)
+                            or (
+                                line.strip().startswith("E ")
+                                and ("assert" in line.lower() or "==" in line)
+                            )
                         ]
                         if _assert_lines:
-                            log.info("run_tests: S33-B AssertionError(s) detectados: %d líneas", len(_assert_lines))
+                            log.info(
+                                "run_tests: S33-B AssertionError(s) detectados: %d líneas",
+                                len(_assert_lines),
+                            )
                             output = (
-                                f"[DIAGNÓSTICO S33-B] Fallos de aserción detectados:\n"
+                                "[DIAGNÓSTICO S33-B] Fallos de aserción detectados:\n"
                                 + "\n".join(_assert_lines[:10])
                                 + "\n\n"
                                 + output
@@ -4758,7 +5895,7 @@ async def run_tests(state: OVDState) -> dict:
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.communicate()
-                output = f"[timeout después de 60s — tests interrumpidos]"
+                output = "[timeout después de 60s — tests interrumpidos]"
                 passed = False
     except FileNotFoundError:
         output = f"[runner '{runner}' no está instalado en el entorno]"
@@ -4769,19 +5906,25 @@ async def run_tests(state: OVDState) -> dict:
         passed = False
         log.warning("run_tests: error inesperado: %s", exc)
 
-    log.info("run_tests: runner=%s passed=%s retry_round=%d", runner, passed, retry_round)
+    log.info(
+        "run_tests: runner=%s passed=%s retry_round=%d", runner, passed, retry_round
+    )
 
     # S41.A4: indexar fallos de tests como lecciones (fire-and-forget, solo cuando falla)
     if not passed and output:
-        agent_names = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
-        asyncio.create_task(lessons.index_test_failure(
-            project_id=state.get("project_id", ""),
-            org_id=state.get("org_id", ""),
-            error_text=output,
-            runner=runner,
-            cycle_id=state.get("session_id", ""),
-            agent_names=agent_names,
-        ))
+        agent_names = [
+            r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")
+        ]
+        asyncio.create_task(
+            lessons.index_test_failure(
+                project_id=state.get("project_id", ""),
+                org_id=state.get("org_id", ""),
+                error_text=output,
+                runner=runner,
+                cycle_id=state.get("session_id", ""),
+                agent_names=agent_names,
+            )
+        )
 
     # S78-B + S79-A + S79-C: prefijar feedback de verificadores al output para update_test_retry
     _pre_feedback = ""
@@ -4794,7 +5937,9 @@ async def run_tests(state: OVDState) -> dict:
     if _pre_feedback:
         output = _pre_feedback + output
 
-    status_msg = f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
+    status_msg = (
+        f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
+    )
     return {
         "test_results": {
             "passed": passed,
@@ -4803,7 +5948,8 @@ async def run_tests(state: OVDState) -> dict:
             "retry_round": retry_round,
         },
         "status": "tests_done" if passed else "tests_failed",
-        "messages": state.get("messages", []) + [{"role": "agent", "content": status_msg}],
+        "messages": state.get("messages", [])
+        + [{"role": "agent", "content": status_msg}],
     }
 
 
@@ -4820,7 +5966,9 @@ def _route_after_tests(state: OVDState) -> str:
     retry_count = state.get("test_retry_count", 0)
     if retry_count < 2:
         return "test_retry"
-    log.warning("run_tests: max retries alcanzado, continuando con generate_docs (tests fallidos)")
+    log.warning(
+        "run_tests: max retries alcanzado, continuando con generate_docs (tests fallidos)"
+    )
     return "generate_docs"
 
 
@@ -4889,6 +6037,7 @@ def _detect_duplicate_functions(work_dir: str) -> str:
     Si el mismo nombre aparece en 2+ archivos distintos → duplicado.
     """
     import re as _re
+
     base = pathlib.Path(work_dir)
     if not base.exists():
         return ""
@@ -4917,7 +6066,9 @@ def _detect_duplicate_functions(work_dir: str) -> str:
     if not duplicates:
         return ""
 
-    lines = ["⚠️ FUNCIONES DUPLICADAS DETECTADAS (S42-D) — hay implementaciones conflictivas:"]
+    lines = [
+        "⚠️ FUNCIONES DUPLICADAS DETECTADAS (S42-D) — hay implementaciones conflictivas:"
+    ]
     for fn, paths in list(duplicates.items())[:5]:  # máx 5 para no inflar feedback
         lines.append(f"  - `{fn}` definida en: {', '.join(paths)}")
     lines.append(
@@ -4962,7 +6113,8 @@ def _cleanup_impl_files_from_prev_retry(
                         retry_paths.add(p.lstrip("/"))
         log.info(
             "run_tests: S60-C cleanup quirúrgico — agentes=%s, paths candidatos=%d",
-            agents_to_retry, len(retry_paths),
+            agents_to_retry,
+            len(retry_paths),
         )
 
     for fp in sorted(base.rglob("*.py")):
@@ -4975,7 +6127,10 @@ def _cleanup_impl_files_from_prev_retry(
         # S60-C: si hay lista de paths del retry, preservar archivos que NO están en ella
         if retry_paths:
             rel = str(fp.relative_to(base))
-            if not any(rel == rp or rel.startswith(rp.rsplit("/", 1)[0] + "/") for rp in retry_paths):
+            if not any(
+                rel == rp or rel.startswith(rp.rsplit("/", 1)[0] + "/")
+                for rp in retry_paths
+            ):
                 continue  # este archivo no pertenece al agente en retry — preservar
 
         try:
@@ -4992,16 +6147,20 @@ def _cleanup_impl_files_from_prev_retry(
     if removed:
         log.info(
             "run_tests: S42-B/S60-C cleanup previo a retry — eliminados %d archivo(s): %s",
-            len(removed), removed[:10],
+            len(removed),
+            removed[:10],
         )
 
 
 def _extract_assert_errors(output: str) -> list[str]:
     """S34: Extrae líneas de AssertionError / assert X == Y del output de pytest."""
     return [
-        line.strip() for line in output.splitlines()
+        line.strip()
+        for line in output.splitlines()
         if "AssertionError" in line
-        or (line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line))
+        or (
+            line.strip().startswith("E ") and ("assert" in line.lower() or "==" in line)
+        )
         or (line.strip().startswith("assert ") and "==" in line)
     ]
 
@@ -5022,7 +6181,9 @@ def _extract_failed_test_blocks(output: str) -> str:
                 block_lines.append(lines[i])
                 stripped = lines[i].strip()
                 # Detectar línea de aserción independiente del número de espacios
-                if (stripped.startswith("E") and "assert" in stripped.lower()) or "AssertionError" in lines[i]:
+                if (
+                    stripped.startswith("E") and "assert" in stripped.lower()
+                ) or "AssertionError" in lines[i]:
                     break
                 i += 1
             blocks.append("\n".join(block_lines))
@@ -5114,19 +6275,24 @@ def update_test_retry(state: OVDState) -> dict | Command:
     # S61-B: usa last_test_error (sin truncar) en vez de existing (truncado a 800 chars).
     _rc = tr.get("return_code", 0)
     _is_structural = (
-        ("ModuleNotFoundError" in test_output or "ImportError" in test_output)
-        and "collected 0 items" in test_output
-    )
+        "ModuleNotFoundError" in test_output or "ImportError" in test_output
+    ) and "collected 0 items" in test_output
     _last_test_error = state.get("last_test_error", "")
     _same_error_repeated = _is_structural and (
         "ModuleNotFoundError" in _last_test_error or "ImportError" in _last_test_error
     )
     if _same_error_repeated and retry_round >= 1:
-        _err_lines = [l for l in test_output.splitlines() if "ModuleNotFoundError" in l or "ImportError" in l][:3]
+        _err_lines = [
+            l
+            for l in test_output.splitlines()
+            if "ModuleNotFoundError" in l or "ImportError" in l
+        ][:3]
         log.warning(
             "update_test_retry: S60-B+S62-C error estructural repetido (rc=%d, ronda=%d) — "
             "Command(goto=generate_docs), saltando route_agents. Líneas: %s",
-            _rc, retry_round, _err_lines,
+            _rc,
+            retry_round,
+            _err_lines,
         )
         # S62-C: Command(goto=...) sobrescribe el edge test_retry → route_agents.
         # El grafo salta directamente a generate_docs sin despachar una ronda extra de agentes.
@@ -5136,13 +6302,16 @@ def update_test_retry(state: OVDState) -> dict | Command:
                 "retry_feedback": existing,
                 "selective_retry_agents": [],
                 "last_test_error": test_output if _is_structural else "",
-                "messages": state.get("messages", []) + [{
-                    "role": "agent",
-                    "content": (
-                        f"S60-B: Error estructural de imports (ronda {retry_round + 1}) — "
-                        "mismo error en rondas consecutivas. Pasando a generate_docs con diagnóstico."
-                    ),
-                }],
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": (
+                            f"S60-B: Error estructural de imports (ronda {retry_round + 1}) — "
+                            "mismo error en rondas consecutivas. Pasando a generate_docs con diagnóstico."
+                        ),
+                    }
+                ],
             },
             goto="generate_docs",
         )
@@ -5159,7 +6328,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
                 + "\nEsto indica un error en la fórmula o lógica matemática. "
                 "Revisa la implementación desde cero. No son los tests — el valor esperado ES correcto."
             )
-            log.warning("update_test_retry: S34-A error repetido detectado: %s", repeated[:2])
+            log.warning(
+                "update_test_retry: S34-A error repetido detectado: %s", repeated[:2]
+            )
 
     # S34-B: extraer bloque del test fallido para contexto
     failed_blocks = _extract_failed_test_blocks(test_output)
@@ -5172,9 +6343,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
     # Reducción: ~1500 chars de output → ~300 chars → total feedback 3000 → 800 chars.
     raw_snippet = test_output[:300] if not current_assert_errors else ""
     output_section = (
-        f"\nAssertionErrors:\n" + "\n".join(current_assert_errors[:5]) + "\n"
-        if current_assert_errors else
-        f"\nOutput (stderr):\n{raw_snippet}\n"
+        "\nAssertionErrors:\n" + "\n".join(current_assert_errors[:5]) + "\n"
+        if current_assert_errors
+        else f"\nOutput (stderr):\n{raw_snippet}\n"
     )
 
     # S42-D: detectar funciones duplicadas en el workspace
@@ -5183,12 +6354,16 @@ def update_test_retry(state: OVDState) -> dict | Command:
     if work_dir_for_dup:
         duplicate_hint = _detect_duplicate_functions(work_dir_for_dup)
         if duplicate_hint:
-            log.warning("update_test_retry: S42-D duplicados detectados en %s", work_dir_for_dup)
+            log.warning(
+                "update_test_retry: S42-D duplicados detectados en %s", work_dir_for_dup
+            )
 
     # S53-C: contrato inmutable de rutas de módulo — previene que el modelo cambie nombres entre rounds
     module_contract_hint = _build_module_contracts(state.get("agent_results", []))
     if module_contract_hint:
-        log.info("update_test_retry: S53-C contrato de módulos inyectado en retry_feedback")
+        log.info(
+            "update_test_retry: S53-C contrato de módulos inyectado en retry_feedback"
+        )
 
     # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
     _runner_for_msg = tr.get("runner", "")
@@ -5204,7 +6379,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
         + repeat_hint
     )
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
-    accumulated = _truncate(accumulated, 2000)  # S68-B: 800→2000 para preservar correcciones S65-A (10 imports × ~120 chars)
+    accumulated = _truncate(
+        accumulated, 2000
+    )  # S68-B: 800→2000 para preservar correcciones S65-A (10 imports × ~120 chars)
 
     # S54-D: loguear archivos físicos en disco antes del retry — diagnóstico de persistencia
     _work_dir = state.get("directory", "")
@@ -5213,11 +6390,14 @@ def update_test_retry(state: OVDState) -> dict | Command:
             _disk_files = sorted(
                 str(p.relative_to(pathlib.Path(_work_dir)))
                 for p in pathlib.Path(_work_dir).rglob("*.py")
-                if not any(x in str(p) for x in ("__pycache__", ".venv", ".pytest_cache"))
+                if not any(
+                    x in str(p) for x in ("__pycache__", ".venv", ".pytest_cache")
+                )
             )
             log.warning(
                 "S54-D update_test_retry: %d archivo(s) Python en disco antes del retry: %s",
-                len(_disk_files), _disk_files,
+                len(_disk_files),
+                _disk_files,
             )
             _src_files = [f for f in _disk_files if f.startswith("src/")]
             _test_files = [f for f in _disk_files if f.startswith("tests/")]
@@ -5235,7 +6415,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
 
     # S78-D: extraer archivos fallidos del output pytest para retry selectivo por archivo
     _re_failing = __import__("re")
-    _failing_files_pattern = _re_failing.compile(r'(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)')
+    _failing_files_pattern = _re_failing.compile(
+        r"(?:FAILED|ERROR)\s+((?:src|tests)/[\w/]+\.py)"
+    )
     _failing_files_s78d = list(set(_failing_files_pattern.findall(test_output or "")))
     if _failing_files_s78d and retry_round >= 1:
         log.warning(
@@ -5253,7 +6435,9 @@ def update_test_retry(state: OVDState) -> dict | Command:
             selective_agents,
         )
     else:
-        log.info("update_test_retry: S53-B no se pudo inferir agente fallido — re-ejecutando todos")
+        log.info(
+            "update_test_retry: S53-B no se pudo inferir agente fallido — re-ejecutando todos"
+        )
 
     # S61-B: guardar error sin truncar para que S60-B pueda detectar repetición en siguiente ronda
     # S68-A: incluir S65-A output (no contiene "collected 0 items" → _is_structural=False pero es loop)
@@ -5295,7 +6479,8 @@ def update_test_retry(state: OVDState) -> dict | Command:
             log.warning(
                 "update_test_retry: S63-B cleanup ANTES del retry — eliminados %d archivo(s) "
                 "del round anterior: %s",
-                len(_deleted_s63b), _deleted_s63b,
+                len(_deleted_s63b),
+                _deleted_s63b,
             )
 
     return {
@@ -5304,20 +6489,28 @@ def update_test_retry(state: OVDState) -> dict | Command:
         "selective_retry_agents": selective_agents,  # S53-B
         "last_test_error": _new_last_error,  # S61-B
         "status": "retrying_after_test_failure",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Tests fallidos (reintento {state.get('test_retry_count', 0) + 1}/2). "
-                f"Runner: {tr.get('runner', '?')}. "
-                + (f"Reintentando solo agente '{failing_agent}' (S53-B)..." if failing_agent else "Regenerando implementación con feedback de tests...")
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Tests fallidos (reintento {state.get('test_retry_count', 0) + 1}/2). "
+                    f"Runner: {tr.get('runner', '?')}. "
+                    + (
+                        f"Reintentando solo agente '{failing_agent}' (S53-B)..."
+                        if failing_agent
+                        else "Regenerando implementación con feedback de tests..."
+                    )
+                ),
+            }
+        ],
     }
 
 
 # ---------------------------------------------------------------------------
 # S22 — Nodo generate_docs: documentación automática post-QA
 # ---------------------------------------------------------------------------
+
 
 async def generate_docs(state: OVDState) -> dict:
     """S22 — Genera documentación técnica a partir del SDD y el código entregado.
@@ -5331,9 +6524,11 @@ async def generate_docs(state: OVDState) -> dict:
 
     Fallo graceful: si el LLM falla, retorna generated_docs=[] sin romper el ciclo.
     """
-    sdd          = state.get("sdd", {})
-    fr_type      = state.get("fr_analysis", {}).get("type", "feature")
-    agent_output = "\n\n".join(r.get("output", "") for r in state.get("agent_results", []))
+    sdd = state.get("sdd", {})
+    fr_type = state.get("fr_analysis", {}).get("type", "feature")
+    agent_output = "\n\n".join(
+        r.get("output", "") for r in state.get("agent_results", [])
+    )
     test_results = state.get("test_results", {})
 
     llm = await model_router.get_llm_with_context(
@@ -5349,7 +6544,9 @@ async def generate_docs(state: OVDState) -> dict:
     test_summary = ""
     if test_results:
         status = "PASARON" if test_results.get("passed") else "FALLARON"
-        test_summary = f"\nTests: {status} (runner: {test_results.get('runner', 'none')})\n"
+        test_summary = (
+            f"\nTests: {status} (runner: {test_results.get('runner', 'none')})\n"
+        )
 
     prompt_content = (
         f"SDD (resumen):\n{_truncate(sdd.get('summary', ''), 4000)}\n\n"
@@ -5369,31 +6566,44 @@ async def generate_docs(state: OVDState) -> dict:
             SystemMessage(content=system_prompt),
             HumanMessage(content=prompt_content),
         ]
-        response = await asyncio.wait_for(llm.ainvoke(messages), timeout=_DOCS_TIMEOUT)  # S41P.A
+        response = await asyncio.wait_for(
+            llm.ainvoke(messages), timeout=_DOCS_TIMEOUT
+        )  # S41P.A
         raw = response.content if hasattr(response, "content") else str(response)
 
         # Parsear bloques de documentación (mismo patrón que _write_artifacts)
         import re as _re
+
         pattern = _re.compile(r"```[\w+\-]*:([^\n`]+)\n(.*?)```", _re.DOTALL)
         docs = []
         for match in pattern.finditer(raw):
             rel_path = match.group(1).strip()
-            content  = match.group(2).strip()
+            content = match.group(2).strip()
             doc_type = (
-                "openapi"  if rel_path.endswith((".yaml", ".yml")) else
-                "adr"      if "adr" in rel_path.lower() else
-                "changelog" if "changelog" in rel_path.lower() else
-                "readme"
+                "openapi"
+                if rel_path.endswith((".yaml", ".yml"))
+                else "adr"
+                if "adr" in rel_path.lower()
+                else "changelog"
+                if "changelog" in rel_path.lower()
+                else "readme"
             )
             docs.append({"type": doc_type, "content": content, "path": rel_path})
 
-        log.info("generate_docs: %d documentos generados para FR tipo '%s'", len(docs), fr_type)
+        log.info(
+            "generate_docs: %d documentos generados para FR tipo '%s'",
+            len(docs),
+            fr_type,
+        )
     except Exception as exc:
-        log.warning("generate_docs: error generando docs (%s) — continuando sin docs", exc)
+        log.warning(
+            "generate_docs: error generando docs (%s) — continuando sin docs", exc
+        )
         docs = []
 
     msg = (
-        f"Documentación generada: {len(docs)} archivo(s)" if docs
+        f"Documentación generada: {len(docs)} archivo(s)"
+        if docs
         else "Documentación: no se pudo generar (ciclo continúa sin docs)"
     )
     return {
@@ -5408,6 +6618,7 @@ async def generate_docs(state: OVDState) -> dict:
 # ---------------------------------------------------------------------------
 
 import re as _re
+
 
 def _write_artifacts(
     agent_output: str,
@@ -5435,7 +6646,10 @@ def _write_artifacts(
 
     base = pathlib.Path(directory).expanduser().resolve()
     if not base.exists():
-        log.warning("_write_artifacts: directorio '%s' no existe, omitiendo escritura", directory)
+        log.warning(
+            "_write_artifacts: directorio '%s' no existe, omitiendo escritura",
+            directory,
+        )
         return []
 
     # Regex: ```lang:relative/path\n...content...\n```
@@ -5452,18 +6666,23 @@ def _write_artifacts(
             "_write_artifacts[%s]: 0 matches de regex en output de %d chars — "
             "posible truncación (num_ctx) o formato incorrecto (falta ruta en fence). "
             "Primeros 300 chars: %s",
-            agent, len(agent_output), agent_output[:300].replace("\n", "↵"),
+            agent,
+            len(agent_output),
+            agent_output[:300].replace("\n", "↵"),
         )
     for match in all_matches:
         rel_path = match.group(1).strip()
-        content  = match.group(2)
+        content = match.group(2)
 
         # Seguridad: no permitir rutas que escapen del directorio base
         target = (base / rel_path).resolve()
         try:
             target.relative_to(base)
         except ValueError:
-            log.warning("_write_artifacts: ruta '%s' escapa del directorio base, omitida", rel_path)
+            log.warning(
+                "_write_artifacts: ruta '%s' escapa del directorio base, omitida",
+                rel_path,
+            )
             continue
 
         lang = _re.match(r"```([\w+\-]*)", match.group(0))
@@ -5482,28 +6701,41 @@ def _write_artifacts(
                         log.warning(
                             "_write_artifacts[%s]: S55-B — '%s' ya existe (%d bytes), "
                             "nuevo contenido VACÍO — preservando archivo existente",
-                            agent, rel_path, existing_size,
+                            agent,
+                            rel_path,
+                            existing_size,
                         )
-                        written.append({"path": rel_path, "size": existing_size, "lang": lang_name})
+                        written.append(
+                            {"path": rel_path, "size": existing_size, "lang": lang_name}
+                        )
                         continue
                     elif new_size < existing_size // 2:
                         log.warning(
                             "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
                             "nuevo contenido (%d bytes) es <50%% del original — preservando",
-                            agent, rel_path, existing_size, new_size,
+                            agent,
+                            rel_path,
+                            existing_size,
+                            new_size,
                         )
-                        written.append({"path": rel_path, "size": existing_size, "lang": lang_name})
+                        written.append(
+                            {"path": rel_path, "size": existing_size, "lang": lang_name}
+                        )
                         continue
                     else:
                         log.warning(
                             "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
                             "sobreescribiendo con nuevo contenido (%d bytes)",
-                            agent, rel_path, existing_size, new_size,
+                            agent,
+                            rel_path,
+                            existing_size,
+                            new_size,
                         )
 
             # S72-B/C: post-procesar código Python antes de escribir al disco
             if rel_path.endswith(".py"):
                 from code_postprocessor import postprocess_python_file
+
                 content = postprocess_python_file(content, rel_path, work_dir=str(base))
 
             target.write_text(content, encoding="utf-8")
@@ -5511,26 +6743,35 @@ def _write_artifacts(
             if not target.exists():
                 log.error(
                     "_write_artifacts[%s]: VERIFICACIÓN FALLIDA — '%s' no existe en disco tras write_text",
-                    agent, rel_path,
+                    agent,
+                    rel_path,
                 )
             elif target.stat().st_size == 0 and content_bytes:
                 log.warning(
                     "_write_artifacts[%s]: archivo '%s' escrito pero 0 bytes en disco (content_len=%d)",
-                    agent, rel_path, len(content_bytes),
+                    agent,
+                    rel_path,
+                    len(content_bytes),
                 )
             else:
                 log.info(
                     "_write_artifacts[%s]: escrito %s (%d bytes) — verificado en disco ✓",
-                    agent, rel_path, len(content_bytes),
+                    agent,
+                    rel_path,
+                    len(content_bytes),
                 )
-            written.append({
-                "path": rel_path,
-                "size": len(content_bytes),
-                "lang": lang_name,
-                "content": content,  # S84-B: necesario para _build_dependency_context (S83-F)
-            })
+            written.append(
+                {
+                    "path": rel_path,
+                    "size": len(content_bytes),
+                    "lang": lang_name,
+                    "content": content,  # S84-B: necesario para _build_dependency_context (S83-F)
+                }
+            )
         except OSError as e:
-            log.warning("_write_artifacts[%s]: no se pudo escribir '%s': %s", agent, rel_path, e)
+            log.warning(
+                "_write_artifacts[%s]: no se pudo escribir '%s': %s", agent, rel_path, e
+            )
 
     return written
 
@@ -5538,6 +6779,7 @@ def _write_artifacts(
 # ---------------------------------------------------------------------------
 # S22 — Security scanning CLI (previo al LLM review en security_audit)
 # ---------------------------------------------------------------------------
+
 
 async def _exec_scan_tool(cmd: list[str], timeout: int = 30) -> str:
     """Ejecuta una CLI de security scanning y retorna stdout+stderr.
@@ -5605,45 +6847,73 @@ async def _run_security_scans(agent_results: list[dict], directory: str) -> dict
         ["semgrep", "--config=auto", "--json", "--no-git-ignore", work_dir],
         timeout=60,
     )
-    if semgrep_out and semgrep_out != f"[timeout después de 60s]":
+    if semgrep_out and semgrep_out != "[timeout después de 60s]":
         results["tools_run"].append("semgrep")
         try:
             import json as _json
+
             sg = _json.loads(semgrep_out)
             for r in sg.get("results", []):
                 sev = r.get("extra", {}).get("severity", "WARNING").upper()
-                results["findings"].append({
-                    "tool": "semgrep",
-                    "severity": sev,
-                    "message": f"{r.get('check_id', '')}: {r.get('extra', {}).get('message', '')} [{r.get('path', '')}:{r.get('start', {}).get('line', '?')}]",
-                })
+                results["findings"].append(
+                    {
+                        "tool": "semgrep",
+                        "severity": sev,
+                        "message": f"{r.get('check_id', '')}: {r.get('extra', {}).get('message', '')} [{r.get('path', '')}:{r.get('start', {}).get('line', '?')}]",
+                    }
+                )
                 if sev in ("ERROR", "CRITICAL"):
                     results["blocked"] = True
         except Exception:
             if semgrep_out.strip():
-                results["findings"].append({"tool": "semgrep", "severity": "INFO", "message": semgrep_out[:500]})
+                results["findings"].append(
+                    {
+                        "tool": "semgrep",
+                        "severity": "INFO",
+                        "message": semgrep_out[:500],
+                    }
+                )
 
     # 2. Secretos — gitleaks
     gitleaks_out = await _exec_scan_tool(
-        ["gitleaks", "detect", "--source", work_dir, "--no-git", "--exit-code", "0", "--report-format", "json"],
+        [
+            "gitleaks",
+            "detect",
+            "--source",
+            work_dir,
+            "--no-git",
+            "--exit-code",
+            "0",
+            "--report-format",
+            "json",
+        ],
         timeout=30,
     )
-    if gitleaks_out and gitleaks_out != f"[timeout después de 30s]":
+    if gitleaks_out and gitleaks_out != "[timeout después de 30s]":
         results["tools_run"].append("gitleaks")
         try:
             import json as _json
+
             leaks = _json.loads(gitleaks_out)
             if isinstance(leaks, list):
                 for leak in leaks:
-                    results["findings"].append({
-                        "tool": "gitleaks",
-                        "severity": "CRITICAL",
-                        "message": f"Secreto detectado: {leak.get('Description', '')} en {leak.get('File', '')}:{leak.get('StartLine', '?')}",
-                    })
+                    results["findings"].append(
+                        {
+                            "tool": "gitleaks",
+                            "severity": "CRITICAL",
+                            "message": f"Secreto detectado: {leak.get('Description', '')} en {leak.get('File', '')}:{leak.get('StartLine', '?')}",
+                        }
+                    )
                     results["blocked"] = True
         except Exception:
             if gitleaks_out.strip():
-                results["findings"].append({"tool": "gitleaks", "severity": "INFO", "message": gitleaks_out[:500]})
+                results["findings"].append(
+                    {
+                        "tool": "gitleaks",
+                        "severity": "INFO",
+                        "message": gitleaks_out[:500],
+                    }
+                )
 
     # 3. Dependencias — pip-audit (si hay requirements.txt o pyproject.toml)
     has_py_deps = any(
@@ -5651,20 +6921,29 @@ async def _run_security_scans(agent_results: list[dict], directory: str) -> dict
         for f in ["requirements.txt", "pyproject.toml", "requirements-dev.txt"]
     )
     if has_py_deps:
-        pip_out = await _exec_scan_tool(["pip-audit", "--json", "-r", f"{work_dir}/requirements.txt"], timeout=60)
+        pip_out = await _exec_scan_tool(
+            ["pip-audit", "--json", "-r", f"{work_dir}/requirements.txt"], timeout=60
+        )
         if pip_out:
             results["tools_run"].append("pip-audit")
             try:
                 import json as _json
+
                 audit = _json.loads(pip_out)
                 for dep in audit.get("dependencies", []):
                     for vuln in dep.get("vulns", []):
-                        sev = vuln.get("aliases", [""])[0] if vuln.get("aliases") else "CVE"
-                        results["findings"].append({
-                            "tool": "pip-audit",
-                            "severity": "HIGH",
-                            "message": f"{dep.get('name')}: {vuln.get('id', '')} — {vuln.get('description', '')[:200]}",
-                        })
+                        sev = (
+                            vuln.get("aliases", [""])[0]
+                            if vuln.get("aliases")
+                            else "CVE"
+                        )
+                        results["findings"].append(
+                            {
+                                "tool": "pip-audit",
+                                "severity": "HIGH",
+                                "message": f"{dep.get('name')}: {vuln.get('id', '')} — {vuln.get('description', '')[:200]}",
+                            }
+                        )
                         if "CRITICAL" in str(vuln).upper():
                             results["blocked"] = True
             except Exception:
@@ -5672,7 +6951,9 @@ async def _run_security_scans(agent_results: list[dict], directory: str) -> dict
 
     log.info(
         "_run_security_scans: tools=%s findings=%d blocked=%s",
-        results["tools_run"], len(results["findings"]), results["blocked"],
+        results["tools_run"],
+        len(results["findings"]),
+        results["blocked"],
     )
     return results
 
@@ -5680,6 +6961,7 @@ async def _run_security_scans(agent_results: list[dict], directory: str) -> dict
 # ---------------------------------------------------------------------------
 # S22 — Detección de runner de tests y ejecución
 # ---------------------------------------------------------------------------
+
 
 def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str | None:
     """Detecta el runner de tests apropiado según las extensiones de los archivos generados.
@@ -5699,20 +6981,31 @@ def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str |
     # Es más fiable que depender del tracking de tool calls o del output del LLM.
     if directory:
         import pathlib as _pl
+
         base = _pl.Path(directory).expanduser().resolve()
         if base.exists():
             _skip = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
+
             def _safe_rglob(pattern: str) -> list:
                 return [
-                    p for p in base.rglob(pattern)
+                    p
+                    for p in base.rglob(pattern)
                     if not any(part in _skip for part in p.parts)
                 ]
+
             py_tests = _safe_rglob("test_*.py") + _safe_rglob("*_test.py")
-            ts_tests = _safe_rglob("*.test.ts") + _safe_rglob("*.spec.ts") + \
-                       _safe_rglob("*.test.tsx") + _safe_rglob("*.spec.tsx")
+            ts_tests = (
+                _safe_rglob("*.test.ts")
+                + _safe_rglob("*.spec.ts")
+                + _safe_rglob("*.test.tsx")
+                + _safe_rglob("*.spec.tsx")
+            )
             rs_files = _safe_rglob("*.rs")
             if py_tests:
-                log.debug("_detect_test_runner: pytest detectado via filesystem — %s", py_tests[:3])
+                log.debug(
+                    "_detect_test_runner: pytest detectado via filesystem — %s",
+                    py_tests[:3],
+                )
                 return "pytest"
             if ts_tests:
                 return "vitest"
@@ -5721,9 +7014,15 @@ def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str |
 
     # Fallback: artifacts[] del agente y fences en output (sin directory)
     def _classify(paths: list[str]) -> str | None:
-        if any(("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py") for p in paths):
+        if any(
+            ("test_" in p or "_test." in p or "/test" in p) and p.endswith(".py")
+            for p in paths
+        ):
             return "pytest"
-        if any(("test." in p or "spec." in p) and (p.endswith(".ts") or p.endswith(".tsx")) for p in paths):
+        if any(
+            ("test." in p or "spec." in p) and (p.endswith(".ts") or p.endswith(".tsx"))
+            for p in paths
+        ):
             return "vitest"
         if any(p.endswith(".rs") for p in paths):
             return "cargo"
@@ -5748,17 +7047,22 @@ async def _index_delivery_report(state: dict, report_file: str) -> None:
     Respeta OVD_RAG_ENABLED=false para entornos sin Bridge activo.
     """
     import os
+
     if os.getenv("OVD_RAG_ENABLED", "true").lower() == "false":
         return
     try:
         import pathlib
         import sys as _sys
+
         # S27-C: asegurar que src/ esté en sys.path para resolver el módulo 'knowledge'
         _knowledge_parent = str(pathlib.Path(__file__).parent.parent)
         if _knowledge_parent not in _sys.path:
             _sys.path.insert(0, _knowledge_parent)
         from knowledge import bootstrap
-        bridge_url = os.getenv("OVD_BRIDGE_URL", state.get("bridge_url", "http://localhost:3000"))
+
+        bridge_url = os.getenv(
+            "OVD_BRIDGE_URL", state.get("bridge_url", "http://localhost:3000")
+        )
         await bootstrap.run(
             org_id=state.get("org_id", ""),
             project_id=state.get("project_id", ""),
@@ -5786,46 +7090,61 @@ def _generate_delivery_report(
     Archivo: {directory}/ovd-delivery-{session_id[:8]}-{timestamp}.md
     Retorna la ruta relativa del informe generado, o "" si no se pudo escribir.
     """
-    directory  = state.get("directory", "")
+    directory = state.get("directory", "")
     session_id = state.get("session_id", "unknown")
-    sdd        = state.get("sdd", {})
-    security   = state.get("security_result", {})
-    qa         = state.get("qa_result", {})
-    fr         = state.get("feature_request", "")
+    sdd = state.get("sdd", {})
+    security = state.get("security_result", {})
+    qa = state.get("qa_result", {})
+    fr = state.get("feature_request", "")
 
-    reqs  = sdd.get("requirements", [])
+    reqs = sdd.get("requirements", [])
     tasks = sdd.get("tasks", [])
-    cons  = sdd.get("constraints", [])
+    cons = sdd.get("constraints", [])
 
     # --- Construir secciones ---
-    req_lines  = "\n".join(
-        f"| {r.get('id','?')} | {r.get('priority','?')} | {r.get('description','?')} |"
-        if isinstance(r, dict) else f"| ? | ? | {r} |"
+    req_lines = "\n".join(
+        f"| {r.get('id', '?')} | {r.get('priority', '?')} | {r.get('description', '?')} |"
+        if isinstance(r, dict)
+        else f"| ? | ? | {r} |"
         for r in reqs
     )
     task_lines = "\n".join(
-        f"| {t.get('id','?')} | {t.get('agent','?')} | {t.get('complexity','?')} | {t.get('description','?')} |"
-        if isinstance(t, dict) else f"| ? | ? | ? | {t} |"
+        f"| {t.get('id', '?')} | {t.get('agent', '?')} | {t.get('complexity', '?')} | {t.get('description', '?')} |"
+        if isinstance(t, dict)
+        else f"| ? | ? | ? | {t} |"
         for t in tasks
     )
-    con_lines  = "\n".join(
-        f"| {c.get('id','?')} | {c.get('type','?')} | {c.get('description','?')} |"
-        if isinstance(c, dict) else f"| ? | ? | {c} |"
+    con_lines = "\n".join(
+        f"| {c.get('id', '?')} | {c.get('type', '?')} | {c.get('description', '?')} |"
+        if isinstance(c, dict)
+        else f"| ? | ? | {c} |"
         for c in cons
     )
 
     impl_sections = []
     for d in deliverables:
         if d.get("type") == "implementation":
-            agent    = d.get("agent", "?")
-            files    = d.get("artifacts", [])
-            file_list = "\n".join(f"  - `{f['path']}` ({f.get('size', 0)} bytes)" for f in files) or "  _(sin archivos detectados)_"
+            agent = d.get("agent", "?")
+            files = d.get("artifacts", [])
+            file_list = (
+                "\n".join(
+                    f"  - `{f['path']}` ({f.get('size', 0)} bytes)" for f in files
+                )
+                or "  _(sin archivos detectados)_"
+            )
             impl_sections.append(f"### Agente: {agent}\n{file_list}")
 
     # OB-02: YAML frontmatter para búsqueda semántica y filtros en RAG/Obsidian
-    agents_used = [d.get("agent", "?") for d in deliverables if d.get("type") == "implementation"]
-    files_count = sum(len(d.get("artifacts", [])) for d in deliverables if d.get("type") == "implementation")
+    agents_used = [
+        d.get("agent", "?") for d in deliverables if d.get("type") == "implementation"
+    ]
+    files_count = sum(
+        len(d.get("artifacts", []))
+        for d in deliverables
+        if d.get("type") == "implementation"
+    )
     import datetime as _dt
+
     date_str = _dt.date.today().isoformat()
     fr_short = fr.replace('"', "'").replace("\n", " ")[:200]
 
@@ -5834,12 +7153,12 @@ session_id: "{session_id}"
 date: "{date_str}"
 feature_request: "{fr_short}"
 provider: "{provider}"
-security_score: {security.get('score', 0)}
-security_passed: {str(security.get('passed', False)).lower()}
-security_severity: "{security.get('severity', 'none')}"
-qa_score: {qa.get('score', 0)}
-qa_passed: {str(qa.get('passed', False)).lower()}
-sdd_compliance: {str(qa.get('sdd_compliance', False)).lower()}
+security_score: {security.get("score", 0)}
+security_passed: {str(security.get("passed", False)).lower()}
+security_severity: "{security.get("severity", "none")}"
+qa_score: {qa.get("score", 0)}
+qa_passed: {str(qa.get("passed", False)).lower()}
+sdd_compliance: {str(qa.get("sdd_compliance", False)).lower()}
 agents: [{", ".join(f'"{a}"' for a in agents_used)}]
 files: {files_count}
 tokens_in: {total_in}
@@ -5848,7 +7167,9 @@ cost_usd: {cost_usd:.4f}
 ---
 """
 
-    report = frontmatter + f"""# Informe de Entrega OVD
+    report = (
+        frontmatter
+        + f"""# Informe de Entrega OVD
 **Ciclo:** `{session_id}`
 **Feature Request:** {fr}
 **Duración:** {elapsed_str} | **Costo estimado:** ${cost_usd:.4f} ({provider})
@@ -5857,42 +7178,43 @@ cost_usd: {cost_usd:.4f}
 ---
 
 ## SDD — Resumen
-{sdd.get('summary', '_Sin resumen_')}
+{sdd.get("summary", "_Sin resumen_")}
 
 ## Requisitos ({len(reqs)})
 | ID | Prioridad | Descripción |
 |----|-----------|-------------|
-{req_lines or '_Sin requisitos_'}
+{req_lines or "_Sin requisitos_"}
 
 ## Tareas ({len(tasks)})
 | ID | Agente | Complejidad | Descripción |
 |----|--------|-------------|-------------|
-{task_lines or '_Sin tareas_'}
+{task_lines or "_Sin tareas_"}
 
 ## Restricciones ({len(cons)})
 | ID | Tipo | Descripción |
 |----|------|-------------|
-{con_lines or '_Sin restricciones_'}
+{con_lines or "_Sin restricciones_"}
 
 ---
 
 ## Resultados de Auditoría
 | Métrica | Valor |
 |---------|-------|
-| Security Score | {security.get('score', '?')}/100 |
-| Security Passed | {'✅' if security.get('passed') else '❌'} |
-| QA Score | {qa.get('score', '?')}/100 |
-| QA Passed | {'✅' if qa.get('passed') else '❌'} |
-| SDD Compliance | {'✅' if qa.get('sdd_compliance') else '❌'} |
+| Security Score | {security.get("score", "?")}/100 |
+| Security Passed | {"✅" if security.get("passed") else "❌"} |
+| QA Score | {qa.get("score", "?")}/100 |
+| QA Passed | {"✅" if qa.get("passed") else "❌"} |
+| SDD Compliance | {"✅" if qa.get("sdd_compliance") else "❌"} |
 
 ---
 
 ## Archivos Generados
-{"".join(chr(10) + s for s in impl_sections) or '_Sin archivos generados_'}
+{"".join(chr(10) + s for s in impl_sections) or "_Sin archivos generados_"}
 
 ---
 _Generado por OVD Platform · Omar Robles_
 """
+    )
 
     if not directory:
         return ""
@@ -5912,8 +7234,9 @@ _Generado por OVD Platform · Omar Robles_
         return ""
 
 
-async def _git_integration(directory: str, session_id: str, feature_request: str,
-                           written_files: list[str]) -> dict:
+async def _git_integration(
+    directory: str, session_id: str, feature_request: str, written_files: list[str]
+) -> dict:
     """
     S6.A: Detecta si el directorio es un repo git, crea branch ovd/{session_id[:12]}.
     S6.B: git add de los artefactos escritos + commit con mensaje estándar OVD.
@@ -5930,10 +7253,16 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
 
     Falla silenciosamente — nunca interrumpe el ciclo OVD.
     """
-    import subprocess
     import os as _os2
+    import subprocess
 
-    result = {"enabled": False, "branch": None, "commit": None, "pr_url": None, "error": None}
+    result = {
+        "enabled": False,
+        "branch": None,
+        "commit": None,
+        "pr_url": None,
+        "error": None,
+    }
 
     if not directory or not written_files:
         return result
@@ -5946,7 +7275,8 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
         return subprocess.run(
             ["git", *args],
             cwd=str(base),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             timeout=30,
             **kwargs,
         )
@@ -5986,9 +7316,11 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
         if commit.returncode == 0:
             sha = git("rev-parse", "--short", "HEAD")
             result["commit"] = sha.stdout.strip() if sha.returncode == 0 else None
-            log.info("_git_integration: commit %s — '%s'", result['commit'], commit_msg)
+            log.info("_git_integration: commit %s — '%s'", result["commit"], commit_msg)
         else:
-            log.warning("_git_integration: commit vacío o fallido: %s", commit.stderr[:200])
+            log.warning(
+                "_git_integration: commit vacío o fallido: %s", commit.stderr[:200]
+            )
     except Exception as e:
         result["error"] = f"S6.B commit: {e}"
         log.warning("_git_integration: error en commit: %s", e)
@@ -6004,7 +7336,10 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
         remote_url = remote.stdout.strip()
         # Extraer owner/repo de URLs SSH o HTTPS
         import re as _re3
-        gh_match = _re3.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", remote_url)
+
+        gh_match = _re3.search(
+            r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", remote_url
+        )
         if not gh_match:
             log.info("_git_integration: remote no es GitHub, omitiendo PR")
             return result
@@ -6018,7 +7353,10 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
             return result
 
         # Obtener rama base (default branch del repo)
-        import urllib.request, urllib.error, json as _json3
+        import json as _json3
+        import urllib.error
+        import urllib.request
+
         headers = {
             "Authorization": f"Bearer {github_pat}",
             "Accept": "application/vnd.github+json",
@@ -6045,12 +7383,14 @@ async def _git_integration(directory: str, session_id: str, feature_request: str
             repo_info = _json3.loads(resp.read())
         base_branch = repo_info.get("default_branch", "main")
 
-        pr_data = _json3.dumps({
-            "title": pr_title,
-            "body": pr_body,
-            "head": branch_name,
-            "base": base_branch,
-        }).encode()
+        pr_data = _json3.dumps(
+            {
+                "title": pr_title,
+                "body": pr_body,
+                "head": branch_name,
+                "base": base_branch,
+            }
+        ).encode()
 
         pr_req = urllib.request.Request(
             f"https://api.github.com/repos/{owner}/{repo}/pulls",
@@ -6087,17 +7427,19 @@ async def deliver(state: OVDState) -> dict:
     # Artefacto SDD (GAP-007): los 4 artefactos separados como entregable de especificacion
     sdd = state.get("sdd", {})
     if sdd:
-        deliverables.append({
-            "type": "sdd",
-            "agent": "architect",
-            "summary": sdd.get("summary", ""),
-            "artifacts": {
-                "requirements": sdd.get("requirements", []),
-                "design": sdd.get("design", {}),
-                "constraints": sdd.get("constraints", []),
-                "tasks": sdd.get("tasks", []),
-            },
-        })
+        deliverables.append(
+            {
+                "type": "sdd",
+                "agent": "architect",
+                "summary": sdd.get("summary", ""),
+                "artifacts": {
+                    "requirements": sdd.get("requirements", []),
+                    "design": sdd.get("design", {}),
+                    "constraints": sdd.get("constraints", []),
+                    "tasks": sdd.get("tasks", []),
+                },
+            }
+        )
 
     # Artefactos de implementacion de cada agente — S16T.A: escribir archivos al disco
     directory = state.get("directory", "")
@@ -6108,25 +7450,37 @@ async def deliver(state: OVDState) -> dict:
         # Merging: kept results first, then replace with current if same agent
         _current_agents = {r.get("agent") for r in _current}
         _merged = [r for r in _kept if r.get("agent") not in _current_agents] + _current
-        log.info("deliver: S61-D fusionando %d resultado(s) preservados + %d actuales = %d total",
-                 len(_kept), len(_current), len(_merged))
+        log.info(
+            "deliver: S61-D fusionando %d resultado(s) preservados + %d actuales = %d total",
+            len(_kept),
+            len(_current),
+            len(_merged),
+        )
     else:
         _merged = _current
     for result in _merged:
-        agent_name       = result.get("agent", "unknown")
-        agent_output     = result.get("output", "")
-        existing_arts    = result.get("artifacts", [])
+        agent_name = result.get("agent", "unknown")
+        agent_output = result.get("output", "")
+        existing_arts = result.get("artifacts", [])
         # S23-A: si el agente usó tool calling (artifacts ya en disco), no re-parsear output
         if existing_arts and directory:
             written = existing_arts
-            log.debug("deliver: agente '%s' usó tool calling — %d archivos ya en disco", agent_name, len(written))
+            log.debug(
+                "deliver: agente '%s' usó tool calling — %d archivos ya en disco",
+                agent_name,
+                len(written),
+            )
         else:
             written = _write_artifacts(agent_output, directory, agent_name)
             # S24-A: último fallback — escanear workspace si output vacío y nada fue escrito
             if not written and directory and not agent_output:
                 written = _scan_workspace_artifacts(directory)
                 if written:
-                    log.info("deliver: S24-A scan encontró %d archivo(s) no trackeados para agente '%s'", len(written), agent_name)
+                    log.info(
+                        "deliver: S24-A scan encontró %d archivo(s) no trackeados para agente '%s'",
+                        len(written),
+                        agent_name,
+                    )
         # S50-B: deduplicar artefactos por path — cuando S39-D ejecuta N tareas vía runner,
         # cada tarea puede generar el mismo archivo. Mantener solo la última versión de cada path.
         seen_paths: dict[str, dict] = {}
@@ -6134,13 +7488,20 @@ async def deliver(state: OVDState) -> dict:
             seen_paths[art.get("path", art.get("lang", id(art)))] = art
         written_dedup = list(seen_paths.values())
         if len(written_dedup) < len(written):
-            log.info("S50-B: deduplicados %d → %d artefactos para agente '%s'", len(written), len(written_dedup), agent_name)
-        deliverables.append({
-            "type": "implementation",
-            "agent": agent_name,
-            "content": agent_output,
-            "artifacts": written_dedup,  # [{path, size, lang}] escritos al disco, sin duplicados
-        })
+            log.info(
+                "S50-B: deduplicados %d → %d artefactos para agente '%s'",
+                len(written),
+                len(written_dedup),
+                agent_name,
+            )
+        deliverables.append(
+            {
+                "type": "implementation",
+                "agent": agent_name,
+                "content": agent_output,
+                "artifacts": written_dedup,  # [{path, size, lang}] escritos al disco, sin duplicados
+            }
+        )
 
     # S22 — Artefactos de documentación generados por generate_docs
     if directory:
@@ -6152,49 +7513,75 @@ async def deliver(state: OVDState) -> dict:
                 continue
             target = (base_path / doc_path).resolve()
             try:
-                target.relative_to(base_path)  # seguridad: no escapar del directorio base
+                target.relative_to(
+                    base_path
+                )  # seguridad: no escapar del directorio base
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(doc_content, encoding="utf-8")
-                deliverables.append({
-                    "type": "docs",
-                    "agent": "docs",
-                    "path": doc_path,
-                    "doc_type": doc.get("type", "readme"),
-                    "artifacts": [{"path": doc_path, "size": len(doc_content.encode("utf-8")), "lang": "markdown"}],
-                })
-                log.info("deliver: doc escrito: %s (%d bytes)", doc_path, len(doc_content.encode("utf-8")))
+                deliverables.append(
+                    {
+                        "type": "docs",
+                        "agent": "docs",
+                        "path": doc_path,
+                        "doc_type": doc.get("type", "readme"),
+                        "artifacts": [
+                            {
+                                "path": doc_path,
+                                "size": len(doc_content.encode("utf-8")),
+                                "lang": "markdown",
+                            }
+                        ],
+                    }
+                )
+                log.info(
+                    "deliver: doc escrito: %s (%d bytes)",
+                    doc_path,
+                    len(doc_content.encode("utf-8")),
+                )
             except (ValueError, OSError) as e:
                 log.warning("deliver: no se pudo escribir doc '%s': %s", doc_path, e)
 
     # P3.A — Costo estimado (cached — sin llamada de red)
-    org_id      = state.get("org_id", "")
-    project_id  = state.get("project_id", "")
-    jwt_token   = state.get("jwt_token", "")
-    rep_config  = await model_router.resolve("backend", org_id, project_id, jwt_token)
+    org_id = state.get("org_id", "")
+    project_id = state.get("project_id", "")
+    jwt_token = state.get("jwt_token", "")
+    rep_config = await model_router.resolve("backend", org_id, project_id, jwt_token)
     token_usage = state.get("token_usage", {})
-    cost_usd    = _estimate_cost(token_usage, rep_config.provider)
-    total_in    = sum(v.get("input", 0)  for v in token_usage.values() if isinstance(v, dict))
-    total_out   = sum(v.get("output", 0) for v in token_usage.values() if isinstance(v, dict))
+    cost_usd = _estimate_cost(token_usage, rep_config.provider)
+    total_in = sum(
+        v.get("input", 0) for v in token_usage.values() if isinstance(v, dict)
+    )
+    total_out = sum(
+        v.get("output", 0) for v in token_usage.values() if isinstance(v, dict)
+    )
 
     # P5.C — Duración del ciclo
     elapsed_secs = time.time() - state.get("cycle_start_ts", time.time())
-    elapsed_str  = f"{int(elapsed_secs // 60)}m {int(elapsed_secs % 60)}s"
+    elapsed_str = f"{int(elapsed_secs // 60)}m {int(elapsed_secs % 60)}s"
 
     # P4.C — Incluir resultados de auditoría en el payload de entrega
     security_result = state.get("security_result", {})
-    qa_result       = state.get("qa_result", {})
+    qa_result = state.get("qa_result", {})
 
     # S16T.B — Generar informe de entrega Markdown en el directorio del workspace
     report_file = _generate_delivery_report(
-        state, deliverables, cost_usd, elapsed_str, total_in, total_out, rep_config.provider
+        state,
+        deliverables,
+        cost_usd,
+        elapsed_str,
+        total_in,
+        total_out,
+        rep_config.provider,
     )
     if report_file:
-        deliverables.append({
-            "type": "report",
-            "agent": "ovd",
-            "path": report_file,
-            "artifacts": [],
-        })
+        deliverables.append(
+            {
+                "type": "report",
+                "agent": "ovd",
+                "path": report_file,
+                "artifacts": [],
+            }
+        )
 
     # S6.A+B+C — Git integration: branch + commit + PR (fire-and-forget, no bloquea entrega)
     all_written = [
@@ -6204,53 +7591,64 @@ async def deliver(state: OVDState) -> dict:
         for f in d.get("artifacts", [])
     ]
     if all_written:
-        asyncio.create_task(_git_integration(
-            directory=state.get("directory", ""),
-            session_id=state.get("session_id", ""),
-            feature_request=state.get("feature_request", ""),
-            written_files=all_written,
-        ))
+        asyncio.create_task(
+            _git_integration(
+                directory=state.get("directory", ""),
+                session_id=state.get("session_id", ""),
+                feature_request=state.get("feature_request", ""),
+                written_files=all_written,
+            )
+        )
 
     # P4.B — Exportar ciclo completo a JSONL para fine-tuning
-    _export_finetune_record(state, deliverables, rep_config.provider, cost_usd, elapsed_secs)
+    _export_finetune_record(
+        state, deliverables, rep_config.provider, cost_usd, elapsed_secs
+    )
 
     # RAG-02 — Indexar informe de entrega en RAG (fire-and-forget)
     if report_file:
         asyncio.create_task(_index_delivery_report(state, report_file))
 
     # S41.A5 — Indexar post-mortem del ciclo como lección (fire-and-forget)
-    _agent_names_deliver = [r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")]
-    asyncio.create_task(lessons.index_cycle_postmortem(
-        project_id=state.get("project_id", ""),
-        org_id=state.get("org_id", ""),
-        cycle_id=state.get("session_id", ""),
-        agent_names=_agent_names_deliver,
-        qa_score=qa_result.get("score", 0),
-        security_score=security_result.get("score", 0),
-        tests_passed=state.get("test_results", {}).get("passed", False),
-        retry_counts={
-            "security": state.get("security_retry_count", 0),
-            "qa": state.get("qa_retry_count", 0),
-            "tests": state.get("test_retry_count", 0),
-        },
-    ))
+    _agent_names_deliver = [
+        r.get("agent", "") for r in state.get("agent_results", []) if r.get("agent")
+    ]
+    asyncio.create_task(
+        lessons.index_cycle_postmortem(
+            project_id=state.get("project_id", ""),
+            org_id=state.get("org_id", ""),
+            cycle_id=state.get("session_id", ""),
+            agent_names=_agent_names_deliver,
+            qa_score=qa_result.get("score", 0),
+            security_score=security_result.get("score", 0),
+            tests_passed=state.get("test_results", {}).get("passed", False),
+            retry_counts={
+                "security": state.get("security_retry_count", 0),
+                "qa": state.get("qa_retry_count", 0),
+                "tests": state.get("test_retry_count", 0),
+            },
+        )
+    )
 
     # N1.B — publicar evento done con artefactos completos para RAG
     await nats_client.publish_done(state, elapsed_secs, cost_usd)
 
     # Sprint 10 — span de cierre del ciclo con métricas completas
     async with telemetry.node_span("deliver", state) as span:
-        span.set_attributes({
-            "ovd.deliverables_count": len(deliverables),
-            "ovd.elapsed_secs":       round(elapsed_secs, 2),
-            "ovd.cost_usd":           cost_usd,
-        })
+        span.set_attributes(
+            {
+                "ovd.deliverables_count": len(deliverables),
+                "ovd.elapsed_secs": round(elapsed_secs, 2),
+                "ovd.cost_usd": cost_usd,
+            }
+        )
         telemetry.record_token_usage(span, token_usage)
         telemetry.record_qa_result(span, qa_result)
         telemetry.record_security_result(span, security_result)
 
     # Sprint 10 — audit log de ciclo completado (fire-and-forget)
     from audit_logger import AuditLogger
+
     qa_score = qa_result.get("score")
     await AuditLogger.cycle_completed(
         org_id=state.get("org_id", ""),
@@ -6269,8 +7667,8 @@ async def deliver(state: OVDState) -> dict:
     if _db_url:
         try:
             _fr_analysis_p = state.get("fr_analysis", {})
-            _qa_result_p   = state.get("qa_result", {})
-            _session_id_p  = state.get("session_id", "")
+            _qa_result_p = state.get("qa_result", {})
+            _session_id_p = state.get("session_id", "")
             async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
                 await _conn.execute(
                     """
@@ -6300,7 +7698,8 @@ async def deliver(state: OVDState) -> dict:
                         str(uuid.uuid4()),
                         state.get("org_id", ""),
                         state.get("project_id") or None,
-                        _session_id_p, _session_id_p,
+                        _session_id_p,
+                        _session_id_p,
                         state.get("feature_request", ""),
                         _json.dumps(_fr_analysis_p),
                         _json.dumps(state.get("sdd", {})),
@@ -6310,13 +7709,17 @@ async def deliver(state: OVDState) -> dict:
                         _fr_analysis_p.get("complexity", ""),
                         _fr_analysis_p.get("type", ""),
                         state.get("auto_approve", False),
-                        total_in, total_out, total_in + total_out,
+                        total_in,
+                        total_out,
+                        total_in + total_out,
                         _json.dumps(state.get("token_usage", {})),
                         cost_usd,
                     ),
                 )
                 await _conn.commit()
-            log.info("deliver: ciclo persistido en ovd_cycles (session=%s)", _session_id_p)
+            log.info(
+                "deliver: ciclo persistido en ovd_cycles (session=%s)", _session_id_p
+            )
         except Exception as _db_err:
             log.warning("deliver: persist_cycle: error al guardar en DB — %s", _db_err)
 
@@ -6325,19 +7728,22 @@ async def deliver(state: OVDState) -> dict:
         "security_result": security_result,
         "qa_result": qa_result,
         "status": "done",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Entrega completada. {len(deliverables)} artefacto(s) generado(s). "
-                f"SDD: {len(sdd.get('requirements', []))} req, "
-                f"{len(sdd.get('tasks', []))} tareas. "
-                f"Security: {security_result.get('score', '?')}/100 | "
-                f"QA: {qa_result.get('score', '?')}/100. "
-                f"Tokens: {total_in} in / {total_out} out. "
-                f"Costo: ${cost_usd:.4f} ({rep_config.provider}). "
-                f"Duración: {elapsed_str}"
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Entrega completada. {len(deliverables)} artefacto(s) generado(s). "
+                    f"SDD: {len(sdd.get('requirements', []))} req, "
+                    f"{len(sdd.get('tasks', []))} tareas. "
+                    f"Security: {security_result.get('score', '?')}/100 | "
+                    f"QA: {qa_result.get('score', '?')}/100. "
+                    f"Tokens: {total_in} in / {total_out} out. "
+                    f"Costo: ${cost_usd:.4f} ({rep_config.provider}). "
+                    f"Duración: {elapsed_str}"
+                ),
+            }
+        ],
     }
 
 
@@ -6345,24 +7751,25 @@ async def deliver(state: OVDState) -> dict:
 # S6 — G1.D: Crear PR automático en GitHub
 # ---------------------------------------------------------------------------
 
+
 async def create_pr(state: OVDState) -> dict:
     """
     S6 — G1.D: Crea branch ovd/{session_id}, hace commit de los artefactos
     generados y abre un PR automático en GitHub.
     No-op si github_token o github_repo no están configurados.
     """
-    github_token  = state.get("github_token", "")
-    github_repo   = state.get("github_repo", "")
+    github_token = state.get("github_token", "")
+    github_repo = state.get("github_repo", "")
     github_branch = state.get("github_branch", "") or "main"
 
     if not github_token or not github_repo:
         return {}  # sin config GitHub — no-op
 
-    directory    = state.get("directory", "")
-    session_id   = state.get("session_id", "")
+    directory = state.get("directory", "")
+    session_id = state.get("session_id", "")
     agent_results = state.get("agent_results", [])
-    sdd_summary  = state.get("sdd", {}).get("summary", "")
-    qa_score     = state.get("qa_result", {}).get("score", 0)
+    sdd_summary = state.get("sdd", {}).get("summary", "")
+    qa_score = state.get("qa_result", {}).get("score", 0)
     security_score = state.get("security_result", {}).get("score", 0)
 
     pr_result = await github_helper.create_pr(
@@ -6388,11 +7795,14 @@ async def create_pr(state: OVDState) -> dict:
 
     return {
         "github_pr": pr_result,
-        "github_token": "",   # LOW-02: limpiar PAT del checkpointer tras uso
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": msg_content,
-        }],
+        "github_token": "",  # LOW-02: limpiar PAT del checkpointer tras uso
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": msg_content,
+            }
+        ],
     }
 
 
@@ -6427,23 +7837,23 @@ def _export_finetune_record(
 
         record = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "org_id":          state.get("org_id", ""),
-            "project_id":      state.get("project_id", ""),
-            "provider":        provider,
-            "cost_usd":        cost_usd,
+            "org_id": state.get("org_id", ""),
+            "project_id": state.get("project_id", ""),
+            "provider": provider,
+            "cost_usd": cost_usd,
             "feature_request": state.get("feature_request", ""),
-            "fr_analysis":     state.get("fr_analysis", {}),
-            "sdd":             state.get("sdd", {}),
-            "agent_results":   [
+            "fr_analysis": state.get("fr_analysis", {}),
+            "sdd": state.get("sdd", {}),
+            "agent_results": [
                 {"agent": r.get("agent"), "output": r.get("output", "")}
                 for r in state.get("agent_results", [])
             ],
             "security_result": state.get("security_result", {}),
-            "qa_result":       state.get("qa_result", {}),
-            "token_usage":     state.get("token_usage", {}),
+            "qa_result": state.get("qa_result", {}),
+            "token_usage": state.get("token_usage", {}),
             "security_retries": state.get("security_retry_count", 0),
-            "qa_retries":       state.get("qa_retry_count", 0),
-            "duration_secs":    round(duration_secs, 1),
+            "qa_retries": state.get("qa_retry_count", 0),
+            "duration_secs": round(duration_secs, 1),
         }
 
         with fpath.open("a", encoding="utf-8") as f:
@@ -6472,10 +7882,10 @@ _SECURITY_MIN_SCORE = int(os.environ.get("OVD_SECURITY_MIN_SCORE", "0"))
 def route_after_approval(state: OVDState) -> str:
     decision = state.get("approval_decision", "")
     if decision == "approved":
-        return "route_agents"          # GAP-002: fan-out nativo
+        return "route_agents"  # GAP-002: fan-out nativo
     elif decision == "revision_requested":
-        return "generate_sdd"          # S15-TUI: volver a generar SDD con feedback
-    return END                         # "rejected" o vacío → terminar ciclo
+        return "generate_sdd"  # S15-TUI: volver a generar SDD con feedback
+    return END  # "rejected" o vacío → terminar ciclo
 
 
 def route_after_security(state: OVDState) -> str:
@@ -6547,7 +7957,8 @@ def route_after_qa(state: OVDState) -> str:
         if passed:
             log.info(
                 "route_after_qa: QA passed=False del modelo pero score=%d >= umbral=%d — aprobando",
-                qa.get("score", 0), _QA_MIN_SCORE,
+                qa.get("score", 0),
+                _QA_MIN_SCORE,
             )
     if passed:
         return "run_tests"  # S22: pasar por run_tests antes de generate_docs → deliver
@@ -6567,20 +7978,27 @@ def update_security_retry(state: OVDState) -> dict:
     security = state.get("security_result", {})
     new_feedback = _build_security_feedback(security)
     existing_feedback = state.get("retry_feedback", "")
-    accumulated = f"{existing_feedback}\n\n{new_feedback}".strip() if existing_feedback else new_feedback
+    accumulated = (
+        f"{existing_feedback}\n\n{new_feedback}".strip()
+        if existing_feedback
+        else new_feedback
+    )
 
     return {
         "security_retry_count": state.get("security_retry_count", 0) + 1,
         "retry_feedback": accumulated,
         "status": "retrying_after_security",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"Security audit fallido (reintento {state.get('security_retry_count', 0) + 1}/{MAX_RETRIES}). "
-                f"Severity: {security.get('severity', 'unknown')}. "
-                "Regenerando implementacion con feedback de remediacion..."
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"Security audit fallido (reintento {state.get('security_retry_count', 0) + 1}/{MAX_RETRIES}). "
+                    f"Severity: {security.get('severity', 'unknown')}. "
+                    "Regenerando implementacion con feedback de remediacion..."
+                ),
+            }
+        ],
     }
 
 
@@ -6593,21 +8011,30 @@ def update_qa_retry(state: OVDState) -> dict:
     qa = state.get("qa_result", {})
     new_feedback = _build_qa_feedback(qa)
     existing_feedback = state.get("retry_feedback", "")
-    accumulated = f"{existing_feedback}\n\n{new_feedback}".strip() if existing_feedback else new_feedback
-    accumulated = _truncate(accumulated, 3000)  # S31-B: cap para no explotar contexto del agente
+    accumulated = (
+        f"{existing_feedback}\n\n{new_feedback}".strip()
+        if existing_feedback
+        else new_feedback
+    )
+    accumulated = _truncate(
+        accumulated, 3000
+    )  # S31-B: cap para no explotar contexto del agente
 
     return {
         "qa_retry_count": state.get("qa_retry_count", 0) + 1,
         "retry_feedback": accumulated,
         "status": "retrying_after_qa",
-        "messages": state.get("messages", []) + [{
-            "role": "agent",
-            "content": (
-                f"QA fallido (reintento {state.get('qa_retry_count', 0) + 1}/{MAX_RETRIES}). "
-                f"Score: {qa.get('score', 0)}/100. "
-                "Regenerando implementacion con feedback de calidad..."
-            ),
-        }],
+        "messages": state.get("messages", [])
+        + [
+            {
+                "role": "agent",
+                "content": (
+                    f"QA fallido (reintento {state.get('qa_retry_count', 0) + 1}/{MAX_RETRIES}). "
+                    f"Score: {qa.get('score', 0)}/100. "
+                    "Regenerando implementacion con feedback de calidad..."
+                ),
+            }
+        ],
     }
 
 
@@ -6646,7 +8073,10 @@ def _route_after_agent_executor(state: OVDState) -> str:
     """
     pending = state.get("pending_agents", [])
     if pending:
-        log.info("S47 _route_after_agent_executor: %d agente(s) client-side pendientes → dispatch_frontend", len(pending))
+        log.info(
+            "S47 _route_after_agent_executor: %d agente(s) client-side pendientes → dispatch_frontend",
+            len(pending),
+        )
         return "dispatch_frontend"
     return "security_audit"
 
@@ -6661,7 +8091,7 @@ async def _dispatch_frontend_node(state: OVDState) -> dict:
     pending = state.get("pending_agents", [])
     log.info("S47 dispatch_frontend_node: preparando fan-out client-side=%s", pending)
     return {
-        "pending_agents": [],    # vaciar — ya procesados en _dispatch_now
+        "pending_agents": [],  # vaciar — ya procesados en _dispatch_now
         "_dispatch_now": list(pending),  # S59-B: buffer para el edge condicional
     }
 
@@ -6677,43 +8107,59 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
 
     # Nodos principales
     builder.add_node("analyze_fr", analyze_fr)
-    builder.add_node("web_research", web_research_node)   # S11: investigación web (no-op si sin trigger)
+    builder.add_node(
+        "web_research", web_research_node
+    )  # S11: investigación web (no-op si sin trigger)
     builder.add_node("generate_sdd", generate_sdd)
     builder.add_node("request_approval", request_approval)
     # GAP-002: fan-out nativo — route_agents + agent_executor reemplazan execute_agents
     builder.add_node("route_agents", route_agents)
     builder.add_node("agent_executor", agent_executor)
-    builder.add_node("security_audit", security_audit)   # GAP-001
+    builder.add_node("security_audit", security_audit)  # GAP-001
     builder.add_node("qa_review", qa_review)
     builder.add_node("handle_escalation", handle_escalation)
     builder.add_node("deliver", deliver)
-    builder.add_node("create_pr", create_pr)   # S6: PR automático (no-op sin github_token)
+    builder.add_node(
+        "create_pr", create_pr
+    )  # S6: PR automático (no-op sin github_token)
 
     # Nodos de reintento (GAP-005): incrementan contadores y feedback antes del retry
     builder.add_node("security_retry", update_security_retry)
     builder.add_node("qa_retry", update_qa_retry)
 
     # S22: nodos de calidad y documentación automática
-    builder.add_node("run_tests", run_tests)          # ejecución real de tests generados
-    builder.add_node("test_retry", update_test_retry) # retry de tests → route_agents
+    builder.add_node("run_tests", run_tests)  # ejecución real de tests generados
+    builder.add_node("test_retry", update_test_retry)  # retry de tests → route_agents
     builder.add_node("generate_docs", generate_docs)  # documentación automática post-QA
 
     # Flujo principal
-    builder.add_edge(START, "clone_repo")               # S6
-    builder.add_edge("clone_repo", "describe_image")    # S21: pre-procesador imagen (no-op si sin imagen)
+    builder.add_edge(START, "clone_repo")  # S6
+    builder.add_edge(
+        "clone_repo", "describe_image"
+    )  # S21: pre-procesador imagen (no-op si sin imagen)
     builder.add_edge("describe_image", "analyze_fr")
     # S11: routing condicional — web_research si hay trigger, si no directo a generate_sdd
-    builder.add_conditional_edges("analyze_fr", _route_after_analyze_fr, {
-        "web_research": "web_research",
-        "generate_sdd": "generate_sdd",
-    })
-    builder.add_edge("web_research", "generate_sdd")   # S11: siempre converge en generate_sdd
+    builder.add_conditional_edges(
+        "analyze_fr",
+        _route_after_analyze_fr,
+        {
+            "web_research": "web_research",
+            "generate_sdd": "generate_sdd",
+        },
+    )
+    builder.add_edge(
+        "web_research", "generate_sdd"
+    )  # S11: siempre converge en generate_sdd
     builder.add_edge("generate_sdd", "request_approval")
-    builder.add_conditional_edges("request_approval", route_after_approval, {
-        "route_agents": "route_agents",
-        "generate_sdd": "generate_sdd",   # S15-TUI: revisión iterativa del SDD
-        END: END,
-    })
+    builder.add_conditional_edges(
+        "request_approval",
+        route_after_approval,
+        {
+            "route_agents": "route_agents",
+            "generate_sdd": "generate_sdd",  # S15-TUI: revisión iterativa del SDD
+            END: END,
+        },
+    )
 
     # GAP-002 + S47: fan-out en dos grupos por capa
     # Grupo 1 (server-side): database + backend + devops — paralelo
@@ -6721,10 +8167,14 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     builder.add_node("dispatch_frontend", _dispatch_frontend_node)
     builder.add_conditional_edges("route_agents", _dispatch_agents)
     # Después del fan-out: si hay client-side pendiente → dispatch_frontend; si no → security_audit
-    builder.add_conditional_edges("agent_executor", _route_after_agent_executor, {
-        "dispatch_frontend": "dispatch_frontend",
-        "security_audit":    "security_audit",
-    })
+    builder.add_conditional_edges(
+        "agent_executor",
+        _route_after_agent_executor,
+        {
+            "dispatch_frontend": "dispatch_frontend",
+            "security_audit": "security_audit",
+        },
+    )
     # Segundo fan-out: client-side
     builder.add_conditional_edges("dispatch_frontend", _dispatch_frontend)
     # Después del fan-out frontend → security_audit (mismo flujo que antes)
@@ -6736,7 +8186,7 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
         route_after_security,
         {
             "qa_review": "qa_review",
-            "route_agents": "security_retry",   # GAP-002: retry va a route_agents
+            "route_agents": "security_retry",  # GAP-002: retry va a route_agents
             "handle_escalation": "handle_escalation",
         },
     )
@@ -6746,12 +8196,12 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
         "qa_review",
         route_after_qa,
         {
-            "run_tests": "run_tests",           # S22: QA pasa → ejecutar tests reales
-            "route_agents": "qa_retry",         # GAP-002: retry va a route_agents
+            "run_tests": "run_tests",  # S22: QA pasa → ejecutar tests reales
+            "route_agents": "qa_retry",  # GAP-002: retry va a route_agents
             "handle_escalation": "handle_escalation",
         },
     )
-    builder.add_edge("qa_retry", "route_agents")   # GAP-002
+    builder.add_edge("qa_retry", "route_agents")  # GAP-002
 
     # S22: run_tests → generate_docs | test_retry → route_agents
     builder.add_conditional_edges(
@@ -6762,13 +8212,15 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
             "test_retry": "test_retry",
         },
     )
-    builder.add_edge("test_retry", "route_agents")  # S22: retry de tests re-ejecuta agentes
+    builder.add_edge(
+        "test_retry", "route_agents"
+    )  # S22: retry de tests re-ejecuta agentes
 
     # S22: generate_docs → deliver
     builder.add_edge("generate_docs", "deliver")
 
     builder.add_edge("handle_escalation", "deliver")
-    builder.add_edge("deliver", "create_pr")   # S6
+    builder.add_edge("deliver", "create_pr")  # S6
     builder.add_edge("create_pr", END)
 
     return builder.compile(checkpointer=checkpointer)

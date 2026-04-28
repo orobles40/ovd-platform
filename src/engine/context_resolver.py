@@ -29,12 +29,13 @@ Uso desde api.py:
     # ctx.model_routing pasado a model_router.py
     # ctx.workspace_credentials usadas por agentes MCP (Oracle, etc.)
 """
+
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from secrets_adapter import SecretsAdapter
@@ -51,6 +52,7 @@ ModelRouting = Literal["auto", "ollama", "claude", "openai"]
 @dataclass
 class StackRegistry:
     """Perfil tecnológico estructurado del workspace."""
+
     language: str = ""
     framework: str = ""
     db_engine: str = ""
@@ -63,23 +65,24 @@ class StackRegistry:
     constraints: str = ""
     code_style: str = ""
     project_description: str = ""
-    secret_ref: str = ""             # Sprint 9: identificador en Infisical
+    secret_ref: str = ""  # Sprint 9: identificador en Infisical
 
 
 @dataclass
 class AgentContext:
     """Contexto tipado que se inyecta en todos los nodos del grafo."""
+
     org_id: str
     project_id: str
     stack: StackRegistry
-    model_routing: ModelRouting      # routing efectivo (resuelto, no el campo raw)
-    restrictions: list[str]          # restricciones activas para inyectar en prompts
-    rag_context: str                 # contexto semántico pre-recuperado del RAG
+    model_routing: ModelRouting  # routing efectivo (resuelto, no el campo raw)
+    restrictions: list[str]  # restricciones activas para inyectar en prompts
+    rag_context: str  # contexto semántico pre-recuperado del RAG
     language: str = "es"
     # Sprint 9 — GAP-A4: credenciales del workspace desde Infisical
     # NUNCA incluir en to_prompt_block() ni en logs
     workspace_credentials: dict[str, str] = field(default_factory=dict)
-    secret_ref: str = ""             # identificador usado para recuperar los secrets
+    secret_ref: str = ""  # identificador usado para recuperar los secrets
 
     def to_prompt_block(self) -> str:
         """
@@ -105,7 +108,9 @@ class AgentContext:
                 db_str += f" {self.stack.db_version}"
             stack_parts.append(f"Base de datos: {db_str}")
         if self.stack.additional_stack:
-            stack_parts.append(f"Stack adicional: {', '.join(self.stack.additional_stack)}")
+            stack_parts.append(
+                f"Stack adicional: {', '.join(self.stack.additional_stack)}"
+            )
         if self.stack.legacy_stack:
             stack_parts.append(f"Sistema legacy: {self.stack.legacy_stack}")
 
@@ -139,7 +144,7 @@ class AgentContext:
 # ---------------------------------------------------------------------------
 
 RESTRICTION_RULES: dict[tuple[str, str], list[str]] = {
-    ("oracle", "11g"):  [
+    ("oracle", "11g"): [
         "no_json_functions",
         "no_lateral_join",
         "no_fetch_first",
@@ -160,32 +165,32 @@ RESTRICTION_RULES: dict[tuple[str, str], list[str]] = {
         "no_pivot",
         "use_rownum_instead_of_fetch",
     ],
-    ("oracle", "12c"):  [
-        "no_json_functions",      # JSON_TABLE, JSON_VALUE no disponibles
-        "no_lateral_join",        # LATERAL keyword no disponible en 12c estándar
-        "no_fetch_first",         # FETCH FIRST ... ROWS solo en 12c R1+, evitar por compatibilidad
-        "no_listagg_overflow",    # LISTAGG ON OVERFLOW solo en 12c R2+
-        "no_with_function",       # WITH FUNCTION solo en 18c+
+    ("oracle", "12c"): [
+        "no_json_functions",  # JSON_TABLE, JSON_VALUE no disponibles
+        "no_lateral_join",  # LATERAL keyword no disponible en 12c estándar
+        "no_fetch_first",  # FETCH FIRST ... ROWS solo en 12c R1+, evitar por compatibilidad
+        "no_listagg_overflow",  # LISTAGG ON OVERFLOW solo en 12c R2+
+        "no_with_function",  # WITH FUNCTION solo en 18c+
     ],
     ("oracle", "12.2"): [
-        "no_json_table_extended", # JSON_TABLE disponible pero sin sintaxis extendida
+        "no_json_table_extended",  # JSON_TABLE disponible pero sin sintaxis extendida
         "no_with_function",
     ],
-    ("oracle", "19c"):  [],  # 19c: sin restricciones relevantes
-    ("oracle", "21c"):  [],
-    ("mysql", "5.6"):   [
+    ("oracle", "19c"): [],  # 19c: sin restricciones relevantes
+    ("oracle", "21c"): [],
+    ("mysql", "5.6"): [
         "no_window_functions",
         "no_cte",
         "no_json_table",
         "no_lateral_join",
         "no_check_constraint",
     ],
-    ("mysql", "5.7"):   [
+    ("mysql", "5.7"): [
         "no_window_functions",
         "no_cte",
         "no_json_table",
     ],
-    ("mysql", "8.0"):   [],  # 8.0: soporte completo
+    ("mysql", "8.0"): [],  # 8.0: soporte completo
     ("postgresql", "9.6"): [
         "no_generated_columns",
         "no_merge_statement",
@@ -216,9 +221,23 @@ RESTRICTION_RULES: dict[tuple[str, str], list[str]] = {
 
 # Palabras clave que indican stack legacy (activan model_routing = claude)
 _LEGACY_INDICATORS = {
-    "oracle", "cobol", "rpg", "fortran", "struts", "ejb", "java ee", "jboss",
-    "weblogic", "websphere", "sybase", "db2", "informix", "progress openedge",
-    "vb6", "delphi", "foxpro",
+    "oracle",
+    "cobol",
+    "rpg",
+    "fortran",
+    "struts",
+    "ejb",
+    "java ee",
+    "jboss",
+    "weblogic",
+    "websphere",
+    "sybase",
+    "db2",
+    "informix",
+    "progress openedge",
+    "vb6",
+    "delphi",
+    "foxpro",
 }
 
 
@@ -226,11 +245,16 @@ _LEGACY_INDICATORS = {
 # Lógica de resolución
 # ---------------------------------------------------------------------------
 
+
 def _normalize_db_key(db_engine: str, db_version: str) -> tuple[str, str]:
     """Normaliza (db_engine, db_version) al formato de RESTRICTION_RULES."""
     engine = db_engine.lower().strip()
     # Alias conocidos
-    engine = engine.replace("postgres", "postgresql").replace("mssql", "sqlserver").replace("sql server", "sqlserver")
+    engine = (
+        engine.replace("postgres", "postgresql")
+        .replace("mssql", "sqlserver")
+        .replace("sql server", "sqlserver")
+    )
     version = db_version.lower().strip()
     return engine, version
 
@@ -248,7 +272,10 @@ def _infer_restrictions(db_engine: str, db_version: str) -> list[str]:
         candidates.sort(key=lambda x: len(x[1]), reverse=True)
         logger.warning(
             "No hay restricciones exactas para %s %s — usando fallback %s %s",
-            db_engine, db_version, candidates[0][0][0], candidates[0][0][1],
+            db_engine,
+            db_version,
+            candidates[0][0][0],
+            candidates[0][0][1],
         )
         return candidates[0][1]
     return []
@@ -266,6 +293,7 @@ def _resolve_model_routing(stack: StackRegistry) -> ModelRouting:
     5. Si not: ollama
     """
     import os as _os
+
     # Safety: sin API key de Anthropic, nunca rutear a Claude independientemente del stack
     if not _os.environ.get("ANTHROPIC_API_KEY", "").strip():
         return "ollama"
@@ -368,6 +396,7 @@ class ContextResolver:
         if effective_secret_ref:
             if secrets_adapter is None:
                 from secrets_adapter import get_adapter
+
                 secrets_adapter = get_adapter()
 
             credentials = await secrets_adapter.get_secrets(effective_secret_ref)
@@ -377,7 +406,9 @@ class ContextResolver:
             if credentials:
                 log.info(
                     "context_resolver: %d credenciales recuperadas para workspace '%s' (secret_ref=%s)",
-                    len(credentials), project_id, effective_secret_ref,
+                    len(credentials),
+                    project_id,
+                    effective_secret_ref,
                 )
             else:
                 log.warning(
@@ -389,7 +420,9 @@ class ContextResolver:
         return ctx
 
     @staticmethod
-    def _parse_stack(project_context: str, secret_ref_override: str = "") -> StackRegistry:
+    def _parse_stack(
+        project_context: str, secret_ref_override: str = ""
+    ) -> StackRegistry:
         """
         Parsea project_context como JSON estructurado.
         Fallback: si no es JSON válido, crea un StackRegistry mínimo con
@@ -402,7 +435,9 @@ class ContextResolver:
             data = json.loads(project_context)
         except (json.JSONDecodeError, ValueError):
             # Retrocompatibilidad: el Bridge enviaba texto libre antes de S8
-            logger.debug("project_context no es JSON válido — usando como texto libre (retrocompat)")
+            logger.debug(
+                "project_context no es JSON válido — usando como texto libre (retrocompat)"
+            )
             return StackRegistry(
                 project_description=project_context,
                 secret_ref=secret_ref_override,

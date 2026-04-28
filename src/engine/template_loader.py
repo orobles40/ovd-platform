@@ -25,7 +25,9 @@ Variables de sustitución disponibles en los templates:
 
 Si el archivo de template no existe, se usa el prompt fallback hardcodeado.
 """
+
 from __future__ import annotations
+
 import os
 import subprocess
 import threading
@@ -41,8 +43,12 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 # Ruta al script BM25 de ui-ux-pro-max
 _UI_UX_SEARCH = (
     Path(__file__).parent.parent
-    / "knowledge" / "ui-ux"
-    / "src" / "ui-ux-pro-max" / "scripts" / "search.py"
+    / "knowledge"
+    / "ui-ux"
+    / "src"
+    / "ui-ux-pro-max"
+    / "scripts"
+    / "search.py"
 )
 
 # Cache en memoria: "{language}:{name}" -> contenido del template
@@ -365,6 +371,7 @@ _FALLBACK_BY_LANG: dict[str, dict[str, str]] = {
 # Contexto UI/UX (ui-ux-pro-max BM25)
 # ---------------------------------------------------------------------------
 
+
 def query_ui_context(fr_text: str, max_results: int = 3) -> str:
     """
     Consulta el motor BM25 de ui-ux-pro-max con el texto del FR.
@@ -391,6 +398,7 @@ def query_ui_context(fr_text: str, max_results: int = 3) -> str:
 # ---------------------------------------------------------------------------
 # API publica
 # ---------------------------------------------------------------------------
+
 
 def load(name: str, language: str = "es", stack_language: str = "") -> str:
     """
@@ -446,11 +454,15 @@ def load(name: str, language: str = "es", stack_language: str = "") -> str:
     fallbacks = _FALLBACK_BY_LANG.get(lang, _FALLBACK_PROMPTS)
     fallback = fallbacks.get(name) or _FALLBACK_PROMPTS.get(name, "")
     if not fallback:
-        raise ValueError(f"Template '{name}' no encontrado en {_TEMPLATES_DIR} ni en fallbacks")
+        raise ValueError(
+            f"Template '{name}' no encontrado en {_TEMPLATES_DIR} ni en fallbacks"
+        )
     return fallback
 
 
-def render(name: str, language: str = "es", stack_language: str = "", **variables: str) -> str:
+def render(
+    name: str, language: str = "es", stack_language: str = "", **variables: str
+) -> str:
     """
     Carga el template (en el idioma y stack indicados) y sustituye las variables.
 
@@ -478,27 +490,52 @@ def render(name: str, language: str = "es", stack_language: str = "", **variable
 
 def _interpolate(raw: str, **variables: str) -> str:
     """Aplica sustitución de variables a un string raw (helper interno)."""
-    defaults = {"project_context": "", "rag_context": "", "retry_feedback": "", "ui_context": "", "lessons_context": "", "cycle_sdd_context": ""}
+    defaults = {
+        "project_context": "",
+        "rag_context": "",
+        "retry_feedback": "",
+        "ui_context": "",
+        "lessons_context": "",
+        "cycle_sdd_context": "",
+    }
     defaults.update(variables)
-    ctx      = defaults.get("project_context", "")
-    rag      = defaults.get("rag_context", "")
-    fb       = defaults.get("retry_feedback", "")
-    ui       = defaults.get("ui_context", "")
-    lessons  = defaults.get("lessons_context", "")
-    sdd_ctx  = defaults.get("cycle_sdd_context", "")
-    return raw.replace(
-        "{project_context}", f"\n\n{ctx}" if ctx else "",
-    ).replace(
-        "{rag_context}", f"\n\n---\n## Contexto del proyecto (RAG)\n{rag}" if rag else "",
-    ).replace(
-        "{retry_feedback}", f"\n\nFEEDBACK DE REVISION ANTERIOR (corregir estos issues obligatoriamente):\n{fb}" if fb else "",
-    ).replace(
-        "{ui_context}", f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
-    ).replace(
-        "{lessons_context}", f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}" if lessons else "",
-    ).replace(
-        "{cycle_sdd_context}", sdd_ctx if sdd_ctx else "",  # S56-A: SDD del ciclo para QA reviewer
-    ).strip()
+    ctx = defaults.get("project_context", "")
+    rag = defaults.get("rag_context", "")
+    fb = defaults.get("retry_feedback", "")
+    ui = defaults.get("ui_context", "")
+    lessons = defaults.get("lessons_context", "")
+    sdd_ctx = defaults.get("cycle_sdd_context", "")
+    return (
+        raw.replace(
+            "{project_context}",
+            f"\n\n{ctx}" if ctx else "",
+        )
+        .replace(
+            "{rag_context}",
+            f"\n\n---\n## Contexto del proyecto (RAG)\n{rag}" if rag else "",
+        )
+        .replace(
+            "{retry_feedback}",
+            f"\n\nFEEDBACK DE REVISION ANTERIOR (corregir estos issues obligatoriamente):\n{fb}"
+            if fb
+            else "",
+        )
+        .replace(
+            "{ui_context}",
+            f"\n\n---\n## Guías de diseño UI/UX\n{ui}" if ui else "",
+        )
+        .replace(
+            "{lessons_context}",
+            f"\n\n---\n## Lecciones de ciclos anteriores (este proyecto)\n{lessons}"
+            if lessons
+            else "",
+        )
+        .replace(
+            "{cycle_sdd_context}",
+            sdd_ctx if sdd_ctx else "",  # S56-A: SDD del ciclo para QA reviewer
+        )
+        .strip()
+    )
 
 
 def render_composed(
@@ -558,7 +595,9 @@ def render_composed(
             cached = raw
         else:
             with _cache_lock:
-                _cache[stack_cache_key] = ""  # marca "no existe" para no buscar de nuevo
+                _cache[stack_cache_key] = (
+                    ""  # marca "no existe" para no buscar de nuevo
+                )
             cached = ""
 
     if not cached:
@@ -579,7 +618,11 @@ def invalidate(name: Optional[str] = None, language: Optional[str] = None) -> No
         if name is None:
             _cache = {}
         elif language is not None:
-            keys_to_del = [k for k in _cache if k.endswith(f":{name}") and k.startswith(f"{language}:")]
+            keys_to_del = [
+                k
+                for k in _cache
+                if k.endswith(f":{name}") and k.startswith(f"{language}:")
+            ]
             for k in keys_to_del:
                 del _cache[k]
         else:

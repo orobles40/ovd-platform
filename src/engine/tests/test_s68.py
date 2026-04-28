@@ -4,6 +4,7 @@ Tests S68 — S68-A: last_test_error preservado para S65-A output
             S68-C: tareas de infraestructura fuera del cap
             S68-D: clean_rut, format_rut, require_valid_rut en template
 """
+
 import pathlib
 import sys
 
@@ -13,24 +14,27 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from graph import _extract_import_corrections, _is_infra_task
 
-
 # ---------------------------------------------------------------------------
 # S68-A: last_test_error se preserva para S65-A output
 # ---------------------------------------------------------------------------
 
+
 def _make_s65a_output(imports: list[str] | None = None) -> str:
     if imports is None:
-        imports = ["src/auth/models.py: from src.auth.utils.rut import validate_rut  ← módulo no existe"]
-    lines = ["[S65-A] IMPORTS ROTOS — detectados ANTES de pytest:"] + [f"  {l}" for l in imports]
+        imports = [
+            "src/auth/models.py: from src.auth.utils.rut import validate_rut  ← módulo no existe"
+        ]
+    lines = ["[S65-A] IMPORTS ROTOS — detectados ANTES de pytest:"] + [
+        f"  {l}" for l in imports
+    ]
     return "\n".join(lines)
 
 
 def _simulate_new_last_error(test_output: str) -> str:
     """Replica la lógica S68-A de update_test_retry."""
     _is_structural = (
-        ("ModuleNotFoundError" in test_output or "ImportError" in test_output)
-        and "collected 0 items" in test_output
-    )
+        "ModuleNotFoundError" in test_output or "ImportError" in test_output
+    ) and "collected 0 items" in test_output
     _is_s65a_output = "[S65-A] IMPORTS ROTOS" in test_output
     return test_output if (_is_structural or _is_s65a_output) else ""
 
@@ -59,7 +63,11 @@ def test_s68a_last_error_preserved_for_structural():
 
 def test_s68a_s66c_can_detect_loop_with_preserved_error():
     """S68-A: con last_test_error preservado, S66-C puede detectar el import loop."""
-    import_feedback = _make_s65a_output(["src/auth/models.py: from src.auth.utils.rut import validate_rut  ← módulo no existe"])
+    import_feedback = _make_s65a_output(
+        [
+            "src/auth/models.py: from src.auth.utils.rut import validate_rut  ← módulo no existe"
+        ]
+    )
     prev_error = _simulate_new_last_error(import_feedback)
 
     # S66-C condition replica
@@ -68,12 +76,15 @@ def test_s68a_s66c_can_detect_loop_with_preserved_error():
         and "[S65-A] IMPORTS ROTOS" in prev_error
         and import_feedback.split("\n")[1:4] == prev_error.split("\n")[1:4]
     )
-    assert _import_loop, "S66-C debe detectar el loop cuando last_test_error está preservado"
+    assert _import_loop, (
+        "S66-C debe detectar el loop cuando last_test_error está preservado"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S68-B: _extract_import_corrections
 # ---------------------------------------------------------------------------
+
 
 def test_s68b_extracts_correction_lines():
     """S68-B: extrae líneas CORRECCIÓN del feedback S65-A."""
@@ -111,16 +122,23 @@ def test_s68b_correction_block_ends_with_newlines():
         "  → CORRECCIÓN: usa `from src.auth.utils import validate_rut`\n"
     )
     result = _extract_import_corrections(feedback)
-    assert result.endswith("\n\n"), "debe terminar con doble newline para separar del prompt SDD"
+    assert result.endswith("\n\n"), (
+        "debe terminar con doble newline para separar del prompt SDD"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S68-C: _is_infra_task
 # ---------------------------------------------------------------------------
 
+
 def test_s68c_database_py_is_infra():
     """S68-C: tarea que menciona src/database.py → infra."""
-    task = {"title": "Crear src/database.py con SessionLocal y get_db", "description": "engine + Base", "file": ""}
+    task = {
+        "title": "Crear src/database.py con SessionLocal y get_db",
+        "description": "engine + Base",
+        "file": "",
+    }
     assert _is_infra_task(task)
 
 
@@ -132,13 +150,21 @@ def test_s68c_main_py_is_infra():
 
 def test_s68c_auth_dependencies_is_infra():
     """S68-C: tarea que menciona src/auth/dependencies.py → infra."""
-    task = {"title": "auth dependencies", "description": "src/auth/dependencies.py con get_current_user", "file": ""}
+    task = {
+        "title": "auth dependencies",
+        "description": "src/auth/dependencies.py con get_current_user",
+        "file": "",
+    }
     assert _is_infra_task(task)
 
 
 def test_s68c_business_task_is_not_infra():
     """S68-C: tarea de negocio (contracts service) NO es infra."""
-    task = {"title": "Crear src/contracts/service.py", "description": "CRUD contratos", "file": ""}
+    task = {
+        "title": "Crear src/contracts/service.py",
+        "description": "CRUD contratos",
+        "file": "",
+    }
     assert not _is_infra_task(task)
 
 
@@ -148,9 +174,21 @@ def test_s68c_infra_tasks_survive_cap():
     _MAX = _TASK_CAPS["low"]
 
     tasks = [
-        {"id": "TASK-001", "agent": "backend", "title": "Crear src/database.py", "description": "src/database.py", "file": ""},
+        {
+            "id": "TASK-001",
+            "agent": "backend",
+            "title": "Crear src/database.py",
+            "description": "src/database.py",
+            "file": "",
+        },
     ] + [
-        {"id": f"TASK-{i:03d}", "agent": "backend", "title": f"Business task {i}", "description": f"task {i}", "file": ""}
+        {
+            "id": f"TASK-{i:03d}",
+            "agent": "backend",
+            "title": f"Business task {i}",
+            "description": f"task {i}",
+            "file": "",
+        }
         for i in range(2, 10)  # 8 business tasks
     ]
 
@@ -168,8 +206,11 @@ def test_s68c_infra_tasks_survive_cap():
 # S68-D: template system_backend_python.md contiene funciones RUT
 # ---------------------------------------------------------------------------
 
+
 def _get_template_path() -> pathlib.Path:
-    return pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+    return (
+        pathlib.Path(__file__).parent.parent / "templates" / "system_backend_python.md"
+    )
 
 
 def test_s68d_clean_rut_in_template():

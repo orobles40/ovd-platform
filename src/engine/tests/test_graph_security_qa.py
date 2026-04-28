@@ -2,20 +2,24 @@
 OVD Platform — Tests para los nodos security_audit y qa_review
 Sprint: S6+
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from factories import make_state, make_agent_result
-from graph import security_audit, qa_review, SecurityAuditOutput, QAReviewOutput
+import pytest
+from factories import make_agent_result, make_state
 
+from graph import QAReviewOutput, SecurityAuditOutput, qa_review, security_audit
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def make_llm_mock(return_value):
     structured = MagicMock()
@@ -55,16 +59,20 @@ def _make_qa_output(passed=True, score=88, sdd_compliance=True, issues=None):
 # TestSecurityAudit
 # ---------------------------------------------------------------------------
 
-class TestSecurityAudit:
 
+class TestSecurityAudit:
     @pytest.mark.asyncio
     async def test_audit_passed_retorna_resultado_correcto(self):
         """LLM retorna passed=True, score=92 → security_result y status correctos."""
-        llm = make_llm_mock(_make_security_output(passed=True, score=92, severity="none"))
+        llm = make_llm_mock(
+            _make_security_output(passed=True, score=92, severity="none")
+        )
 
         # S48-A: usar score>0 para evitar el bypass dev y probar el flujo real del LLM
         with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}):
-            with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+            with patch(
+                "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+            ):
                 state = make_state(
                     agent_results=[make_agent_result("backend")],
                     sdd={},
@@ -80,19 +88,25 @@ class TestSecurityAudit:
         """LLM retorna vulnerabilidades → se incluyen en security_result."""
         vulns = ["A01-Broken Access Control"]
         llm = make_llm_mock(
-            _make_security_output(passed=False, score=40, severity="high", vulnerabilities=vulns)
+            _make_security_output(
+                passed=False, score=40, severity="high", vulnerabilities=vulns
+            )
         )
 
         # S48-A: usar score>0 para evitar el bypass dev y probar el flujo real del LLM
         with patch.dict(os.environ, {"OVD_SECURITY_MIN_SCORE": "70"}):
-            with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+            with patch(
+                "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+            ):
                 state = make_state(
                     agent_results=[make_agent_result("backend", passed=False)],
                 )
                 result = await security_audit(state)
 
         assert result["security_result"]["passed"] is False
-        assert "A01-Broken Access Control" in result["security_result"]["vulnerabilities"]
+        assert (
+            "A01-Broken Access Control" in result["security_result"]["vulnerabilities"]
+        )
         assert result["security_result"]["severity"] == "high"
 
     @pytest.mark.asyncio
@@ -100,7 +114,9 @@ class TestSecurityAudit:
         """El nodo agrega un mensaje en messages que contiene 'Score:'."""
         llm = make_llm_mock(_make_security_output(passed=True, score=85))
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+        ):
             state = make_state(
                 agent_results=[make_agent_result("backend")],
                 messages=[],
@@ -110,21 +126,25 @@ class TestSecurityAudit:
         msgs = result["messages"]
         assert len(msgs) >= 1
         combined = " ".join(m.get("content", "") for m in msgs)
-        assert "Score:" in combined, f"Mensaje debería contener 'Score:'. Mensajes: {msgs}"
+        assert "Score:" in combined, (
+            f"Mensaje debería contener 'Score:'. Mensajes: {msgs}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # TestQAReview
 # ---------------------------------------------------------------------------
 
-class TestQAReview:
 
+class TestQAReview:
     @pytest.mark.asyncio
     async def test_qa_passed_retorna_resultado(self):
         """LLM retorna passed=True, score=88 → qa_result correcto."""
         llm = make_llm_mock(_make_qa_output(passed=True, score=88, sdd_compliance=True))
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+        ):
             state = make_state(
                 agent_results=[make_agent_result("backend")],
                 sdd={"summary": "SDD de prueba", "requirements": [], "tasks": []},
@@ -142,7 +162,9 @@ class TestQAReview:
             _make_qa_output(passed=False, score=55, sdd_compliance=False, issues=issues)
         )
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+        ):
             state = make_state(
                 agent_results=[make_agent_result("backend", passed=False)],
                 sdd={"summary": "SDD de prueba", "requirements": [], "tasks": []},
@@ -157,7 +179,9 @@ class TestQAReview:
         """El nodo agrega al menos un mensaje que menciona 'QA'."""
         llm = make_llm_mock(_make_qa_output(passed=True, score=90))
 
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=llm)):
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=llm)
+        ):
             state = make_state(
                 agent_results=[make_agent_result("backend")],
                 sdd={"summary": "SDD de prueba", "requirements": [], "tasks": []},

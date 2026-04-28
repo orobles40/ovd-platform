@@ -2,14 +2,21 @@
 OVD Platform — Tests: JWT auth + refresh tokens (Sprint 10)
 No requiere BD — usa mocks para las operaciones de DB.
 """
-import sys, os, time
+
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from auth import (
-    create_access_token, verify_access_token,
     _hash_token,
+    create_access_token,
+    verify_access_token,
 )
 
 # JWT_SECRET mínimo para tests (32 chars)
@@ -19,6 +26,7 @@ _TEST_SECRET = "a" * 64
 @pytest.fixture(autouse=True)
 def set_jwt_secret(monkeypatch):
     import auth
+
     monkeypatch.setattr(auth, "_JWT_SECRET", _TEST_SECRET)
 
 

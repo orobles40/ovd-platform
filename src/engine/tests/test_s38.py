@@ -3,44 +3,53 @@ OVD Platform — Tests S38: async tool invocation + QA truncation limit
 S38-A: _run_agent_with_tools usa ainvoke() async para StructuredTools (context7)
 S38-B: qa_review trunca agent_output a 20000 chars (antes 12000) para FRs multi-agente
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import inspect
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # S38-A — _run_agent_with_tools usa ainvoke async con fallback sync
 # ---------------------------------------------------------------------------
+
 
 class TestS38AAsyncToolInvocation:
     """S38-A: tool calls usan ainvoke() con fallback a invoke() cuando NotImplementedError."""
 
     def _get_run_agent_source(self) -> str:
         import graph as g
+
         return inspect.getsource(g._run_agent_with_tools)
 
     def test_usa_ainvoke_si_disponible(self):
         """El código verifica hasattr(tool_fn, 'ainvoke') antes de invocar."""
         src = self._get_run_agent_source()
-        assert "hasattr(tool_fn, \"ainvoke\")" in src, \
+        assert 'hasattr(tool_fn, "ainvoke")' in src, (
             "S38-A: no hay verificación de hasattr(tool_fn, 'ainvoke')"
+        )
 
     def test_tiene_fallback_a_invoke_sync(self):
         """Cuando ainvoke lanza NotImplementedError, usa invoke() síncrono."""
         src = self._get_run_agent_source()
-        assert "NotImplementedError" in src, \
+        assert "NotImplementedError" in src, (
             "S38-A: no hay fallback a invoke() cuando ainvoke lanza NotImplementedError"
-        assert "tool_fn.invoke(tool_args)" in src, \
+        )
+        assert "tool_fn.invoke(tool_args)" in src, (
             "S38-A: no se llama tool_fn.invoke() como fallback"
+        )
 
     def test_ainvoke_es_awaited(self):
         """ainvoke se usa con await (es una corrutina)."""
         src = self._get_run_agent_source()
-        assert "await tool_fn.ainvoke(tool_args)" in src, \
+        assert "await tool_fn.ainvoke(tool_args)" in src, (
             "S38-A: ainvoke no se usa con await"
+        )
 
     @pytest.mark.asyncio
     async def test_tool_con_ainvoke_se_invoca_async(self):
@@ -110,23 +119,27 @@ class TestS38AAsyncToolInvocation:
 # S38-B — qa_review trunca agent_output a 20000 chars
 # ---------------------------------------------------------------------------
 
+
 class TestS38BQATruncationLimit:
     """S38-B: qa_review usa _truncate(agent_output, N) con N >= 18000 para soportar FRs multi-agente."""
 
     def _get_qa_review_source(self) -> str:
         import graph as g
+
         return inspect.getsource(g.qa_review)
 
     def test_truncation_limit_es_20000(self):
         """qa_review trunca el output a >=18000 chars (no 12000). S56-A ajustó 20000→18000."""
         import re
+
         src = self._get_qa_review_source()
         # Buscar _truncate(agent_output, N) donde N >= 18000
-        matches = re.findall(r'_truncate\(agent_output,\s*(\d+)\)', src)
+        matches = re.findall(r"_truncate\(agent_output,\s*(\d+)\)", src)
         assert matches, "S38-B: qa_review no llama _truncate(agent_output, N)"
         limit = int(matches[0])
-        assert limit >= 18000, \
+        assert limit >= 18000, (
             f"S38-B: límite de truncación {limit} < 18000 — debe soportar FRs multi-agente"
+        )
 
     def test_no_usa_limite_12000(self):
         """El límite antiguo de 12000 chars ya no está en qa_review para agent_output."""
@@ -143,18 +156,25 @@ class TestS38BQATruncationLimit:
     def test_truncate_20000_permite_3_agentes(self):
         """Verifica que 20000 chars cubre 3 agentes con ~6K chars cada uno."""
         import graph as g
+
         # Simular output de 3 agentes × 6000 chars = 18000 (< 20000)
         output_3_agents = "x" * 18000
         truncated = g._truncate(output_3_agents, 20000)
-        assert len(truncated) == 18000, \
+        assert len(truncated) == 18000, (
             f"S38-B: output de 3 agentes ({len(output_3_agents)} chars) se truncó a {len(truncated)}"
+        )
 
     def test_truncate_12000_cortaba_output_3_agentes(self):
         """Documenta que el límite antiguo (12000) cortaba el output de 3 agentes."""
         import graph as g
+
         # Simular output que excede 12000 pero no 20000
         output = "y" * 15000
         truncated_old = g._truncate(output, 12000)
         truncated_new = g._truncate(output, 20000)
-        assert len(truncated_old) < len(output), "Con 12000 se truncaba el output de 3 agentes"
-        assert len(truncated_new) == len(output), "Con 20000 el output de 3 agentes pasa completo"
+        assert len(truncated_old) < len(output), (
+            "Con 12000 se truncaba el output de 3 agentes"
+        )
+        assert len(truncated_new) == len(output), (
+            "Con 20000 el output de 3 agentes pasa completo"
+        )

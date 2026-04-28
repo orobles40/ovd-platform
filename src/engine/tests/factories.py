@@ -3,7 +3,10 @@ OVD Platform — Builders de objetos para tests.
 Centraliza la construcción de OVDState y objetos relacionados
 para evitar duplicación y facilitar el mantenimiento.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import time
@@ -13,30 +16,30 @@ from typing import Any
 
 _STATE_DEFAULTS: dict[str, Any] = {
     # Input
-    "session_id":    "test-session-001",
-    "org_id":        "org-test-001",
-    "project_id":    "proj-test-001",
-    "directory":     "/tmp/test-repo",
+    "session_id": "test-session-001",
+    "org_id": "org-test-001",
+    "project_id": "proj-test-001",
+    "directory": "/tmp/test-repo",
     "feature_request": "Agregar endpoint de login con JWT",
     "project_context": "## Stack\nPython / FastAPI / PostgreSQL",
-    "jwt_token":     "",
-    "language":      "es",
-    "auto_approve":  False,
+    "jwt_token": "",
+    "language": "es",
+    "auto_approve": False,
     # Stack routing (S8)
-    "stack_routing":     "auto",
-    "stack_db_engine":   "postgresql",
-    "stack_db_version":  "16",
+    "stack_routing": "auto",
+    "stack_db_engine": "postgresql",
+    "stack_db_version": "16",
     "stack_restrictions": [],
     # S42-E: stack language para selección de template
-    "stack_language":    "",
+    "stack_language": "",
     # GitHub (S6)
-    "github_token":  "",
-    "github_repo":   "",
+    "github_token": "",
+    "github_repo": "",
     "github_branch": "main",
-    "github_pr":     {},
+    "github_pr": {},
     # RAG / Research (S11)
-    "rag_context":         "",
-    "research_enabled":    False,
+    "rag_context": "",
+    "research_enabled": False,
     "web_research_results": [],
     # Trace (S10)
     "trace_id": "0" * 32,
@@ -44,35 +47,35 @@ _STATE_DEFAULTS: dict[str, Any] = {
     "constraints_version": "no-profile",
     "uncertainty_register": [],
     # Intermedios
-    "fr_analysis":     {},
-    "sdd":             {},
+    "fr_analysis": {},
+    "sdd": {},
     "approval_decision": "",
-    "approval_comment":  "",
+    "approval_comment": "",
     # GAP-002 fan-out
     "selected_agents": ["backend"],
-    "current_agent":   "backend",
-    "agent_results":   [],
+    "current_agent": "backend",
+    "agent_results": [],
     # S47: agentes client-side pendientes
-    "pending_agents":  [],
+    "pending_agents": [],
     # GAP-001/005
-    "security_result":     {},
-    "qa_result":           {},
+    "security_result": {},
+    "qa_result": {},
     "security_retry_count": 0,
-    "qa_retry_count":       0,
-    "retry_feedback":       "",
+    "qa_retry_count": 0,
+    "retry_feedback": "",
     "escalation_resolution": "",
     # S22
-    "test_results":          {},
-    "test_retry_count":      0,
+    "test_results": {},
+    "test_retry_count": 0,
     "security_scan_results": {},
-    "generated_docs":        [],
+    "generated_docs": [],
     # Tokens / timing
-    "token_usage":    {},
+    "token_usage": {},
     "cycle_start_ts": time.time() - 5.0,
     # Output
     "deliverables": [],
-    "status":       "idle",
-    "messages":     [],
+    "status": "idle",
+    "messages": [],
 }
 
 
@@ -96,13 +99,13 @@ def make_fr_analysis(
     summary: str = "FR analizado correctamente",
 ) -> dict:
     return {
-        "raw":            summary,
-        "type":           fr_type,
-        "complexity":     complexity,
-        "components":     components or ["api", "database"],
+        "raw": summary,
+        "type": fr_type,
+        "complexity": complexity,
+        "components": components or ["api", "database"],
         "oracle_involved": oracle_involved,
-        "risks":          risks or [],
-        "summary":        summary,
+        "risks": risks or [],
+        "summary": summary,
     }
 
 
@@ -112,15 +115,14 @@ def make_sdd(
 ) -> dict:
     agents = agents or ["backend"]
     tasks = [
-        {"agent": a, "description": f"Tarea de {a}", "priority": "high"}
-        for a in agents
+        {"agent": a, "description": f"Tarea de {a}", "priority": "high"} for a in agents
     ]
     return {
-        "summary":      summary,
+        "summary": summary,
         "requirements": [{"id": "R1", "text": "El sistema debe autenticar usuarios"}],
-        "design":       {"architecture": "REST API", "components": agents},
-        "constraints":  [{"type": "security", "text": "Usar HTTPS"}],
-        "tasks":        tasks,
+        "design": {"architecture": "REST API", "components": agents},
+        "constraints": [{"type": "security", "text": "Usar HTTPS"}],
+        "tasks": tasks,
     }
 
 
@@ -131,12 +133,12 @@ def make_agent_result(
     artifacts: list | None = None,
 ) -> dict:
     return {
-        "agent":     agent,
-        "output":    output,
+        "agent": agent,
+        "output": output,
         # artifacts=[] → path clásico (deliver llama _write_artifacts sobre output)
         # Para simular tool calling, pasar artifacts=[{"path": ..., "size": ..., "lang": ...}]
         "artifacts": artifacts if artifacts is not None else [],
-        "passed":    passed,
+        "passed": passed,
     }
 
 
@@ -147,15 +149,15 @@ def make_security_result(
     vulnerabilities: list | None = None,
 ) -> dict:
     return {
-        "passed":            passed,
-        "score":             score,
-        "severity":          severity,
-        "vulnerabilities":   vulnerabilities or [],
-        "secrets_found":     [],
+        "passed": passed,
+        "score": score,
+        "severity": severity,
+        "vulnerabilities": vulnerabilities or [],
+        "secrets_found": [],
         "insecure_patterns": [],
-        "rls_compliant":     True,
-        "remediation":       [],
-        "summary":           "Sin vulnerabilidades críticas",
+        "rls_compliant": True,
+        "remediation": [],
+        "summary": "Sin vulnerabilidades críticas",
     }
 
 
@@ -166,11 +168,11 @@ def make_qa_result(
     issues: list | None = None,
 ) -> dict:
     return {
-        "passed":              passed,
-        "score":               score,
-        "issues":              issues or [],
-        "sdd_compliance":      sdd_compliance,
+        "passed": passed,
+        "score": score,
+        "issues": issues or [],
+        "sdd_compliance": sdd_compliance,
         "missing_requirements": [],
         "code_quality_issues": [],
-        "summary":             "Calidad aceptable",
+        "summary": "Calidad aceptable",
     }

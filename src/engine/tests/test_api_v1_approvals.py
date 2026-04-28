@@ -5,38 +5,48 @@ GET /api/v1/orgs/{org_id}/approvals/pending
 Estrategia: pending_store mockeado en memoria, BD mockeada con AsyncMock.
 No requiere infraestructura.
 """
-import sys, os, time
+
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI
 
-_TEST_SECRET  = "a" * 64
-_ORG_ID       = "ORG_APPROVAL_TEST"
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+_TEST_SECRET = "a" * 64
+_ORG_ID = "ORG_APPROVAL_TEST"
 _OTHER_ORG_ID = "ORG_OTHER"
-_USER_ID      = "USR_APPROVAL_01"
-_PROJECT_ID   = "PROJ_001"
+_USER_ID = "USR_APPROVAL_01"
+_PROJECT_ID = "PROJ_001"
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def patch_secrets(monkeypatch):
     import auth
+
     monkeypatch.setattr(auth, "_JWT_SECRET", _TEST_SECRET)
     import routers.api_v1 as av
+
     monkeypatch.setattr(av, "_DATABASE_URL", "postgresql://mock")
     import routers.auth_router as ar
+
     monkeypatch.setattr(ar, "_DATABASE_URL", "postgresql://mock")
 
 
 @pytest.fixture(autouse=True)
 def clear_store():
     import pending_store
+
     pending_store._store.clear()
     yield
     pending_store._store.clear()
@@ -44,8 +54,9 @@ def clear_store():
 
 @pytest.fixture
 def app():
-    from routers.auth_router import router as auth_router
     from routers.api_v1 import router as api_router
+    from routers.auth_router import router as auth_router
+
     a = FastAPI()
     a.include_router(auth_router)
     a.include_router(api_router)
@@ -55,23 +66,24 @@ def app():
 @pytest.fixture
 def auth_headers():
     import auth
+
     token = auth.create_access_token(_USER_ID, _ORG_ID, "admin")
     return {"Authorization": f"Bearer {token}"}
 
 
 def _approval_item(thread_id: str, org_id: str = _ORG_ID, project_id: str = "") -> dict:
     return {
-        "thread_id":      thread_id,
-        "session_id":     f"sess-{thread_id}",
-        "org_id":         org_id,
-        "project_id":     project_id,
+        "thread_id": thread_id,
+        "session_id": f"sess-{thread_id}",
+        "org_id": org_id,
+        "project_id": project_id,
         "feature_request": f"Feature para {thread_id}",
-        "sdd_summary":    "Resumen del SDD generado",
+        "sdd_summary": "Resumen del SDD generado",
         "sdd": {
-            "summary":      "Módulo de autenticación",
+            "summary": "Módulo de autenticación",
             "requirements": [{"id": "R1", "description": "JWT válido"}],
-            "tasks":        [{"agent": "backend", "title": "Implementar JWT handler"}],
-            "constraints":  [],
+            "tasks": [{"agent": "backend", "title": "Implementar JWT handler"}],
+            "constraints": [],
         },
         "revision_count": 0,
     }
@@ -84,8 +96,8 @@ def _conn_with_project(project_name: str = "OVD Platform"):
     cursor.fetchone = AsyncMock(return_value=None)
     conn = AsyncMock()
     conn.__aenter__ = AsyncMock(return_value=conn)
-    conn.__aexit__  = AsyncMock(return_value=False)
-    conn.execute    = AsyncMock(return_value=cursor)
+    conn.__aexit__ = AsyncMock(return_value=False)
+    conn.execute = AsyncMock(return_value=cursor)
     return conn
 
 
@@ -93,10 +105,13 @@ def _conn_with_project(project_name: str = "OVD Platform"):
 # TestListPendingApprovals — sin items
 # ---------------------------------------------------------------------------
 
+
 class TestListPendingApprovalsVacio:
     @pytest.mark.asyncio
     async def test_retorna_lista_vacia_si_no_hay_pendientes(self, app, auth_headers):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r = await client.get(
                 f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                 headers=auth_headers,
@@ -106,16 +121,21 @@ class TestListPendingApprovalsVacio:
 
     @pytest.mark.asyncio
     async def test_sin_token_retorna_401(self, app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r = await client.get(f"/api/v1/orgs/{_ORG_ID}/approvals/pending")
         assert r.status_code == 401
 
     @pytest.mark.asyncio
     async def test_otro_org_retorna_403(self, app):
         import auth
+
         token = auth.create_access_token(_USER_ID, _OTHER_ORG_ID, "developer")
         headers = {"Authorization": f"Bearer {token}"}
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             r = await client.get(
                 f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                 headers=headers,
@@ -127,15 +147,21 @@ class TestListPendingApprovalsVacio:
 # TestListPendingApprovals — con items
 # ---------------------------------------------------------------------------
 
+
 class TestListPendingApprovalsConItems:
     @pytest.mark.asyncio
     async def test_retorna_items_del_org(self, app, auth_headers):
         import pending_store
+
         pending_store.add("TH1", _approval_item("TH1"))
         pending_store.add("TH2", _approval_item("TH2"))
 
-        with patch("psycopg.AsyncConnection.connect", return_value=_conn_with_project()):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch(
+            "psycopg.AsyncConnection.connect", return_value=_conn_with_project()
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,
@@ -150,28 +176,46 @@ class TestListPendingApprovalsConItems:
     @pytest.mark.asyncio
     async def test_item_tiene_campos_requeridos(self, app, auth_headers):
         import pending_store
+
         pending_store.add("TH1", _approval_item("TH1"))
 
-        with patch("psycopg.AsyncConnection.connect", return_value=_conn_with_project()):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch(
+            "psycopg.AsyncConnection.connect", return_value=_conn_with_project()
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,
                 )
 
         item = r.json()[0]
-        for campo in ["thread_id", "session_id", "feature_request",
-                      "sdd_summary", "sdd", "created_at", "revision_count"]:
+        for campo in [
+            "thread_id",
+            "session_id",
+            "feature_request",
+            "sdd_summary",
+            "sdd",
+            "created_at",
+            "revision_count",
+        ]:
             assert campo in item, f"Campo '{campo}' ausente en la respuesta"
 
     @pytest.mark.asyncio
     async def test_created_at_es_iso8601(self, app, auth_headers):
-        import pending_store
         from datetime import datetime
+
+        import pending_store
+
         pending_store.add("TH1", _approval_item("TH1"))
 
-        with patch("psycopg.AsyncConnection.connect", return_value=_conn_with_project()):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch(
+            "psycopg.AsyncConnection.connect", return_value=_conn_with_project()
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,
@@ -185,10 +229,15 @@ class TestListPendingApprovalsConItems:
     @pytest.mark.asyncio
     async def test_sdd_contiene_requirements_y_tasks(self, app, auth_headers):
         import pending_store
+
         pending_store.add("TH1", _approval_item("TH1"))
 
-        with patch("psycopg.AsyncConnection.connect", return_value=_conn_with_project()):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch(
+            "psycopg.AsyncConnection.connect", return_value=_conn_with_project()
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,
@@ -205,10 +254,12 @@ class TestListPendingApprovalsConItems:
 # TestAislamientoMultiOrg — regresión SEC-01
 # ---------------------------------------------------------------------------
 
+
 class TestAislamientoApprovals:
     @pytest.mark.asyncio
     async def test_org_a_no_ve_pendientes_de_org_b(self, app, auth_headers):
         import pending_store
+
         # ORG_ID tiene 2 pendientes, ORG_OTHER tiene 1
         pending_store.add("TH_A1", _approval_item("TH_A1", _ORG_ID))
         pending_store.add("TH_A2", _approval_item("TH_A2", _ORG_ID))
@@ -216,13 +267,15 @@ class TestAislamientoApprovals:
 
         conn = MagicMock()
         conn.__aenter__ = AsyncMock(return_value=conn)
-        conn.__aexit__  = AsyncMock(return_value=False)
+        conn.__aexit__ = AsyncMock(return_value=False)
         cursor = MagicMock()
         cursor.fetchall = AsyncMock(return_value=[])
         conn.execute = AsyncMock(return_value=cursor)
 
         with patch("psycopg.AsyncConnection.connect", return_value=conn):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,
@@ -236,12 +289,17 @@ class TestAislamientoApprovals:
     @pytest.mark.asyncio
     async def test_revision_count_preservado(self, app, auth_headers):
         import pending_store
+
         item = _approval_item("TH1")
         item["revision_count"] = 2
         pending_store.add("TH1", item)
 
-        with patch("psycopg.AsyncConnection.connect", return_value=_conn_with_project()):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch(
+            "psycopg.AsyncConnection.connect", return_value=_conn_with_project()
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get(
                     f"/api/v1/orgs/{_ORG_ID}/approvals/pending",
                     headers=auth_headers,

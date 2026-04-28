@@ -3,32 +3,42 @@ OVD Platform — Tests de regresión por sprint (R4)
 Verifican los contratos críticos establecidos en cada sprint/GAP.
 No requieren LLM ni infraestructura real.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
 import hashlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from factories import make_state, make_security_result, make_qa_result
-
+import pytest
+from factories import make_qa_result, make_security_result, make_state
 
 # ---------------------------------------------------------------------------
 # TestGAP001SecurityAuditIndependiente
 # ---------------------------------------------------------------------------
 
-class TestGAP001SecurityAuditIndependiente:
 
+class TestGAP001SecurityAuditIndependiente:
     def test_security_result_tiene_campos_obligatorios(self):
         """
         El dict de security_result siempre debe tener los campos:
         passed, score, severity, vulnerabilities, rls_compliant.
         """
         result = make_security_result()
-        campos_obligatorios = ["passed", "score", "severity", "vulnerabilities", "rls_compliant"]
+        campos_obligatorios = [
+            "passed",
+            "score",
+            "severity",
+            "vulnerabilities",
+            "rls_compliant",
+        ]
         for campo in campos_obligatorios:
-            assert campo in result, f"Campo obligatorio '{campo}' ausente en security_result"
+            assert campo in result, (
+                f"Campo obligatorio '{campo}' ausente en security_result"
+            )
 
     def test_security_score_entre_0_y_100(self):
         """El score no puede ser negativo ni mayor a 100."""
@@ -67,19 +77,22 @@ class TestGAP001SecurityAuditIndependiente:
 # TestGAP002FanOut
 # ---------------------------------------------------------------------------
 
-class TestGAP002FanOut:
 
+class TestGAP002FanOut:
     def test_dispatch_agents_grupo1_solo_server_side(self):
         """
         S47: _dispatch_agents con ["backend","frontend","database"]
         despacha solo el grupo 1 (server-side): backend + database.
         Frontend queda pendiente para el segundo fan-out.
         """
-        from graph import _dispatch_agents
         from langgraph.types import Send
 
-        state = make_state(selected_agents=["backend", "frontend", "database"],
-                           pending_agents=["frontend"])
+        from graph import _dispatch_agents
+
+        state = make_state(
+            selected_agents=["backend", "frontend", "database"],
+            pending_agents=["frontend"],
+        )
         sends = _dispatch_agents(state)
 
         # Solo 2 sends: backend + database (server-side)
@@ -92,8 +105,9 @@ class TestGAP002FanOut:
         """Cada Send del grupo 1 debe incluir el campo 'current_agent' con nombre server-side."""
         from graph import _dispatch_agents
 
-        state = make_state(selected_agents=["backend", "frontend"],
-                           pending_agents=["frontend"])
+        state = make_state(
+            selected_agents=["backend", "frontend"], pending_agents=["frontend"]
+        )
         sends = _dispatch_agents(state)
 
         agentes_enviados = [s.arg["current_agent"] for s in sends]
@@ -153,8 +167,8 @@ class TestGAP002FanOut:
 # TestGAP004ConstraintsVersion
 # ---------------------------------------------------------------------------
 
-class TestGAP004ConstraintsVersion:
 
+class TestGAP004ConstraintsVersion:
     def test_constraints_version_es_hash_md5_8chars(self):
         """
         Con project_context no vacío, constraints_version debe ser
@@ -195,7 +209,11 @@ class TestGAP004ConstraintsVersion:
         (según implementación en graph.py).
         """
         project_ctx = ""
-        constraints_version = hashlib.md5(project_ctx.encode()).hexdigest()[:8] if project_ctx else "no-profile"
+        constraints_version = (
+            hashlib.md5(project_ctx.encode()).hexdigest()[:8]
+            if project_ctx
+            else "no-profile"
+        )
 
         assert constraints_version == "no-profile"
 
@@ -204,11 +222,12 @@ class TestGAP004ConstraintsVersion:
 # TestGAP005RetryLoop
 # ---------------------------------------------------------------------------
 
-class TestGAP005RetryLoop:
 
+class TestGAP005RetryLoop:
     def test_max_retries_definido(self):
         """MAX_RETRIES debe estar definido en graph y tener el valor configurado (3)."""
         from graph import MAX_RETRIES
+
         assert MAX_RETRIES == 3
 
     def test_route_security_escalates_at_max(self, monkeypatch):
@@ -217,7 +236,8 @@ class TestGAP005RetryLoop:
         route_after_security debe retornar 'handle_escalation'.
         """
         import graph
-        from graph import route_after_security, MAX_RETRIES
+        from graph import MAX_RETRIES, route_after_security
+
         # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar la escalada
         monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
 
@@ -234,7 +254,8 @@ class TestGAP005RetryLoop:
         route_after_security debe retornar 'route_agents' (reintento).
         """
         import graph
-        from graph import route_after_security, MAX_RETRIES
+        from graph import MAX_RETRIES, route_after_security
+
         # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar el retry
         monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
 
@@ -261,7 +282,7 @@ class TestGAP005RetryLoop:
         Con retry_count=MAX_RETRIES y QA fallando →
         route_after_qa debe retornar 'handle_escalation'.
         """
-        from graph import route_after_qa, MAX_RETRIES
+        from graph import MAX_RETRIES, route_after_qa
 
         state = make_state(
             qa_result=make_qa_result(passed=False, score=0),
@@ -275,7 +296,7 @@ class TestGAP005RetryLoop:
         Con retry_count < MAX_RETRIES y QA fallando →
         route_after_qa debe retornar 'route_agents' (reintento).
         """
-        from graph import route_after_qa, MAX_RETRIES
+        from graph import MAX_RETRIES, route_after_qa
 
         state = make_state(
             qa_result=make_qa_result(passed=False, score=0),
@@ -300,8 +321,8 @@ class TestGAP005RetryLoop:
 # TestS8ContextResolver
 # ---------------------------------------------------------------------------
 
-class TestS8ContextResolver:
 
+class TestS8ContextResolver:
     def test_agentcontext_to_prompt_incluye_restricciones(self):
         """
         AgentContext con restricciones → to_prompt_block() debe
@@ -355,7 +376,7 @@ class TestS8ContextResolver:
         _resolve_model_routing con stack que incluye Oracle → 'claude'.
         Oracle está en _LEGACY_INDICATORS.
         """
-        from context_resolver import _resolve_model_routing, StackRegistry
+        from context_resolver import StackRegistry, _resolve_model_routing
 
         stack = StackRegistry(
             db_engine="oracle",
@@ -370,7 +391,7 @@ class TestS8ContextResolver:
         _resolve_model_routing con stack moderno (Python/FastAPI/PostgreSQL) →
         no es legacy → retorna 'ollama' en modo auto.
         """
-        from context_resolver import _resolve_model_routing, StackRegistry
+        from context_resolver import StackRegistry, _resolve_model_routing
 
         stack = StackRegistry(
             language="Python",
@@ -388,7 +409,7 @@ class TestS8ContextResolver:
         Si model_routing != 'auto', _resolve_model_routing devuelve
         el valor configurado independientemente del stack.
         """
-        from context_resolver import _resolve_model_routing, StackRegistry
+        from context_resolver import StackRegistry, _resolve_model_routing
 
         stack = StackRegistry(
             db_engine="postgresql",
@@ -402,7 +423,7 @@ class TestS8ContextResolver:
         Stack con db_restrictions no vacías → Claude
         (stack complejo con restricciones).
         """
-        from context_resolver import _resolve_model_routing, StackRegistry
+        from context_resolver import StackRegistry, _resolve_model_routing
 
         stack = StackRegistry(
             db_engine="mysql",
@@ -418,7 +439,7 @@ class TestS8ContextResolver:
         _infer_restrictions("oracle", "12c") debe retornar
         la lista de restricciones de Oracle 12c.
         """
-        from context_resolver import _infer_restrictions, RESTRICTION_RULES
+        from context_resolver import RESTRICTION_RULES, _infer_restrictions
 
         restrictions = _infer_restrictions("oracle", "12c")
         expected = RESTRICTION_RULES[("oracle", "12c")]
@@ -438,8 +459,8 @@ class TestS8ContextResolver:
 # TestS10JWT
 # ---------------------------------------------------------------------------
 
-class TestS10JWT:
 
+class TestS10JWT:
     def test_refresh_token_hash_nunca_igual_al_raw(self):
         """_hash_token(raw) nunca debe ser igual al token raw."""
         from auth import _hash_token
@@ -553,8 +574,8 @@ class TestS10JWT:
 # TestS11NightlyResearcher
 # ---------------------------------------------------------------------------
 
-class TestS11NightlyResearcher:
 
+class TestS11NightlyResearcher:
     def test_queries_oracle_priorizan_cve(self):
         """
         Stack con database="Oracle 12c" → la primera query debe contener "CVE"
@@ -592,7 +613,7 @@ class TestS11NightlyResearcher:
 
     def test_queries_respeta_max_queries(self):
         """El número de queries no debe exceder _MAX_QUERIES (por defecto 3)."""
-        from nightly_researcher import build_stack_queries, _MAX_QUERIES
+        from nightly_researcher import _MAX_QUERIES, build_stack_queries
 
         stack = {
             "language": "Java",
@@ -640,8 +661,9 @@ class TestS11NightlyResearcher:
 
     def test_queries_incluyen_año_actual(self):
         """Las queries deben incluir el año actual."""
-        from nightly_researcher import build_stack_queries
         from datetime import datetime, timezone
+
+        from nightly_researcher import build_stack_queries
 
         stack = {"database": "MySQL", "db_version": "8.0"}
         queries = build_stack_queries(stack)

@@ -3,12 +3,16 @@ OVD Platform — Tests para GET /health (api.py)
 Unit tests sin BD real ni LLM real.
 El lifespan del app se mockea para evitar conexiones a NATS/checkpointer.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-from unittest.mock import patch, AsyncMock
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 # Mockear el lifespan para que no intente conectar a nada
@@ -29,8 +33,8 @@ client = TestClient(app)
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestHealthEndpoint:
 
+class TestHealthEndpoint:
     def test_health_retorna_200(self):
         """GET /health debe responder con HTTP 200."""
         response = client.get("/health")

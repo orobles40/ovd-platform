@@ -2,11 +2,15 @@
 OVD Platform — Tests: web_research_node triggers y queries (Sprint 11)
 No requiere LLM ni conexión real.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from graph import _should_run_web_research, _build_research_queries
+
+from graph import _build_research_queries, _should_run_web_research
 
 
 def _state(**kwargs):
@@ -47,21 +51,33 @@ class TestShouldRunWebResearch:
         assert _should_run_web_research(state) is True
 
     def test_trigger_por_oracle_alta_complejidad(self):
-        state = _state(fr_analysis={
-            "oracle_involved": True, "complexity": "high", "fr_type": "feature"
-        })
+        state = _state(
+            fr_analysis={
+                "oracle_involved": True,
+                "complexity": "high",
+                "fr_type": "feature",
+            }
+        )
         assert _should_run_web_research(state) is True
 
     def test_no_trigger_oracle_baja_complejidad(self):
-        state = _state(fr_analysis={
-            "oracle_involved": True, "complexity": "low", "fr_type": "feature"
-        })
+        state = _state(
+            fr_analysis={
+                "oracle_involved": True,
+                "complexity": "low",
+                "fr_type": "feature",
+            }
+        )
         assert _should_run_web_research(state) is False
 
     def test_no_trigger_fr_normal(self):
         state = _state(
             feature_request="Agregar campo apellido al formulario",
-            fr_analysis={"fr_type": "feature", "complexity": "low", "oracle_involved": False},
+            fr_analysis={
+                "fr_type": "feature",
+                "complexity": "low",
+                "oracle_involved": False,
+            },
         )
         assert _should_run_web_research(state) is False
 

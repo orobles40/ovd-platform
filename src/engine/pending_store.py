@@ -4,6 +4,7 @@ OVD Platform — Almacén en memoria de sesiones con aprobación pendiente.
 Singleton de módulo — compartido entre api.py y api_v1.py sin imports circulares.
 Se limpia en memory ante restart del engine; los threads siguen en el checkpointer.
 """
+
 from __future__ import annotations
 
 import time

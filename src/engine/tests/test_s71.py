@@ -5,7 +5,9 @@ Tests S71
   S71-D: system_backend_python.md contiene regla @field_validator + @model_validator
   S71-F: system_backend_python.md contiene regla SQLAlchemy + Oracle thick mode
 """
+
 import pathlib
+
 import pytest
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
@@ -17,14 +19,16 @@ _BACKEND_PY = _TEMPLATES_DIR / "system_backend_python.md"
 # S71-A: system_sdd.md — naming en inglés
 # ---------------------------------------------------------------------------
 
+
 class TestS71A_SDD:
     def test_sdd_no_usa_calcular_imc_español(self):
         """S71-A: calcular_imc no debe aparecer como nombre recomendado (solo en lista PROHIBIDO)."""
         content = _SDD_TEMPLATE.read_text(encoding="utf-8")
         for line in content.split("\n"):
             if "calcular_imc" in line:
-                assert "PROHIBIDO" in line or "❌" in line, \
+                assert "PROHIBIDO" in line or "❌" in line, (
                     f"calcular_imc aparece fuera del contexto PROHIBIDO: {line}"
+                )
 
     def test_sdd_usa_calculate_bmi_en_ejemplos(self):
         """S71-A: system_sdd.md usa nombre canónico en inglés 'calculate_bmi'."""
@@ -55,6 +59,7 @@ class TestS71A_SDD:
 # S71-A: system_backend_python.md — tabla canónica + regla de nombre exacto
 # ---------------------------------------------------------------------------
 
+
 class TestS71A_Backend:
     def test_backend_tabla_canonica_validate_rut(self):
         """S71-A: system_backend_python.md tiene validate_rut en tabla canónica."""
@@ -69,7 +74,10 @@ class TestS71A_Backend:
     def test_backend_regla_nombre_exacto(self):
         """S71-A: system_backend_python.md tiene regla de respetar nombre de task description."""
         content = _BACKEND_PY.read_text(encoding="utf-8")
-        assert "task description" in content.lower() or "task_description" in content.lower()
+        assert (
+            "task description" in content.lower()
+            or "task_description" in content.lower()
+        )
         assert "NO adaptes" in content or "no adaptes" in content.lower()
 
     def test_backend_rut_en_canonical_path(self):
@@ -87,6 +95,7 @@ class TestS71A_Backend:
 # S71-D: Pydantic v2 — @field_validator genérico + @model_validator
 # ---------------------------------------------------------------------------
 
+
 class TestS71D:
     def test_template_field_validator_generico(self):
         """S71-D: system_backend_python.md muestra @field_validator para campo genérico (no solo RUT)."""
@@ -94,7 +103,7 @@ class TestS71D:
         # Debe haber un ejemplo de @field_validator fuera de la sección de RUT
         idx_pydantic_v2 = content.find("Pydantic v2")
         assert idx_pydantic_v2 != -1, "Debe tener sección Pydantic v2"
-        section = content[idx_pydantic_v2:idx_pydantic_v2 + 2000]
+        section = content[idx_pydantic_v2 : idx_pydantic_v2 + 2000]
         assert "@field_validator" in section
         assert "@classmethod" in section
 
@@ -132,6 +141,7 @@ class TestS71D:
 # ---------------------------------------------------------------------------
 # S71-F: SQLAlchemy ORM + Oracle thick mode
 # ---------------------------------------------------------------------------
+
 
 class TestS71F:
     def test_template_prohibe_oracledb_directo(self):

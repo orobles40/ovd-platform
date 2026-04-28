@@ -5,18 +5,21 @@ Sprint: S6+
 Verifica que el grafo puede construirse con MemorySaver y que los nodos
 críticos están registrados. No ejecuta ningún ciclo completo.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from graph import build_graph, OVDState
-
+from graph import OVDState, build_graph
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_build_graph_exitoso():
     """build_graph con MemorySaver no lanza excepción y retorna un grafo compilado."""

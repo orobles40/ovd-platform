@@ -5,13 +5,14 @@ Copyright 2026 Omar Robles
 Verifica los reducers puros del grafo: _list_reset_or_add y _merge_token_usage.
 No requiere base de datos ni LLM.
 """
-import sys
+
 import os
+import sys
 
 # Agregar src/engine al path para importar el módulo
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from graph import _list_reset_or_add, _merge_token_usage, _extract_uncertainties
+from graph import _extract_uncertainties, _list_reset_or_add, _merge_token_usage
 
 
 class TestListResetOrAdd:
@@ -81,9 +82,15 @@ class TestMergeTokenUsage:
     def test_acumulacion_fan_out_paralelo(self):
         """Simula 3 agentes corriendo en paralelo, cada uno emite token_usage."""
         base = {}
-        after_backend = _merge_token_usage(base, {"backend": {"input": 1000, "output": 500}})
-        after_frontend = _merge_token_usage(after_backend, {"frontend": {"input": 800, "output": 400}})
-        after_database = _merge_token_usage(after_frontend, {"database": {"input": 600, "output": 300}})
+        after_backend = _merge_token_usage(
+            base, {"backend": {"input": 1000, "output": 500}}
+        )
+        after_frontend = _merge_token_usage(
+            after_backend, {"frontend": {"input": 800, "output": 400}}
+        )
+        after_database = _merge_token_usage(
+            after_frontend, {"database": {"input": 600, "output": 300}}
+        )
 
         total_input = sum(v["input"] for v in after_database.values())
         total_output = sum(v["output"] for v in after_database.values())

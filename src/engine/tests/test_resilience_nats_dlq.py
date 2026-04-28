@@ -1,15 +1,19 @@
 """
 S20 — GAP-R7: Tests de NATS retry y dead letter queue.
 """
+
 from __future__ import annotations
-import pytest
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture(autouse=True)
 def reset_nats_connection():
     """Resetea la conexión NATS global entre tests."""
     import nats_client as nc
+
     original = nc._nc
     nc._nc = None
     yield
@@ -82,7 +86,9 @@ async def test_publish_remains_fire_and_forget():
 
     with (
         patch.object(nc, "_get_connection", AsyncMock(return_value=mock_conn)),
-        patch.object(nc, "_send_to_dlq", AsyncMock(side_effect=Exception("dlq also down"))),
+        patch.object(
+            nc, "_send_to_dlq", AsyncMock(side_effect=Exception("dlq also down"))
+        ),
         patch.object(nc, "NATS_URL", "nats://localhost:4222"),
     ):
         # No debe lanzar excepción
@@ -94,7 +100,9 @@ async def test_dlq_insert_failure_does_not_propagate():
     """_send_to_dlq loguea el error pero no propaga si el INSERT falla."""
     import nats_client as nc
 
-    with patch("psycopg.AsyncConnection.connect", AsyncMock(side_effect=Exception("db down"))):
+    with patch(
+        "psycopg.AsyncConnection.connect", AsyncMock(side_effect=Exception("db down"))
+    ):
         with patch.dict("os.environ", {"DATABASE_URL": "postgresql://localhost/test"}):
             # No debe lanzar
             await nc._send_to_dlq("ovd.org1.test", {"x": 1}, "some error")

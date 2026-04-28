@@ -1,17 +1,21 @@
 """
 S20 — GAP-R3: Tests de cancelación de sesiones stale.
 """
+
 from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timedelta, timezone
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     """Limpia el estado compartido entre tests."""
     import task_checkout as tc
+
     tc._active_sessions.clear()
     tc._stale_sessions.clear()
     tc._running_tasks.clear()
@@ -24,6 +28,7 @@ def clean_state():
 def _register_old_session(thread_id: str, minutes_ago: int = 35):
     """Helper: registra una sesión con timestamp antiguo."""
     import task_checkout as tc
+
     past = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     tc._active_sessions[thread_id] = {
         "org_id": "org1",

@@ -25,8 +25,8 @@ Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 from __future__ import annotations
 
 import ast
-import re
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
@@ -103,14 +103,22 @@ def _rename_functions(code: str) -> str:
 # S72-B — Pydantic v1 → v2
 # ---------------------------------------------------------------------------
 
+
 def _fix_pydantic_v1(code: str) -> str:
     """S72-B paso 2: convierte patrones Pydantic v1 → v2 via regex + líneas."""
     _has_v1_decorator = "@validator" in code or "root_validator" in code
-    _has_v1_import = bool(re.search(r"from\s+pydantic\s+import[^\n]*\bvalidator\b", code))
+    _has_v1_import = bool(
+        re.search(r"from\s+pydantic\s+import[^\n]*\bvalidator\b", code)
+    )
     _has_v2_decorator = "@field_validator" in code or "@model_validator" in code
     _has_orm_mode = "orm_mode" in code or "allow_population_by_field_name" in code
 
-    if not _has_v1_decorator and not _has_v1_import and not _has_v2_decorator and not _has_orm_mode:
+    if (
+        not _has_v1_decorator
+        and not _has_v1_import
+        and not _has_v2_decorator
+        and not _has_orm_mode
+    ):
         return code  # fast path: sin patrones v1 ni v2 a reparar
 
     changed = False
@@ -170,7 +178,9 @@ def _fix_pydantic_v1(code: str) -> str:
     for i, line in enumerate(lines):
         stripped = line.lstrip()
         indent = line[: len(line) - len(stripped)]
-        if stripped.startswith("@field_validator(") or stripped.startswith("@model_validator("):
+        if stripped.startswith("@field_validator(") or stripped.startswith(
+            "@model_validator("
+        ):
             prev = [l.strip() for l in result[-3:]]
             if "@classmethod" not in prev:
                 result.append(f"{indent}@classmethod")
@@ -187,6 +197,7 @@ def _fix_pydantic_v1(code: str) -> str:
 # ---------------------------------------------------------------------------
 # S77-B — Fix orden decoradores Pydantic v2
 # ---------------------------------------------------------------------------
+
 
 def _fix_pydantic_decorator_order(code: str) -> str:
     """S77-B: reordena decoradores — @field_validator/@model_validator
@@ -239,7 +250,8 @@ def _fix_pydantic_decorator_order(code: str) -> str:
         fixed_count += 1
         log.warning(
             "[S77-B] reordenado decoradores en %s: @%s ahora antes de @classmethod",
-            node.name, deco_names[validator_idx],
+            node.name,
+            deco_names[validator_idx],
         )
 
     if fixed_count == 0:
@@ -252,6 +264,7 @@ def _fix_pydantic_decorator_order(code: str) -> str:
 # ---------------------------------------------------------------------------
 # S73-A — SQLAlchemy v1 → v2
 # ---------------------------------------------------------------------------
+
 
 def _fix_sqlalchemy_v1(code: str) -> str:
     """S73-A: convierte patrones SQLAlchemy 1.x → 2.x via regex."""
@@ -272,14 +285,18 @@ def _fix_sqlalchemy_v1(code: str) -> str:
     if "declarative_base()" in code:
         code = re.sub(
             r"^(\s*)(\w+)\s*=\s*declarative_base\(\)\s*$",
-            lambda m: f"{m.group(1)}class {m.group(2)}(DeclarativeBase):\n{m.group(1)}    pass",
+            lambda m: (
+                f"{m.group(1)}class {m.group(2)}(DeclarativeBase):\n{m.group(1)}    pass"
+            ),
             code,
             flags=re.MULTILINE,
         )
         changed = True
 
     if changed:
-        log.warning("[S73-A] SQLAlchemy v1→v2: declarative_base() → DeclarativeBase class")
+        log.warning(
+            "[S73-A] SQLAlchemy v1→v2: declarative_base() → DeclarativeBase class"
+        )
 
     return code
 
@@ -287,6 +304,7 @@ def _fix_sqlalchemy_v1(code: str) -> str:
 # ---------------------------------------------------------------------------
 # S77-A — Fix parámetros Oracle inválidos en create_engine
 # ---------------------------------------------------------------------------
+
 
 def _fix_sqlalchemy_oracle_params(code: str) -> str:
     """S77-A: elimina/corrige parámetros inválidos de Oracle en create_engine.
@@ -302,20 +320,20 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
     changed = False
 
     # Eliminar thick=True/False dentro de create_engine()
-    if re.search(r'\bthick\s*=\s*(True|False)', code):
+    if re.search(r"\bthick\s*=\s*(True|False)", code):
         new = re.sub(
-            r',\s*thick\s*=\s*(?:True|False)\s*(?=,|\))',
-            '',
+            r",\s*thick\s*=\s*(?:True|False)\s*(?=,|\))",
+            "",
             code,
         )
         # también cuando thick= es el primer kwarg justo después de url
         new = re.sub(
-            r'(create_engine\s*\([^,)]+),\s*thick\s*=\s*(?:True|False)',
-            r'\1',
+            r"(create_engine\s*\([^,)]+),\s*thick\s*=\s*(?:True|False)",
+            r"\1",
             new,
         )
-        new = re.sub(r',\s*\)', ')', new)   # cleanup trailing comma
-        new = re.sub(r',\s*,', ',', new)    # cleanup double comma
+        new = re.sub(r",\s*\)", ")", new)  # cleanup trailing comma
+        new = re.sub(r",\s*,", ",", new)  # cleanup double comma
         if new != code:
             changed = True
             code = new
@@ -323,8 +341,8 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 
     # Eliminar mode="thick" / mode='thick'
     if re.search(r"mode\s*=\s*[\"']thick[\"']", code):
-        new = re.sub(r',?\s*mode\s*=\s*["\']thick["\']\s*(?=,|\))', '', code)
-        new = re.sub(r',\s*\)', ')', new)
+        new = re.sub(r',?\s*mode\s*=\s*["\']thick["\']\s*(?=,|\))', "", code)
+        new = re.sub(r",\s*\)", ")", new)
         if new != code:
             changed = True
             code = new
@@ -332,7 +350,7 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 
     # Corregir thick_mode="True" string → True bool
     if re.search(r"thick_mode\s*=\s*[\"']True[\"']", code):
-        new = re.sub(r"thick_mode\s*=\s*[\"']True[\"']", 'thick_mode=True', code)
+        new = re.sub(r"thick_mode\s*=\s*[\"']True[\"']", "thick_mode=True", code)
         if new != code:
             changed = True
             code = new
@@ -347,6 +365,7 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 # ---------------------------------------------------------------------------
 # S84-A — Fix Oracle init en database.py con URL PostgreSQL
 # ---------------------------------------------------------------------------
+
 
 def _fix_oracle_init_in_postgres_db(content: str, rel_path: str) -> str:
     """S84-A: elimina oracledb.init_oracle_client() cuando DATABASE_URL es PostgreSQL.
@@ -367,19 +386,24 @@ def _fix_oracle_init_in_postgres_db(content: str, rel_path: str) -> str:
         return content
     lines = content.splitlines(keepends=True)
     new_lines = [
-        line for line in lines
+        line
+        for line in lines
         if "oracledb.init_oracle_client" not in line
         and not re.match(r"^import oracledb\b", line.strip())
     ]
     new_content = "".join(new_lines)
     if new_content != content:
-        log.warning("[S84-A] oracledb.init_oracle_client() eliminado de %s (DATABASE_URL es PostgreSQL)", rel_path)
+        log.warning(
+            "[S84-A] oracledb.init_oracle_client() eliminado de %s (DATABASE_URL es PostgreSQL)",
+            rel_path,
+        )
     return new_content
 
 
 # ---------------------------------------------------------------------------
 # S80-C — Fix declarative_base() anti-pattern en archivos que no son database.py
 # ---------------------------------------------------------------------------
+
 
 def _fix_declarative_base_import(content: str, file_path: str) -> str:
     """S80-C: reemplaza patrones de Base local con 'from src.database import Base'.
@@ -398,7 +422,7 @@ def _fix_declarative_base_import(content: str, file_path: str) -> str:
     # Variante 1 (vieja): Base = declarative_base()
     if "Base = declarative_base()" in content:
         new = re.sub(
-            r'from sqlalchemy\.orm import ([^#\n]*\bdeclarative_base\b[^#\n]*)\n',
+            r"from sqlalchemy\.orm import ([^#\n]*\bdeclarative_base\b[^#\n]*)\n",
             lambda m: (
                 ""
                 if m.group(1).strip() == "declarative_base"
@@ -406,16 +430,20 @@ def _fix_declarative_base_import(content: str, file_path: str) -> str:
             ),
             new,
         )
-        new = re.sub(r'^Base\s*=\s*declarative_base\(\)\s*\n', '', new, flags=re.MULTILINE)
+        new = re.sub(
+            r"^Base\s*=\s*declarative_base\(\)\s*\n", "", new, flags=re.MULTILINE
+        )
         changed = True
 
     # Variante 2 (nueva): import DeclarativeBase sin definir Base como subclase
     # El LLM importa DeclarativeBase pero usa UserORM(Base) sin crear Base
-    if "DeclarativeBase" in new and re.search(r'\bclass\s+\w+ORM\s*\(\s*Base\s*\)', new):
+    if "DeclarativeBase" in new and re.search(
+        r"\bclass\s+\w+ORM\s*\(\s*Base\s*\)", new
+    ):
         # Eliminar la línea de import DeclarativeBase si no se usa para definir Base
-        if not re.search(r'\bclass\s+Base\s*\(\s*DeclarativeBase\s*\)', new):
+        if not re.search(r"\bclass\s+Base\s*\(\s*DeclarativeBase\s*\)", new):
             new = re.sub(
-                r'from sqlalchemy\.orm import ([^#\n]*\bDeclarativeBase\b[^#\n]*)\n',
+                r"from sqlalchemy\.orm import ([^#\n]*\bDeclarativeBase\b[^#\n]*)\n",
                 lambda m: (
                     ""
                     if m.group(1).strip() == "DeclarativeBase"
@@ -432,13 +460,17 @@ def _fix_declarative_base_import(content: str, file_path: str) -> str:
     if "from src.database import Base" not in new:
         new = "from src.database import Base\n" + new
     if new != content:
-        log.warning("[S80-C] Base local reemplazado con 'from src.database import Base' en %s", file_path)
+        log.warning(
+            "[S80-C] Base local reemplazado con 'from src.database import Base' en %s",
+            file_path,
+        )
     return new
 
 
 # ---------------------------------------------------------------------------
 # S74-A — Fix variable local que shadowea función del mismo módulo
 # ---------------------------------------------------------------------------
+
 
 def _fix_local_variable_shadowing(code: str) -> str:
     """S74-A: renombra variables locales que shadowean funciones del mismo módulo."""
@@ -479,8 +511,8 @@ def _fix_local_variable_shadowing(code: str) -> str:
     for old, new in shadows.items():
         # Solo reemplazar assignments: `old =` → `new =`, no los call sites
         changed_code = re.sub(
-            rf'(?<![.\w]){re.escape(old)}\s*=\s*(?!=)',
-            f'{new} = ',
+            rf"(?<![.\w]){re.escape(old)}\s*=\s*(?!=)",
+            f"{new} = ",
             changed_code,
         )
         log.warning("[S74-A] local shadow fix: %s → %s", old, new)
@@ -491,6 +523,7 @@ def _fix_local_variable_shadowing(code: str) -> str:
 # ---------------------------------------------------------------------------
 # S75-A — Elimina función de módulo que redefine import con wrapper trivial
 # ---------------------------------------------------------------------------
+
 
 def _fix_function_import_shadowing(code: str) -> str:
     """S75-A: elimina FunctionDef que shadowea un import con wrapper trivial (RecursionError).
@@ -538,7 +571,10 @@ def _fix_function_import_shadowing(code: str) -> str:
             and node.body[0].value.func.id == node.name
         ):
             to_remove.add(node.name)
-            log.warning("[S75-A] wrapper trivial eliminado: def %s() → usa import directo", node.name)
+            log.warning(
+                "[S75-A] wrapper trivial eliminado: def %s() → usa import directo",
+                node.name,
+            )
 
     if not to_remove:
         return code
@@ -563,8 +599,10 @@ def _fix_function_import_shadowing(code: str) -> str:
 # S74-D — Detección de secretos hardcoded (log only)
 # ---------------------------------------------------------------------------
 
-_SECRET_VAR_KEYWORDS = frozenset({'key', 'secret', 'password', 'token', 'api_key', 'passwd', 'auth'})
-_SHA256_PWD_RE = re.compile(r'hashlib\.sha256\([^)]+\.encode\(\)\)\.hexdigest\(\)')
+_SECRET_VAR_KEYWORDS = frozenset(
+    {"key", "secret", "password", "token", "api_key", "passwd", "auth"}
+)
+_SHA256_PWD_RE = re.compile(r"hashlib\.sha256\([^)]+\.encode\(\)\)\.hexdigest\(\)")
 
 
 def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
@@ -583,16 +621,29 @@ def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
             name_lower = target.id.lower()
             if not any(kw in name_lower for kw in _SECRET_VAR_KEYWORDS):
                 continue
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            if isinstance(node.value, ast.Constant) and isinstance(
+                node.value.value, str
+            ):
                 val = node.value.value
-                if val and val not in ('', 'changeme', 'your-secret', 'your-secret-key-here'):
+                if val and val not in (
+                    "",
+                    "changeme",
+                    "your-secret",
+                    "your-secret-key-here",
+                ):
                     log.warning(
                         "[S74-D] %s:%d secret hardcoded '%s' — usar os.environ.get('%s')",
-                        rel_path, node.lineno, target.id, target.id.upper(),
+                        rel_path,
+                        node.lineno,
+                        target.id,
+                        target.id.upper(),
                     )
 
     if _SHA256_PWD_RE.search(code):
-        log.warning("[S74-D] %s: SHA-256 para password detectado — usar passlib[bcrypt]", rel_path)
+        log.warning(
+            "[S74-D] %s: SHA-256 para password detectado — usar passlib[bcrypt]",
+            rel_path,
+        )
 
     return code  # log only en S74 — no modifica el código
 
@@ -600,6 +651,7 @@ def _warn_hardcoded_secrets(code: str, rel_path: str) -> str:
 # ---------------------------------------------------------------------------
 # S81-A — Elimina clases ORM definidas en service.py (duplicado de models.py)
 # ---------------------------------------------------------------------------
+
 
 def _fix_orm_in_service(content: str, rel_path: str, work_dir: str = "") -> str:
     """S81-A: detecta clases ORM en service.py y las elimina, agregando import desde models.py.
@@ -615,11 +667,13 @@ def _fix_orm_in_service(content: str, rel_path: str, work_dir: str = "") -> str:
     # S82-A: verificar que models.py existe antes de crear phantom import
     if work_dir:
         import pathlib as _pl
+
         _models_path = _pl.Path(work_dir) / _pl.Path(rel_path).parent / "models.py"
         if not _models_path.exists():
             log.warning(
                 "[S82-A] S81-A omitido — %s no existe: preservando ORM en %s para evitar phantom import",
-                _models_path, rel_path,
+                _models_path,
+                rel_path,
             )
             return content
     try:
@@ -663,7 +717,10 @@ def _fix_orm_in_service(content: str, rel_path: str, work_dir: str = "") -> str:
     if import_line.strip() not in new_content:
         new_content = import_line + new_content
 
-    log.warning("[S81-A] ORM classes %s eliminadas de service.py — reemplazadas con import de models.py", orm_class_names)
+    log.warning(
+        "[S81-A] ORM classes %s eliminadas de service.py — reemplazadas con import de models.py",
+        orm_class_names,
+    )
     return new_content
 
 
@@ -688,9 +745,13 @@ def _fix_conftest_mock_order(content: str) -> str:
     `from oracledb import ...`. Si ya está en orden correcto, no toca nada.
     """
     has_oracledb_import = bool(
-        re.search(r"^\s*(import oracledb|from oracledb\s+import)", content, re.MULTILINE)
+        re.search(
+            r"^\s*(import oracledb|from oracledb\s+import)", content, re.MULTILINE
+        )
     )
-    has_mock = "sys.modules['oracledb']" in content or 'sys.modules["oracledb"]' in content
+    has_mock = (
+        "sys.modules['oracledb']" in content or 'sys.modules["oracledb"]' in content
+    )
 
     if not has_oracledb_import and not has_mock:
         return content  # no hay oracledb — no tocar
@@ -698,12 +759,28 @@ def _fix_conftest_mock_order(content: str) -> str:
     # Verificar si ya está en orden correcto
     if has_mock and has_oracledb_import:
         mock_pos = min(
-            (content.find("sys.modules['oracledb']") if "sys.modules['oracledb']" in content else len(content)),
-            (content.find('sys.modules["oracledb"]') if 'sys.modules["oracledb"]' in content else len(content)),
+            (
+                content.find("sys.modules['oracledb']")
+                if "sys.modules['oracledb']" in content
+                else len(content)
+            ),
+            (
+                content.find('sys.modules["oracledb"]')
+                if 'sys.modules["oracledb"]' in content
+                else len(content)
+            ),
         )
         import_pos = min(
-            (content.find("import oracledb") if "import oracledb" in content else len(content)),
-            (content.find("from oracledb") if "from oracledb" in content else len(content)),
+            (
+                content.find("import oracledb")
+                if "import oracledb" in content
+                else len(content)
+            ),
+            (
+                content.find("from oracledb")
+                if "from oracledb" in content
+                else len(content)
+            ),
         )
         if mock_pos < import_pos:
             return content  # ya está correcto
@@ -712,7 +789,9 @@ def _fix_conftest_mock_order(content: str) -> str:
 
     # Eliminar imports directos de oracledb (el mock los reemplaza)
     content = re.sub(r"^\s*import oracledb\s*\n", "", content, flags=re.MULTILINE)
-    content = re.sub(r"^\s*from oracledb\s+import[^\n]*\n", "", content, flags=re.MULTILINE)
+    content = re.sub(
+        r"^\s*from oracledb\s+import[^\n]*\n", "", content, flags=re.MULTILINE
+    )
 
     # Asegurar import pytest
     if "import pytest" not in content:
@@ -723,7 +802,11 @@ def _fix_conftest_mock_order(content: str) -> str:
     insert_at = 0
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("#!") or stripped.startswith("# -*-") or stripped.startswith("# coding"):
+        if (
+            stripped.startswith("#!")
+            or stripped.startswith("# -*-")
+            or stripped.startswith("# coding")
+        ):
             insert_at = i + 1
         else:
             break
@@ -739,8 +822,8 @@ def _fix_orm_phantom_module_import(content: str) -> str:
     'from src.contracts.models import ContractORM'. El módulo *.orm nunca existe.
     """
     return re.sub(
-        r'\bfrom\s+(src\.\w+)\.orm\s+import\b',
-        r'from \1.models import',
+        r"\bfrom\s+(src\.\w+)\.orm\s+import\b",
+        r"from \1.models import",
         content,
     )
 
@@ -753,8 +836,8 @@ def _fix_phantom_repository_import(content: str) -> str:
     importan las funciones CRUD directamente desde *.service.
     """
     return re.sub(
-        r'^from\s+src\.\w+\.repository\s+import[^\n]*\n?',
-        '',
+        r"^from\s+src\.\w+\.repository\s+import[^\n]*\n?",
+        "",
         content,
         flags=re.MULTILINE,
     )
@@ -767,8 +850,8 @@ def _fix_benefits_module_import(content: str) -> str:
     siempre viven en src/contracts/service.py. Redirección determinística.
     """
     return re.sub(
-        r'\bfrom\s+src\.benefits\.(\w+)\s+import\b',
-        r'from src.contracts.\1 import',
+        r"\bfrom\s+src\.benefits\.(\w+)\s+import\b",
+        r"from src.contracts.\1 import",
         content,
     )
 
@@ -776,6 +859,7 @@ def _fix_benefits_module_import(content: str) -> str:
 # ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
+
 
 def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> str:
     """
@@ -793,7 +877,11 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S86-C: __init__.py vacío recibe comentario mínimo antes de cualquier otro procesamiento
     if not content.strip() and rel_path.endswith("__init__.py"):
-        _pkg = rel_path.replace("/__init__.py", "").replace("\\__init__.py", "").replace("\\", "/")
+        _pkg = (
+            rel_path.replace("/__init__.py", "")
+            .replace("\\__init__.py", "")
+            .replace("\\", "/")
+        )
         return f"# {_pkg} package\n"
 
     if not content.strip():
@@ -860,7 +948,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     if content != original:
         log.warning(
             "[S72] postprocessed %s (%d → %d chars)",
-            rel_path, len(original), len(content),
+            rel_path,
+            len(original),
+            len(content),
         )
 
     return content

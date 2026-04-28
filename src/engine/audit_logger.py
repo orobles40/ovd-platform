@@ -25,6 +25,7 @@ Uso:
       summary="Ciclo completado — qa_score: 92, tokens: 4821",
   )
 """
+
 from __future__ import annotations
 
 import json
@@ -93,11 +94,17 @@ class AuditLogger:
             new_value:     estado nuevo (serializable a JSON)
         """
         if not _DATABASE_URL:
-            log.debug("audit_logger: DATABASE_URL no configurado — evento '%s' no registrado", event)
+            log.debug(
+                "audit_logger: DATABASE_URL no configurado — evento '%s' no registrado",
+                event,
+            )
             return
 
         if event not in AUDIT_EVENTS:
-            log.warning("audit_logger: evento desconocido '%s' — registrando de todas formas", event)
+            log.warning(
+                "audit_logger: evento desconocido '%s' — registrando de todas formas",
+                event,
+            )
 
         try:
             await _write_audit_log(
@@ -107,8 +114,12 @@ class AuditLogger:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 summary=summary,
-                old_value=json.dumps(old_value, default=str) if old_value is not None else None,
-                new_value=json.dumps(new_value, default=str) if new_value is not None else None,
+                old_value=json.dumps(old_value, default=str)
+                if old_value is not None
+                else None,
+                new_value=json.dumps(new_value, default=str)
+                if new_value is not None
+                else None,
             )
         except Exception as e:
             # Fire-and-forget: log el error pero no interrumpir el flujo
@@ -118,8 +129,12 @@ class AuditLogger:
 
     @staticmethod
     async def session_created(
-        org_id: str, project_id: str, session_id: str, thread_id: str,
-        feature_request: str, user_id: str | None = None,
+        org_id: str,
+        project_id: str,
+        session_id: str,
+        thread_id: str,
+        feature_request: str,
+        user_id: str | None = None,
     ) -> None:
         await AuditLogger.log(
             event="session_created",
@@ -128,13 +143,21 @@ class AuditLogger:
             resource_id=thread_id,
             summary=f"Sesión iniciada — project: {project_id} | FR: {feature_request[:80]}",
             user_id=user_id,
-            new_value={"session_id": session_id, "thread_id": thread_id, "project_id": project_id},
+            new_value={
+                "session_id": session_id,
+                "thread_id": thread_id,
+                "project_id": project_id,
+            },
         )
 
     @staticmethod
     async def cycle_completed(
-        org_id: str, thread_id: str, project_id: str,
-        qa_score: int | None, tokens_total: int, duration_secs: float,
+        org_id: str,
+        thread_id: str,
+        project_id: str,
+        qa_score: int | None,
+        tokens_total: int,
+        duration_secs: float,
         model_routing: str = "auto",
     ) -> None:
         await AuditLogger.log(
@@ -159,7 +182,10 @@ class AuditLogger:
 
     @staticmethod
     async def cycle_approved(
-        org_id: str, thread_id: str, comment: str | None, user_id: str | None = None,
+        org_id: str,
+        thread_id: str,
+        comment: str | None,
+        user_id: str | None = None,
     ) -> None:
         await AuditLogger.log(
             event="cycle_approved",
@@ -172,7 +198,10 @@ class AuditLogger:
 
     @staticmethod
     async def cycle_rejected(
-        org_id: str, thread_id: str, comment: str | None, user_id: str | None = None,
+        org_id: str,
+        thread_id: str,
+        comment: str | None,
+        user_id: str | None = None,
     ) -> None:
         await AuditLogger.log(
             event="cycle_rejected",
@@ -185,7 +214,9 @@ class AuditLogger:
 
     @staticmethod
     async def cycle_escalated(
-        org_id: str, thread_id: str, reason: str,
+        org_id: str,
+        thread_id: str,
+        reason: str,
     ) -> None:
         await AuditLogger.log(
             event="cycle_escalated",
@@ -197,7 +228,10 @@ class AuditLogger:
 
     @staticmethod
     async def secret_accessed(
-        org_id: str, project_id: str, secret_ref: str, keys_count: int,
+        org_id: str,
+        project_id: str,
+        secret_ref: str,
+        keys_count: int,
     ) -> None:
         """
         Registra acceso a secrets. NUNCA incluir los valores en el log.
@@ -209,13 +243,18 @@ class AuditLogger:
             resource_type="secret",
             resource_id=secret_ref,
             summary=f"Secrets accedidos — project: {project_id} | ref: {secret_ref} | claves: {keys_count}",
-            new_value={"project_id": project_id, "secret_ref": secret_ref, "keys_count": keys_count},
+            new_value={
+                "project_id": project_id,
+                "secret_ref": secret_ref,
+                "keys_count": keys_count,
+            },
         )
 
 
 # ---------------------------------------------------------------------------
 # Escritura a BD (async, no-bloqueante)
 # ---------------------------------------------------------------------------
+
 
 async def _write_audit_log(
     event: str,
@@ -239,7 +278,16 @@ async def _write_audit_log(
             VALUES
               (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (org_id, user_id, event, resource_type, resource_id,
-             json.dumps({"summary": summary, "old_value": old_value, "new_value": new_value}), now),
+            (
+                org_id,
+                user_id,
+                event,
+                resource_type,
+                resource_id,
+                json.dumps(
+                    {"summary": summary, "old_value": old_value, "new_value": new_value}
+                ),
+                now,
+            ),
         )
         await conn.commit()

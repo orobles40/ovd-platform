@@ -13,26 +13,26 @@ Soporte de tipos JSON Schema → Python:
   array   → list
   (otros) → str  (fallback seguro)
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any, Optional
 
 from langchain_core.tools import StructuredTool
-from pydantic import create_model, Field
-
+from pydantic import Field, create_model
 
 # ---------------------------------------------------------------------------
 # Conversión de tipos JSON Schema → Python
 # ---------------------------------------------------------------------------
 
 _TYPE_MAP: dict[str, type] = {
-    "string":  str,
+    "string": str,
     "integer": int,
-    "number":  float,
+    "number": float,
     "boolean": bool,
-    "array":   list,
-    "object":  dict,
+    "array": list,
+    "object": dict,
 }
 
 
@@ -56,7 +56,10 @@ def _build_pydantic_model(tool_name: str, input_schema: dict) -> type:
         if prop_name in required:
             fields[prop_name] = (py_type, Field(..., description=description))
         else:
-            fields[prop_name] = (Optional[py_type], Field(None, description=description))
+            fields[prop_name] = (
+                Optional[py_type],
+                Field(None, description=description),
+            )
 
     # Si el schema no tiene propiedades definidas, crear modelo vacío
     if not fields:
@@ -69,6 +72,7 @@ def _build_pydantic_model(tool_name: str, input_schema: dict) -> type:
 # ---------------------------------------------------------------------------
 # Fábrica principal
 # ---------------------------------------------------------------------------
+
 
 def make_mcp_tool(session: Any, tool_def: Any) -> StructuredTool:
     """
@@ -101,7 +105,7 @@ def make_mcp_tool(session: Any, tool_def: Any) -> StructuredTool:
             result = await session.call_tool(tool_name, arguments=kwargs)
             # result.content es lista de bloques (TextContent, ImageContent, etc.)
             parts: list[str] = []
-            for block in (result.content or []):
+            for block in result.content or []:
                 if hasattr(block, "text"):
                     parts.append(block.text)
                 elif isinstance(block, dict) and "text" in block:

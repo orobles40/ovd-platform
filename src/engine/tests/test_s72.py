@@ -5,8 +5,10 @@ Tests S72
   S72-C: _fix_conftest_mock_order — corrige orden mock oracledb en conftest.py
   S72-E: system_backend_python.md usa DeclarativeBase (SQLAlchemy 2.x)
 """
+
 import pathlib
 import sys
+
 import pytest
 
 _ENGINE_DIR = pathlib.Path(__file__).parent.parent
@@ -19,12 +21,16 @@ sys.path.insert(0, str(_ENGINE_DIR))
 # S72-A: _normalize_task_signatures
 # ---------------------------------------------------------------------------
 
+
 class TestS72A:
     def _make_sdd(self, description: str, title: str = "") -> dict:
-        return {"tasks": [{"agent": "backend", "description": description, "title": title}]}
+        return {
+            "tasks": [{"agent": "backend", "description": description, "title": title}]
+        }
 
     def test_injects_validate_rut_for_rut_keyword(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Implementar validación de rut chileno")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -33,6 +39,7 @@ class TestS72A:
 
     def test_injects_is_prime_for_primo_keyword(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Función que verifica si es primo")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -41,6 +48,7 @@ class TestS72A:
 
     def test_injects_create_contract_for_crear_contrato(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Crear contrato para empleado")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -48,6 +56,7 @@ class TestS72A:
 
     def test_no_inject_without_keyword(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Configurar Docker y CI/CD")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -55,6 +64,7 @@ class TestS72A:
 
     def test_multiple_keywords_multiple_hints(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Validar rut y verificar si es primo")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -63,6 +73,7 @@ class TestS72A:
 
     def test_calcular_imc_hint(self):
         from graph import _normalize_task_signatures
+
         sdd = self._make_sdd("Calcular IMC del paciente")
         result = _normalize_task_signatures(sdd)
         desc = result["tasks"][0]["description"]
@@ -73,9 +84,11 @@ class TestS72A:
 # S72-B: postprocess_python_file — rename
 # ---------------------------------------------------------------------------
 
+
 class TestS72B_Rename:
     def test_rename_validar_rut_def(self):
         from code_postprocessor import postprocess_python_file
+
         code = "def validar_rut(rut: str) -> bool:\n    return True\n"
         result = postprocess_python_file(code, "src/contracts/service.py")
         assert "def validate_rut" in result
@@ -83,6 +96,7 @@ class TestS72B_Rename:
 
     def test_rename_updates_call_sites(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "def validar_rut(rut: str) -> bool:\n    return True\n\n"
             "if not validar_rut(data.rut):\n    raise ValueError\n"
@@ -93,6 +107,7 @@ class TestS72B_Rename:
 
     def test_rename_es_primo(self):
         from code_postprocessor import postprocess_python_file
+
         code = "def es_primo(n: int) -> bool:\n    return n > 1\n"
         result = postprocess_python_file(code, "src/utils.py")
         assert "def is_prime" in result
@@ -100,18 +115,21 @@ class TestS72B_Rename:
 
     def test_no_rename_valid_english_name(self):
         from code_postprocessor import postprocess_python_file
+
         code = "def validate_rut(rut: str) -> bool:\n    return True\n"
         result = postprocess_python_file(code, "src/service.py")
         assert "def validate_rut" in result
 
     def test_skip_non_python_file(self):
         from code_postprocessor import postprocess_python_file
+
         content = "name: validar_rut\nvalue: es_primo"
         result = postprocess_python_file(content, "config.yml")
         assert result == content
 
     def test_skip_empty_content(self):
         from code_postprocessor import postprocess_python_file
+
         result = postprocess_python_file("", "src/service.py")
         assert result == ""
 
@@ -120,9 +138,11 @@ class TestS72B_Rename:
 # S72-B: postprocess_python_file — Pydantic v1 → v2
 # ---------------------------------------------------------------------------
 
+
 class TestS72B_Pydantic:
     def test_validator_to_field_validator(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "from pydantic import BaseModel, validator\n\n"
             "class Foo(BaseModel):\n"
@@ -138,6 +158,7 @@ class TestS72B_Pydantic:
         # S72-B inyecta @classmethod; S77-B garantiza orden correcto Pydantic v2:
         # @field_validator PRIMERO, @classmethod SEGUNDO.
         from code_postprocessor import postprocess_python_file
+
         code = (
             "class Foo:\n"
             "    @field_validator('x')\n"
@@ -149,10 +170,13 @@ class TestS72B_Pydantic:
         lines = result.split("\n")
         fv_idx = next(i for i, l in enumerate(lines) if "@field_validator" in l)
         cm_idx = next(i for i, l in enumerate(lines) if "@classmethod" in l)
-        assert fv_idx < cm_idx, "Pydantic v2: @field_validator debe preceder a @classmethod"
+        assert fv_idx < cm_idx, (
+            "Pydantic v2: @field_validator debe preceder a @classmethod"
+        )
 
     def test_root_validator_to_model_validator(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "from pydantic import BaseModel, root_validator\n\n"
             "class Foo(BaseModel):\n"
@@ -166,6 +190,7 @@ class TestS72B_Pydantic:
 
     def test_orm_mode_to_from_attributes(self):
         from code_postprocessor import postprocess_python_file
+
         code = "class Config:\n    orm_mode = True\n"
         result = postprocess_python_file(code, "src/schemas.py")
         assert "from_attributes = True" in result
@@ -173,6 +198,7 @@ class TestS72B_Pydantic:
 
     def test_no_op_on_v2_code(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "from pydantic import BaseModel, field_validator\n\n"
             "class Foo(BaseModel):\n"
@@ -187,6 +213,7 @@ class TestS72B_Pydantic:
 
     def test_import_validator_replaced(self):
         from code_postprocessor import postprocess_python_file
+
         code = "from pydantic import BaseModel, validator\n"
         result = postprocess_python_file(code, "src/models.py")
         assert "field_validator" in result
@@ -196,9 +223,11 @@ class TestS72B_Pydantic:
 # S72-C: conftest.py fix
 # ---------------------------------------------------------------------------
 
+
 class TestS72C:
     def test_fixes_import_oracledb_before_mock(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "import sys\n"
             "import os\n"
@@ -208,8 +237,17 @@ class TestS72C:
         )
         result = postprocess_python_file(code, "conftest.py")
         lines = result.split("\n")
-        mock_idx = next((i for i, l in enumerate(lines) if "sys.modules['oracledb']" in l), None)
-        import_idx = next((i for i, l in enumerate(lines) if "import oracledb" in l and "sys.modules" not in l), None)
+        mock_idx = next(
+            (i for i, l in enumerate(lines) if "sys.modules['oracledb']" in l), None
+        )
+        import_idx = next(
+            (
+                i
+                for i, l in enumerate(lines)
+                if "import oracledb" in l and "sys.modules" not in l
+            ),
+            None,
+        )
         assert mock_idx is not None
         # Si hay import oracledb, el mock debe ir antes
         if import_idx is not None:
@@ -217,6 +255,7 @@ class TestS72C:
 
     def test_no_op_if_already_correct_order(self):
         from code_postprocessor import postprocess_python_file
+
         code = (
             "import sys\n"
             "from unittest.mock import MagicMock\n"
@@ -229,18 +268,21 @@ class TestS72C:
 
     def test_no_op_without_oracledb(self):
         from code_postprocessor import postprocess_python_file
+
         code = "import pytest\nimport os\n"
         result = postprocess_python_file(code, "conftest.py")
         assert result == code
 
     def test_adds_import_pytest_if_missing(self):
         from code_postprocessor import postprocess_python_file
+
         code = "import oracledb\n\n@pytest.fixture\ndef db(): pass\n"
         result = postprocess_python_file(code, "conftest.py")
         assert "import pytest" in result
 
     def test_mock_injected_at_top(self):
         from code_postprocessor import postprocess_python_file
+
         code = "import os\nimport oracledb\n\ndef setup(): pass\n"
         result = postprocess_python_file(code, "conftest.py")
         # El mock debe aparecer en las primeras líneas
@@ -251,6 +293,7 @@ class TestS72C:
 # ---------------------------------------------------------------------------
 # S72-E: system_backend_python.md — SQLAlchemy 2.x
 # ---------------------------------------------------------------------------
+
 
 class TestS72E:
     def test_template_uses_declarative_base_class(self):

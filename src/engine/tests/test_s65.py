@@ -1,6 +1,7 @@
 """
 Tests S65 — import validator, ORM guard, route order checker, infra auto-gen, auth phantom fix.
 """
+
 import pathlib
 import sys
 import tempfile
@@ -11,16 +12,16 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from graph import (
-    _validate_artifacts_imports,
+    _build_single_task_sdd_content,
     _check_fastapi_route_ordering,
     _ensure_python_infrastructure,
-    _build_single_task_sdd_content,
+    _validate_artifacts_imports,
 )
-
 
 # ---------------------------------------------------------------------------
 # S65-A: _validate_artifacts_imports
 # ---------------------------------------------------------------------------
+
 
 def _make_artifact(path: str, content: str, tmpdir: pathlib.Path) -> dict:
     full = tmpdir / path
@@ -145,6 +146,7 @@ def test_s65a_syntax_error_file_skipped():
 # S65-C: _check_fastapi_route_ordering
 # ---------------------------------------------------------------------------
 
+
 def test_s65c_static_after_parametric_detected():
     """Ruta estática declarada DESPUÉS de paramétrica con mismo prefijo → issue."""
     with tempfile.TemporaryDirectory() as td:
@@ -215,6 +217,7 @@ def test_s65c_empty_directory_no_crash():
 # S65-E: _ensure_python_infrastructure
 # ---------------------------------------------------------------------------
 
+
 def test_s65e_creates_requirements_txt():
     """requirements.txt se crea si no existe."""
     with tempfile.TemporaryDirectory() as td:
@@ -246,9 +249,21 @@ def test_s65e_nonexistent_directory_no_crash():
 _SDD_WITH_DATABASE = {
     "summary": "API contratos con BD",
     "tasks": [
-        {"agent": "backend", "description": "Crear `src/database.py` con Base y get_db", "title": "database"},
-        {"agent": "backend", "description": "Crear `src/contracts/models.py` con ContratoORM y Contrato", "title": "models"},
-        {"agent": "backend", "description": "Crear `tests/test_contracts.py`", "title": "tests"},
+        {
+            "agent": "backend",
+            "description": "Crear `src/database.py` con Base y get_db",
+            "title": "database",
+        },
+        {
+            "agent": "backend",
+            "description": "Crear `src/contracts/models.py` con ContratoORM y Contrato",
+            "title": "models",
+        },
+        {
+            "agent": "backend",
+            "description": "Crear `tests/test_contracts.py`",
+            "title": "tests",
+        },
     ],
     "requirements": [],
     "constraints": [],
@@ -258,7 +273,11 @@ _SDD_WITH_DATABASE = {
 _SDD_NO_DATABASE = {
     "summary": "Función pura IMC",
     "tasks": [
-        {"agent": "backend", "description": "Crear `src/imc.py` con calcular_imc", "title": "imc"},
+        {
+            "agent": "backend",
+            "description": "Crear `src/imc.py` con calcular_imc",
+            "title": "imc",
+        },
     ],
     "requirements": [],
     "constraints": [],
@@ -293,6 +312,7 @@ def test_s65b_orm_hint_not_injected_for_tests_task():
 # S65-D: system_sdd.md — auth condition independiente de oracle_involved
 # ---------------------------------------------------------------------------
 
+
 def test_s65d_sdd_template_auth_keyword_list():
     """system_sdd.md contiene la lista explícita de palabras clave de auth."""
     template_path = pathlib.Path(__file__).parent.parent / "templates" / "system_sdd.md"
@@ -300,7 +320,9 @@ def test_s65d_sdd_template_auth_keyword_list():
     assert "autenticación" in content
     assert "login" in content
     assert "JWT" in content
-    assert "oracle_involved" in content  # la regla menciona que oracle_involved no es suficiente
+    assert (
+        "oracle_involved" in content
+    )  # la regla menciona que oracle_involved no es suficiente
 
 
 def test_s65d_sdd_template_auth_independent_of_oracle():

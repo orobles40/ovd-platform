@@ -2,6 +2,7 @@
 Tests S66 — S66-A: corrección imports en feedback, S66-B: límite tareas/agente,
             S66-C: detección de import loop idéntico.
 """
+
 import pathlib
 import sys
 import tempfile
@@ -12,10 +13,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from graph import _validate_artifacts_imports
 
-
 # ---------------------------------------------------------------------------
 # S66-A: feedback incluye ruta correcta
 # ---------------------------------------------------------------------------
+
 
 def _make_artifact(path: str, content: str, tmpdir: pathlib.Path) -> dict:
     full = tmpdir / path
@@ -114,8 +115,12 @@ def test_s66a_clean_imports_no_correction_block():
 # S66-B / S67-B: límite dinámico de tareas por agente según complejidad
 # ---------------------------------------------------------------------------
 
+
 def _make_sdd_tasks(agent: str, n: int) -> list[dict]:
-    return [{"id": f"T{i}", "agent": agent, "title": f"Tarea {i}", "description": ""} for i in range(1, n + 1)]
+    return [
+        {"id": f"T{i}", "agent": agent, "title": f"Tarea {i}", "description": ""}
+        for i in range(1, n + 1)
+    ]
 
 
 def _apply_task_cap(tasks: list[dict], complexity: str) -> tuple[list[dict], list[str]]:
@@ -178,7 +183,10 @@ def test_s66b_tasks_under_limit_unchanged():
 # S66-C: detección de import loop idéntico
 # ---------------------------------------------------------------------------
 
-def _s66c_is_same_import_loop(import_feedback: str, last_test_error: str, retry_round: int) -> bool:
+
+def _s66c_is_same_import_loop(
+    import_feedback: str, last_test_error: str, retry_round: int
+) -> bool:
     """Replica la condición S66-C de graph.py::run_tests."""
     return (
         retry_round >= 1

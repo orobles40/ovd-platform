@@ -3,17 +3,22 @@ OVD Platform — Tests: pending_store (Bloque A)
 Cubre: add, remove, list_by_org, get, aislamiento multi-org.
 No requiere BD ni infraestructura.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import time
-import pytest
-import pending_store
 
+import pytest
+
+import pending_store
 
 # ---------------------------------------------------------------------------
 # Fixture: limpia el store antes de cada test
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def clear_store():
@@ -25,12 +30,12 @@ def clear_store():
 
 def _item(thread_id: str, org_id: str, **extra) -> dict:
     return {
-        "thread_id":      thread_id,
-        "session_id":     f"sess-{thread_id}",
-        "org_id":         org_id,
+        "thread_id": thread_id,
+        "session_id": f"sess-{thread_id}",
+        "org_id": org_id,
         "feature_request": "Implementar autenticación JWT",
-        "sdd_summary":    "SDD: módulo de auth con JWT + refresh tokens",
-        "sdd":            {"summary": "auth module", "requirements": [], "tasks": []},
+        "sdd_summary": "SDD: módulo de auth con JWT + refresh tokens",
+        "sdd": {"summary": "auth module", "requirements": [], "tasks": []},
         "revision_count": 0,
         **extra,
     }
@@ -39,6 +44,7 @@ def _item(thread_id: str, org_id: str, **extra) -> dict:
 # ---------------------------------------------------------------------------
 # TestAdd
 # ---------------------------------------------------------------------------
+
 
 class TestAdd:
     def test_add_registra_item(self):
@@ -67,6 +73,7 @@ class TestAdd:
 # TestRemove
 # ---------------------------------------------------------------------------
 
+
 class TestRemove:
     def test_remove_elimina_existente(self):
         pending_store.add("T1", _item("T1", "ORG_A"))
@@ -88,6 +95,7 @@ class TestRemove:
 # ---------------------------------------------------------------------------
 # TestListByOrg
 # ---------------------------------------------------------------------------
+
 
 class TestListByOrg:
     def test_lista_vacia_si_no_hay_items(self):
@@ -124,6 +132,7 @@ class TestListByOrg:
 # TestGet
 # ---------------------------------------------------------------------------
 
+
 class TestGet:
     def test_get_retorna_none_si_no_existe(self):
         assert pending_store.get("NOEXISTE") is None
@@ -145,6 +154,7 @@ class TestGet:
 # ---------------------------------------------------------------------------
 # TestAislamientoMultiOrg (regresión SEC-01 inspired)
 # ---------------------------------------------------------------------------
+
 
 class TestAislamientoMultiOrg:
     def test_org_a_no_ve_threads_de_org_b(self):

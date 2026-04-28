@@ -26,13 +26,15 @@ Uso como script:
 Variables de entorno:
   OVD_BRIDGE_URL   — URL del Bridge TypeScript (default: http://localhost:3000)
 """
+
 from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +55,7 @@ RAG_MIN_SCORE = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
+
 
 def _http(method: str, path: str, token: str, payload: dict | None = None) -> dict:
     """Helper HTTP minimo sin dependencias externas."""
@@ -75,6 +78,7 @@ def _http(method: str, path: str, token: str, payload: dict | None = None) -> di
 # API publica
 # ---------------------------------------------------------------------------
 
+
 async def seed_project(
     org_id: str,
     project_id: str,
@@ -96,10 +100,13 @@ async def seed_project(
 
     try:
         import rag as _rag
+
         n = await _rag.index_chunks_async(extra_docs, project_id, org_id)
         return n
     except Exception as e:
-        print(f"[rag_seed] Warning: seed fallido para {project_id}: {e}", file=sys.stderr)
+        print(
+            f"[rag_seed] Warning: seed fallido para {project_id}: {e}", file=sys.stderr
+        )
         return 0
 
 
@@ -120,6 +127,7 @@ def retrieve_context(
 
     try:
         import rag as _rag
+
         return _rag.search(query, project_id)
     except Exception as e:
         print(f"[rag_seed] Warning: RAG search fallido: {e}", file=sys.stderr)
@@ -144,13 +152,20 @@ def seed_from_file(
 
     try:
         import sys as _sys
+
+        from knowledge.chunkers import chunk_codebase, chunk_doc
+
         import rag as _rag
-        from knowledge.chunkers import chunk_doc, chunk_codebase
+
         chunker = chunk_codebase if doc_type == "codebase" else chunk_doc
         chunks = list(chunker(p))
         chunk_dicts = [
-            {"content": c.content, "doc_type": c.doc_type,
-             "source_file": c.source_file, "metadata": c.metadata}
+            {
+                "content": c.content,
+                "doc_type": c.doc_type,
+                "source_file": c.source_file,
+                "metadata": c.metadata,
+            }
             for c in chunks
         ]
         n = _rag.index_chunks(chunk_dicts, project_id, org_id)
@@ -163,21 +178,21 @@ def seed_from_file(
 
 import urllib.parse  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _cli() -> None:
     global BRIDGE_URL
     parser = argparse.ArgumentParser(
         description="OVD RAG Seed — Indexa conocimiento de base por proyecto"
     )
-    parser.add_argument("--org-id",     required=True,  help="ID de la organización")
-    parser.add_argument("--project-id", required=True,  help="ID del proyecto")
-    parser.add_argument("--token",      required=True,  help="JWT del Bridge")
-    parser.add_argument("--file",       help="Archivo .md/.txt adicional a indexar")
-    parser.add_argument("--retrieve",   help="Buscar en el RAG y mostrar el resultado")
+    parser.add_argument("--org-id", required=True, help="ID de la organización")
+    parser.add_argument("--project-id", required=True, help="ID del proyecto")
+    parser.add_argument("--token", required=True, help="JWT del Bridge")
+    parser.add_argument("--file", help="Archivo .md/.txt adicional a indexar")
+    parser.add_argument("--retrieve", help="Buscar en el RAG y mostrar el resultado")
     parser.add_argument(
         "--bridge-url",
         default=BRIDGE_URL,
@@ -205,6 +220,7 @@ def _cli() -> None:
     # Seed completo del perfil del proyecto
     print(f"\nSeeding RAG para proyecto {args.project_id}...")
     import asyncio
+
     indexed = asyncio.run(seed_project(args.org_id, args.project_id, args.token))
     print(f"Documentos indexados: {indexed}\n")
 

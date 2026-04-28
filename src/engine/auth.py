@@ -26,6 +26,7 @@ Endpoints (a implementar en api.py Fase B):
   POST /auth/logout
   POST /auth/me  ← verifica access token y devuelve payload
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -45,11 +46,11 @@ log = logging.getLogger(__name__)
 # Configuración
 # ---------------------------------------------------------------------------
 
-_JWT_SECRET    = os.environ.get("JWT_SECRET", "")
+_JWT_SECRET = os.environ.get("JWT_SECRET", "")
 _JWT_ALGORITHM = "HS256"
-_ACCESS_TOKEN_TTL_HOURS   = int(os.environ.get("OVD_ACCESS_TOKEN_TTL_HOURS",  "1"))
-_REFRESH_TOKEN_TTL_DAYS   = int(os.environ.get("OVD_REFRESH_TOKEN_TTL_DAYS",  "7"))
-_DATABASE_URL             = os.environ.get("DATABASE_URL", "")
+_ACCESS_TOKEN_TTL_HOURS = int(os.environ.get("OVD_ACCESS_TOKEN_TTL_HOURS", "1"))
+_REFRESH_TOKEN_TTL_DAYS = int(os.environ.get("OVD_REFRESH_TOKEN_TTL_DAYS", "7"))
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
 def _require_jwt_secret() -> str:
@@ -65,6 +66,7 @@ def _require_jwt_secret() -> str:
 # Tipos
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TokenPair:
     access_token: str
@@ -74,16 +76,17 @@ class TokenPair:
 
 
 class AccessTokenPayload(BaseModel):
-    sub: str          # user_id
+    sub: str  # user_id
     org_id: str
-    role: str         # admin | developer | viewer
-    exp: int          # Unix timestamp de expiración
-    iat: int          # Unix timestamp de emisión
+    role: str  # admin | developer | viewer
+    exp: int  # Unix timestamp de expiración
+    iat: int  # Unix timestamp de emisión
 
 
 # ---------------------------------------------------------------------------
 # Access Token (JWT)
 # ---------------------------------------------------------------------------
+
 
 def create_access_token(user_id: str, org_id: str, role: str) -> str:
     """
@@ -93,11 +96,11 @@ def create_access_token(user_id: str, org_id: str, role: str) -> str:
     secret = _require_jwt_secret()
     now = datetime.now(timezone.utc)
     payload = {
-        "sub":    user_id,
+        "sub": user_id,
         "org_id": org_id,
-        "role":   role,
-        "iat":    int(now.timestamp()),
-        "exp":    int((now + timedelta(hours=_ACCESS_TOKEN_TTL_HOURS)).timestamp()),
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=_ACCESS_TOKEN_TTL_HOURS)).timestamp()),
     }
     return jwt.encode(payload, secret, algorithm=_JWT_ALGORITHM)
 
@@ -119,6 +122,7 @@ def verify_access_token(token: str) -> AccessTokenPayload:
 # Refresh Token
 # ---------------------------------------------------------------------------
 
+
 def _hash_token(raw_token: str) -> str:
     """SHA-256 del token crudo. Solo el hash se almacena en BD."""
     return hashlib.sha256(raw_token.encode()).hexdigest()
@@ -134,10 +138,10 @@ async def create_refresh_token(
     Genera y persiste un nuevo refresh token.
     Devuelve el token crudo (enviarlo al cliente, nunca almacenarlo localmente).
     """
-    raw_token  = str(uuid.uuid4())
+    raw_token = str(uuid.uuid4())
     token_hash = _hash_token(raw_token)
-    token_id   = str(uuid.uuid4())
-    now        = datetime.now(timezone.utc)
+    token_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=_REFRESH_TOKEN_TTL_DAYS)
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
@@ -147,11 +151,24 @@ async def create_refresh_token(
               (id, org_id, user_id, token_hash, user_agent, ip_address, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (token_id, org_id, user_id, token_hash, user_agent or None, ip_address or None, expires_at),
+            (
+                token_id,
+                org_id,
+                user_id,
+                token_hash,
+                user_agent or None,
+                ip_address or None,
+                expires_at,
+            ),
         )
         await conn.commit()
 
-    log.info("auth: refresh token creado para user=%s org=%s expires=%s", user_id, org_id, expires_at.date())
+    log.info(
+        "auth: refresh token creado para user=%s org=%s expires=%s",
+        user_id,
+        org_id,
+        expires_at.date(),
+    )
     return raw_token
 
 
@@ -181,16 +198,20 @@ async def verify_refresh_token(raw_token: str) -> dict:
     token_id, org_id, user_id, expires_at, revoked, revoked_reason = record
 
     if revoked:
-        log.warning("auth: intento de uso de refresh token revocado — user=%s reason=%s", user_id, revoked_reason)
+        log.warning(
+            "auth: intento de uso de refresh token revocado — user=%s reason=%s",
+            user_id,
+            revoked_reason,
+        )
         raise ValueError(f"Refresh token revocado: {revoked_reason}")
 
     if expires_at < now:
         raise ValueError("Refresh token expirado")
 
     return {
-        "id":         token_id,
-        "org_id":     org_id,
-        "user_id":    user_id,
+        "id": token_id,
+        "org_id": org_id,
+        "user_id": user_id,
         "expires_at": expires_at,
     }
 
@@ -219,7 +240,9 @@ async def revoke_refresh_token(raw_token: str, reason: str = "logout") -> None:
         log.info("auth: refresh token revocado — reason=%s", reason)
 
 
-async def revoke_all_user_tokens(user_id: str, org_id: str, reason: str = "admin") -> int:
+async def revoke_all_user_tokens(
+    user_id: str, org_id: str, reason: str = "admin"
+) -> int:
     """
     Revoca todos los refresh tokens activos de un usuario.
     Útil en cambio de contraseña o revocación de emergencia.
@@ -247,6 +270,7 @@ async def revoke_all_user_tokens(user_id: str, org_id: str, reason: str = "admin
 # Flujo completo: issue + refresh
 # ---------------------------------------------------------------------------
 
+
 async def issue_tokens(
     user_id: str,
     org_id: str,
@@ -258,7 +282,7 @@ async def issue_tokens(
     Emite un par completo (access + refresh) para un login exitoso.
     Llamar desde el endpoint POST /auth/login tras verificar credenciales.
     """
-    access  = create_access_token(user_id, org_id, role)
+    access = create_access_token(user_id, org_id, role)
     refresh = await create_refresh_token(user_id, org_id, user_agent, ip_address)
     return TokenPair(access_token=access, refresh_token=refresh)
 

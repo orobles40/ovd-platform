@@ -5,6 +5,7 @@ Tests S75
   S75-B: template system_backend_python.md incluye requirements completo.
   S75-C: template prohíbe imports de .models que no existen en el SDD.
 """
+
 import pathlib
 import sys
 
@@ -19,9 +20,11 @@ sys.path.insert(0, str(_ENGINE_DIR))
 # S75-A: _fix_function_import_shadowing
 # ---------------------------------------------------------------------------
 
+
 class TestS75A:
     def _fix(self, code: str) -> str:
         from code_postprocessor import _fix_function_import_shadowing
+
         return _fix_function_import_shadowing(code)
 
     def test_removes_trivial_wrapper(self):
@@ -149,6 +152,7 @@ class TestS75A:
 # S75-B: requirements.txt completo en template
 # ---------------------------------------------------------------------------
 
+
 class TestS75B:
     def test_template_has_passlib_requirement(self):
         """S75-B: template menciona passlib[bcrypt] en requirements.txt."""
@@ -175,6 +179,7 @@ class TestS75B:
 # S75-C: regla imports .models en template
 # ---------------------------------------------------------------------------
 
+
 class TestS75C:
     def test_template_prohibits_phantom_models_import(self):
         """S75-C: template advierte sobre from src.X.models import sin models.py en SDD."""
@@ -182,13 +187,20 @@ class TestS75C:
         assert "models.py" in content
         assert "SDD" in content
         # La regla debe mencionar la prohibición
-        assert "PROHIBIDO" in content or "prohibido" in content.lower() or "solo si" in content.lower()
+        assert (
+            "PROHIBIDO" in content
+            or "prohibido" in content.lower()
+            or "solo si" in content.lower()
+        )
 
     def test_template_shows_correct_import_pattern(self):
         """S75-C: template muestra alternativa correcta para imports desde __init__.py."""
         content = _BACKEND_PY.read_text(encoding="utf-8")
         # Debe mostrar el patrón correcto: from src.contracts import X
-        assert "from src.contracts import" in content or "from src.<paquete> import" in content.lower()
+        assert (
+            "from src.contracts import" in content
+            or "from src.<paquete> import" in content.lower()
+        )
 
     def test_template_has_s75a_antipattern_warning(self):
         """S75-A: template advierte contra def fn(): return fn() (RecursionError)."""

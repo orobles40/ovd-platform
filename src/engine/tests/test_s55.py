@@ -6,52 +6,68 @@ S55-B: _write_artifacts guard de no-sobreescritura en rondas de retry
 S55-C: _build_single_task_sdd_content inyecta float hint en tarea de tests
 S55-D: update_test_retry log.warning para archivos en disco (S54-D elevado)
 """
-import sys, os, pathlib
+
+import os
+import pathlib
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import logging
-import pytest
 from unittest.mock import MagicMock, patch
 
-import graph
+import pytest
 
+import graph
 
 # ---------------------------------------------------------------------------
 # S55-A: _log_runner_response emite WARNING no INFO
 # ---------------------------------------------------------------------------
 
+
 def test_log_runner_response_uses_warning_for_main_line(tmp_path, caplog):
     """S55-A: el log principal de done_reason/eval_count es WARNING."""
     response = MagicMock()
-    response.response_metadata = {"done_reason": "stop", "eval_count": 100, "prompt_eval_count": 200}
+    response.response_metadata = {
+        "done_reason": "stop",
+        "eval_count": 100,
+        "prompt_eval_count": 200,
+    }
     response.content = "```python:src/imc/models.py\nclass X: pass\n```"
 
     with caplog.at_level(logging.WARNING, logger="ovd-graph"):
         graph._log_runner_response(response, "backend")
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S54-A runner[backend]" in m and "done_reason=stop" in m for m in warning_msgs), \
-        f"No se encontró WARNING con done_reason=stop. Mensajes: {warning_msgs}"
+    assert any(
+        "S54-A runner[backend]" in m and "done_reason=stop" in m for m in warning_msgs
+    ), f"No se encontró WARNING con done_reason=stop. Mensajes: {warning_msgs}"
 
 
 def test_log_runner_response_uses_warning_for_fence_found(tmp_path, caplog):
     """S55-A: el log de fence :path encontrado es WARNING."""
     response = MagicMock()
-    response.response_metadata = {"done_reason": "stop", "eval_count": 50, "prompt_eval_count": 30}
+    response.response_metadata = {
+        "done_reason": "stop",
+        "eval_count": 50,
+        "prompt_eval_count": 30,
+    }
     response.content = "```python:src/imc/service.py\ndef calcular(): pass\n```"
 
     with caplog.at_level(logging.WARNING, logger="ovd-graph"):
         graph._log_runner_response(response, "backend")
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("fence :path encontrado" in m for m in warning_msgs), \
+    assert any("fence :path encontrado" in m for m in warning_msgs), (
         f"No se encontró WARNING de fence. Mensajes: {warning_msgs}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S55-B: _write_artifacts — guard de no-sobreescritura
 # ---------------------------------------------------------------------------
+
 
 def test_write_artifacts_preserves_existing_when_new_content_empty(tmp_path):
     """S55-B: si archivo existe con contenido y nuevo content=vacío, preserva el existente."""
@@ -64,10 +80,14 @@ def test_write_artifacts_preserves_existing_when_new_content_empty(tmp_path):
     # Nuevo output sin content en el fence
     output = "```python:src/imc/models.py\n\n```"
 
-    result = graph._write_artifacts(output, str(tmp_path), "backend", preserve_nonempty=True)
+    result = graph._write_artifacts(
+        output, str(tmp_path), "backend", preserve_nonempty=True
+    )
 
     # Archivo debe preservarse
-    assert target.read_text() == original_content, "El archivo existente fue sobreescrito con vacío"
+    assert target.read_text() == original_content, (
+        "El archivo existente fue sobreescrito con vacío"
+    )
     # Debe retornar el archivo como "escrito" (con tamaño original)
     assert len(result) == 1
     assert result[0]["size"] == original_size
@@ -77,7 +97,10 @@ def test_write_artifacts_preserves_existing_when_new_content_truncated(tmp_path)
     """S55-B: si nuevo contenido es <50% del original, preserva el existente."""
     target = tmp_path / "src" / "imc" / "service.py"
     target.parent.mkdir(parents=True)
-    original_content = "def calcular_imc(peso, altura):\n    imc = round(peso / altura**2, 2)\n    return imc\n" * 10
+    original_content = (
+        "def calcular_imc(peso, altura):\n    imc = round(peso / altura**2, 2)\n    return imc\n"
+        * 10
+    )
     target.write_text(original_content)
     original_size = target.stat().st_size
 
@@ -85,9 +108,13 @@ def test_write_artifacts_preserves_existing_when_new_content_truncated(tmp_path)
     small_content = "# truncado"
     output = f"```python:src/imc/service.py\n{small_content}\n```"
 
-    result = graph._write_artifacts(output, str(tmp_path), "backend", preserve_nonempty=True)
+    result = graph._write_artifacts(
+        output, str(tmp_path), "backend", preserve_nonempty=True
+    )
 
-    assert target.read_text() == original_content, "El archivo existente fue sobreescrito con contenido truncado"
+    assert target.read_text() == original_content, (
+        "El archivo existente fue sobreescrito con contenido truncado"
+    )
     assert result[0]["size"] == original_size
 
 
@@ -101,7 +128,9 @@ def test_write_artifacts_overwrites_when_new_content_larger(tmp_path):
     new_content = "def calcular_imc(peso, altura):\n    return round(peso / altura**2, 2), 'Normal'\n"
     output = f"```python:src/imc/service.py\n{new_content}\n```"
 
-    result = graph._write_artifacts(output, str(tmp_path), "backend", preserve_nonempty=True)
+    result = graph._write_artifacts(
+        output, str(tmp_path), "backend", preserve_nonempty=True
+    )
 
     # Debe sobreescribir porque el nuevo es mayor
     written_text = target.read_text()
@@ -134,30 +163,49 @@ def test_write_artifacts_preserve_logs_warning_on_skip(tmp_path, caplog):
         graph._write_artifacts(output, str(tmp_path), "backend", preserve_nonempty=True)
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S55-B" in m and "src/imc/models.py" in m for m in warning_msgs), \
+    assert any("S55-B" in m and "src/imc/models.py" in m for m in warning_msgs), (
         f"No se encontró WARNING de S55-B. Mensajes: {warning_msgs}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S55-C: float hint en tarea de tests
 # ---------------------------------------------------------------------------
 
+
 def _make_sdd_with_task(task_desc: str, title: str = "Implementar módulo IMC") -> dict:
     return {
         "summary": "SDD IMC",
-        "requirements": [{"id": "REQ-001", "description": "Calcular IMC", "priority": "must", "acceptance_criteria": []}],
+        "requirements": [
+            {
+                "id": "REQ-001",
+                "description": "Calcular IMC",
+                "priority": "must",
+                "acceptance_criteria": [],
+            }
+        ],
         "design_overview": "Simple design",
         "design_diagrams": [],
         "constraints": [],
         "tasks": [
-            {"id": "TASK-001", "agent": "backend", "title": title, "description": task_desc, "depends_on": [], "estimated_complexity": "low"}
+            {
+                "id": "TASK-001",
+                "agent": "backend",
+                "title": title,
+                "description": task_desc,
+                "depends_on": [],
+                "estimated_complexity": "low",
+            }
         ],
     }
 
 
 def test_float_hint_injected_for_test_task():
     """S55-C: tarea con keyword 'test' recibe hint S55-C con instrucción round()."""
-    sdd = _make_sdd_with_task("Crear `tests/test_imc.py` con pytest: casos happy path", title="Casos de prueba IMC")
+    sdd = _make_sdd_with_task(
+        "Crear `tests/test_imc.py` con pytest: casos happy path",
+        title="Casos de prueba IMC",
+    )
     task = sdd["tasks"][0]
     result = graph._build_single_task_sdd_content(sdd, "backend", task, 0, 1)
 
@@ -168,7 +216,10 @@ def test_float_hint_injected_for_test_task():
 
 def test_float_hint_injected_for_pytest_task():
     """S55-C: tarea con keyword 'pytest' recibe hint S55-C."""
-    sdd = _make_sdd_with_task("Crear `tests/test_imc.py` con pytest: happy path y casos edge", title="Casos de prueba IMC")
+    sdd = _make_sdd_with_task(
+        "Crear `tests/test_imc.py` con pytest: happy path y casos edge",
+        title="Casos de prueba IMC",
+    )
     task = sdd["tasks"][0]
     result = graph._build_single_task_sdd_content(sdd, "backend", task, 0, 1)
 
@@ -177,16 +228,21 @@ def test_float_hint_injected_for_pytest_task():
 
 def test_no_float_hint_for_non_test_task():
     """S55-C: tarea de producción sin keywords de test NO recibe hint S55-C."""
-    sdd = _make_sdd_with_task("Crear `src/imc/service.py` con función calcular_imc(peso, altura)")
+    sdd = _make_sdd_with_task(
+        "Crear `src/imc/service.py` con función calcular_imc(peso, altura)"
+    )
     task = sdd["tasks"][0]
     result = graph._build_single_task_sdd_content(sdd, "backend", task, 0, 1)
 
-    assert "S55-C" not in result, "Hint S55-C inyectado erróneamente en tarea de producción"
+    assert "S55-C" not in result, (
+        "Hint S55-C inyectado erróneamente en tarea de producción"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S55-D: update_test_retry log.warning para archivos en disco
 # ---------------------------------------------------------------------------
+
 
 def test_update_test_retry_logs_disk_files_as_warning(tmp_path, caplog):
     """S55-D: S54-D en update_test_retry usa WARNING (visible sin configuración adicional)."""
@@ -201,7 +257,11 @@ def test_update_test_retry_logs_disk_files_as_warning(tmp_path, caplog):
     (tests_dir / "test_imc.py").write_text("def test_ok(): pass\n")
 
     state = {
-        "test_results": {"passed": False, "output": "AssertionError: assert 22.35 == 22.86", "runner": "pytest"},
+        "test_results": {
+            "passed": False,
+            "output": "AssertionError: assert 22.35 == 22.86",
+            "runner": "pytest",
+        },
         "retry_feedback": "",
         "test_retry_count": 0,
         "directory": str(tmp_path),
@@ -213,5 +273,7 @@ def test_update_test_retry_logs_disk_files_as_warning(tmp_path, caplog):
         graph.update_test_retry(state)
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S54-D update_test_retry" in m and "archivo(s) Python" in m for m in warning_msgs), \
-        f"No se encontró WARNING de S54-D. Mensajes: {warning_msgs}"
+    assert any(
+        "S54-D update_test_retry" in m and "archivo(s) Python" in m
+        for m in warning_msgs
+    ), f"No se encontró WARNING de S54-D. Mensajes: {warning_msgs}"

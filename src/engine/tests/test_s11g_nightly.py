@@ -2,19 +2,23 @@
 OVD Platform — Tests: Nightly Web Researcher Job (S11.G)
 No requiere LLM, NATS ni base de datos real.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 import nightly_researcher
-
 
 # ---------------------------------------------------------------------------
 # Tests: build_stack_queries
 # ---------------------------------------------------------------------------
+
 
 class TestBuildStackQueries:
     def test_queries_con_base_de_datos(self):
@@ -51,15 +55,23 @@ class TestBuildStackQueries:
 # Tests: has_cve / extract_cve_ids
 # ---------------------------------------------------------------------------
 
+
 class TestCveDetection:
     def test_detecta_keyword_vulnerabilidad(self):
-        assert nightly_researcher.has_cve("Se encontró una vulnerabilidad crítica") is True
+        assert (
+            nightly_researcher.has_cve("Se encontró una vulnerabilidad crítica") is True
+        )
 
     def test_detecta_cve_number(self):
-        assert nightly_researcher.has_cve("El CVE-2024-1234 afecta a Oracle 12c") is True
+        assert (
+            nightly_researcher.has_cve("El CVE-2024-1234 afecta a Oracle 12c") is True
+        )
 
     def test_no_detecta_sin_keywords(self):
-        assert nightly_researcher.has_cve("Nueva funcionalidad de logging agregada") is False
+        assert (
+            nightly_researcher.has_cve("Nueva funcionalidad de logging agregada")
+            is False
+        )
 
     def test_extrae_ids_cve(self):
         text = "Los CVE-2024-1234 y CVE-2023-9999 están pendientes de parche"
@@ -76,6 +88,7 @@ class TestCveDetection:
 # Tests: get_embedding (mock Ollama)
 # ---------------------------------------------------------------------------
 
+
 class TestGetEmbedding:
     @pytest.mark.asyncio
     async def test_retorna_vector_si_ollama_disponible(self):
@@ -86,7 +99,9 @@ class TestGetEmbedding:
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await nightly_researcher.get_embedding("texto de prueba")
@@ -98,7 +113,9 @@ class TestGetEmbedding:
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(side_effect=Exception("connection refused"))
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await nightly_researcher.get_embedding("texto de prueba")
@@ -109,6 +126,7 @@ class TestGetEmbedding:
 # ---------------------------------------------------------------------------
 # Tests: scheduler start/stop
 # ---------------------------------------------------------------------------
+
 
 class TestScheduler:
     def test_start_scheduler_desactivado(self, monkeypatch):

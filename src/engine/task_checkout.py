@@ -22,6 +22,7 @@ Uso:
     except AlreadyRunningError:
         # responder 409 al cliente
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,7 +42,11 @@ _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # OVD_HEARTBEAT_TIMEOUT_SECS (segundos) tiene prioridad sobre OVD_STALE_SESSION_MINUTES (minutos).
 # Default: 1800s (30 min). En .env de dev se recomienda 3600s para ciclos largos.
 _hb_secs = int(os.environ.get("OVD_HEARTBEAT_TIMEOUT_SECS", "0"))
-_STALE_THRESHOLD_MINUTES = (_hb_secs // 60) if _hb_secs > 0 else int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30"))
+_STALE_THRESHOLD_MINUTES = (
+    (_hb_secs // 60)
+    if _hb_secs > 0
+    else int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30"))
+)
 
 # ---------------------------------------------------------------------------
 # PP-05 — Registro en memoria de sesiones activas
@@ -49,7 +54,7 @@ _STALE_THRESHOLD_MINUTES = (_hb_secs // 60) if _hb_secs > 0 else int(os.environ.
 # ---------------------------------------------------------------------------
 
 _active_sessions: dict[str, dict] = {}
-_stale_sessions:  dict[str, dict] = {}   # thread_id → metadata + detected_at
+_stale_sessions: dict[str, dict] = {}  # thread_id → metadata + detected_at
 
 # S20 — GAP-R3: registro de asyncio.Task por thread_id para poder cancelarlas
 _running_tasks: dict[str, "asyncio.Task[None]"] = {}
@@ -89,14 +94,17 @@ def list_active_sessions(org_id: str | None = None) -> list[dict]:
 # PP-02 — Detección de stale sessions
 # ---------------------------------------------------------------------------
 
-def detect_stale_sessions(threshold_minutes: int = _STALE_THRESHOLD_MINUTES) -> list[dict]:
+
+def detect_stale_sessions(
+    threshold_minutes: int = _STALE_THRESHOLD_MINUTES,
+) -> list[dict]:
     """
     Revisa _active_sessions y marca como stale las que superan el umbral.
     Retorna la lista de sesiones colgadas detectadas en esta pasada.
     Llamar periódicamente desde el watcher de background.
     """
-    now      = datetime.now(timezone.utc)
-    cutoff   = now - timedelta(minutes=threshold_minutes)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=threshold_minutes)
     detected = []
 
     for tid, meta in list(_active_sessions.items()):
@@ -109,9 +117,9 @@ def detect_stale_sessions(threshold_minutes: int = _STALE_THRESHOLD_MINUTES) -> 
         if started < cutoff and tid not in _stale_sessions:
             stale_entry = {
                 **meta,
-                "detected_at":         now.isoformat(),
-                "elapsed_minutes":     int((now - started).total_seconds() / 60),
-                "threshold_minutes":   threshold_minutes,
+                "detected_at": now.isoformat(),
+                "elapsed_minutes": int((now - started).total_seconds() / 60),
+                "threshold_minutes": threshold_minutes,
             }
             _stale_sessions[tid] = stale_entry
             log.warning(
@@ -150,7 +158,8 @@ async def cancel_stale_sessions(
         if task and not task.done():
             log.warning(
                 "heartbeat: cancelando tarea colgada — thread=%s elapsed=%dmin",
-                tid, entry.get("elapsed_minutes", "?"),
+                tid,
+                entry.get("elapsed_minutes", "?"),
             )
             task.cancel()
             cancelled.append(tid)
@@ -172,7 +181,9 @@ async def cancel_stale_sessions(
                     },
                 )
             except Exception as e:
-                log.warning("heartbeat: error publicando session.timeout en NATS — %s", e)
+                log.warning(
+                    "heartbeat: error publicando session.timeout en NATS — %s", e
+                )
 
     return cancelled
 
@@ -210,13 +221,16 @@ class SessionLock:
 
     def __init__(self, thread_id: str):
         self._thread_id = thread_id
-        self._key       = _lock_key(thread_id)
+        self._key = _lock_key(thread_id)
         self._conn: psycopg.AsyncConnection | None = None
 
     async def __aenter__(self) -> "SessionLock":
         if not _DATABASE_URL:
             # Sin DB configurada: modo sin lock (dev local sin postgres)
-            log.debug("checkout: DATABASE_URL no definida — lock omitido para %s", self._thread_id)
+            log.debug(
+                "checkout: DATABASE_URL no definida — lock omitido para %s",
+                self._thread_id,
+            )
             return self
 
         conn = await psycopg.AsyncConnection.connect(_DATABASE_URL)
@@ -230,13 +244,19 @@ class SessionLock:
 
         if not acquired:
             await conn.close()
-            log.warning("checkout: thread %s ya está activo (key=%d)", self._thread_id, self._key)
+            log.warning(
+                "checkout: thread %s ya está activo (key=%d)",
+                self._thread_id,
+                self._key,
+            )
             raise AlreadyRunningError(
                 f"El ciclo {self._thread_id!r} ya está siendo procesado por otra instancia."
             )
 
         self._conn = conn
-        log.debug("checkout: lock adquirido para %s (key=%d)", self._thread_id, self._key)
+        log.debug(
+            "checkout: lock adquirido para %s (key=%d)", self._thread_id, self._key
+        )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -246,7 +266,9 @@ class SessionLock:
                 await self._conn.commit()
                 log.debug("checkout: lock liberado para %s", self._thread_id)
             except Exception as e:
-                log.warning("checkout: error al liberar lock para %s — %s", self._thread_id, e)
+                log.warning(
+                    "checkout: error al liberar lock para %s — %s", self._thread_id, e
+                )
             finally:
                 await self._conn.close()
                 self._conn = None

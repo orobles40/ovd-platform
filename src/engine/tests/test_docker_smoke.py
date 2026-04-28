@@ -14,13 +14,15 @@ import os
 import shutil
 import subprocess
 import time
-import urllib.request
 import urllib.error
+import urllib.request
+
 import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _docker_available() -> bool:
     return shutil.which("docker") is not None and _cmd_ok(["docker", "info"])
@@ -30,7 +32,11 @@ def _cmd_ok(cmd: list[str]) -> bool:
     try:
         subprocess.run(cmd, capture_output=True, check=True, timeout=10)
         return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
         return False
 
 
@@ -45,21 +51,20 @@ def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 pytestmark = pytest.mark.docker
 
 SKIP_NO_DOCKER = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker daemon no disponible"
+    not _docker_available(), reason="Docker daemon no disponible"
 )
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 
-IMAGE_TAG   = "ovd-engine:smoke-test"
-NET_NAME    = "ovd-smoke-net"
-PG_NAME     = "ovd-smoke-pg"
+IMAGE_TAG = "ovd-engine:smoke-test"
+NET_NAME = "ovd-smoke-net"
+PG_NAME = "ovd-smoke-pg"
 ENGINE_NAME = "ovd-smoke-engine"
-PG_PORT     = "15432"   # evitar conflicto con postgres dev (5432)
-ENGINE_PORT = "18001"   # evitar conflicto con engine dev (8001)
-HEALTH_URL  = f"http://localhost:{ENGINE_PORT}/health"
+PG_PORT = "15432"  # evitar conflicto con postgres dev (5432)
+ENGINE_PORT = "18001"  # evitar conflicto con engine dev (8001)
+HEALTH_URL = f"http://localhost:{ENGINE_PORT}/health"
 
 # Dir raíz del engine (relativo a este archivo)
 ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -67,6 +72,7 @@ ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # ---------------------------------------------------------------------------
 # Fixture: ciclo de vida del entorno Docker
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def docker_env():
@@ -98,16 +104,26 @@ def docker_env():
         created.append(f"net:{NET_NAME}")
 
         # ── Postgres ─────────────────────────────────────────────────────────
-        r = _run([
-            "docker", "run", "-d",
-            "--name", PG_NAME,
-            "--network", NET_NAME,
-            "-e", "POSTGRES_USER=ovd_test",
-            "-e", "POSTGRES_PASSWORD=ovd_test_pw",
-            "-e", "POSTGRES_DB=ovd_test",
-            "-p", f"{PG_PORT}:5432",
-            "postgres:16",
-        ])
+        r = _run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                PG_NAME,
+                "--network",
+                NET_NAME,
+                "-e",
+                "POSTGRES_USER=ovd_test",
+                "-e",
+                "POSTGRES_PASSWORD=ovd_test_pw",
+                "-e",
+                "POSTGRES_DB=ovd_test",
+                "-p",
+                f"{PG_PORT}:5432",
+                "postgres:16",
+            ]
+        )
         assert r.returncode == 0, f"No se pudo iniciar postgres: {r.stderr}"
         created.append(f"container:{PG_NAME}")
 
@@ -120,23 +136,37 @@ def docker_env():
             cwd=ENGINE_DIR,
             timeout=300,
         )
-        assert r.returncode == 0, f"Build falló:\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}"
+        assert r.returncode == 0, (
+            f"Build falló:\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}"
+        )
         created.append(f"image:{IMAGE_TAG}")
 
         # ── Engine ───────────────────────────────────────────────────────────
         db_url = f"postgresql://ovd_test:ovd_test_pw@{PG_NAME}:5432/ovd_test"
-        r = _run([
-            "docker", "run", "-d",
-            "--name", ENGINE_NAME,
-            "--network", NET_NAME,
-            "-e", f"DATABASE_URL={db_url}",
-            "-e", "JWT_SECRET=" + ("x" * 64),
-            "-e", "ANTHROPIC_API_KEY=sk-ant-smoke-fake",
-            "-e", "OVD_ENGINE_SECRET=smoke-secret",
-            "-e", "OVD_RAG_ENABLED=false",
-            "-p", f"{ENGINE_PORT}:8001",
-            IMAGE_TAG,
-        ])
+        r = _run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                ENGINE_NAME,
+                "--network",
+                NET_NAME,
+                "-e",
+                f"DATABASE_URL={db_url}",
+                "-e",
+                "JWT_SECRET=" + ("x" * 64),
+                "-e",
+                "ANTHROPIC_API_KEY=sk-ant-smoke-fake",
+                "-e",
+                "OVD_ENGINE_SECRET=smoke-secret",
+                "-e",
+                "OVD_RAG_ENABLED=false",
+                "-p",
+                f"{ENGINE_PORT}:8001",
+                IMAGE_TAG,
+            ]
+        )
         assert r.returncode == 0, f"No se pudo iniciar engine: {r.stderr}"
         created.append(f"container:{ENGINE_NAME}")
 
@@ -160,14 +190,21 @@ def docker_env():
 # Utilidades de espera
 # ---------------------------------------------------------------------------
 
+
 def _wait_for_postgres(timeout: int = 30) -> None:
     """Espera hasta que el postgres de smoke acepte conexiones."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        r = _run([
-            "docker", "exec", PG_NAME,
-            "pg_isready", "-U", "ovd_test",
-        ])
+        r = _run(
+            [
+                "docker",
+                "exec",
+                PG_NAME,
+                "pg_isready",
+                "-U",
+                "ovd_test",
+            ]
+        )
         if r.returncode == 0:
             return
         time.sleep(1)
@@ -191,6 +228,7 @@ def _wait_for_health(url: str, timeout: int = 60) -> bool:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @SKIP_NO_DOCKER
 class TestDockerSmoke:
     def test_health_returns_200(self, docker_env):
@@ -201,6 +239,7 @@ class TestDockerSmoke:
     def test_health_json_payload(self, docker_env):
         """/health devuelve status=ok y engine=ovd-engine."""
         import json
+
         with urllib.request.urlopen(docker_env["health_url"], timeout=5) as resp:
             data = json.loads(resp.read())
         assert data["status"] == "ok"
@@ -238,20 +277,30 @@ class TestDockerSmoke:
 # Helpers de postgres (conexión directa desde el host vía psql en contenedor)
 # ---------------------------------------------------------------------------
 
+
 def _pg_query(pg_port: str, sql: str) -> str:
     """Ejecuta una consulta SQL y devuelve stdout."""
-    r = _run([
-        "docker", "exec", PG_NAME,
-        "psql", "-U", "ovd_test", "-d", "ovd_test",
-        "-t", "-c", sql,
-    ])
+    r = _run(
+        [
+            "docker",
+            "exec",
+            PG_NAME,
+            "psql",
+            "-U",
+            "ovd_test",
+            "-d",
+            "ovd_test",
+            "-t",
+            "-c",
+            sql,
+        ]
+    )
     return r.stdout.strip()
 
 
 def _get_pg_tables(pg_port: str) -> set[str]:
     raw = _pg_query(
-        pg_port,
-        "SELECT tablename FROM pg_tables WHERE schemaname='public';"
+        pg_port, "SELECT tablename FROM pg_tables WHERE schemaname='public';"
     )
     return {line.strip() for line in raw.splitlines() if line.strip()}
 

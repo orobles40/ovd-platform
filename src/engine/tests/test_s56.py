@@ -6,20 +6,24 @@ S56-B: _configure_app_loggers setea nivel via OVD_LOG_LEVEL
 S56-C: _strip_db_restrictions elimina restricciones Oracle cuando oracle_involved=False
 S56-D: _filter_requirements_for_task filtra por depends_on (solo req IDs REQ-*)
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import logging
-import pytest
 from unittest.mock import patch
 
-import graph
+import pytest
 
+import graph
 
 # ---------------------------------------------------------------------------
 # S56-A: _build_qa_sdd_block
 # ---------------------------------------------------------------------------
+
 
 def _make_sdd(requirements: list) -> dict:
     return {
@@ -33,10 +37,22 @@ def _make_sdd(requirements: list) -> dict:
 
 def test_build_qa_sdd_block_includes_req_ids():
     """S56-A: el bloque incluye IDs y descripciones de requirements."""
-    sdd = _make_sdd([
-        {"id": "REQ-001", "priority": "must", "description": "Calcular IMC", "acceptance_criteria": []},
-        {"id": "REQ-002", "priority": "should", "description": "Validar entradas positivas", "acceptance_criteria": []},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "REQ-001",
+                "priority": "must",
+                "description": "Calcular IMC",
+                "acceptance_criteria": [],
+            },
+            {
+                "id": "REQ-002",
+                "priority": "should",
+                "description": "Validar entradas positivas",
+                "acceptance_criteria": [],
+            },
+        ]
+    )
     result = graph._build_qa_sdd_block(sdd)
     assert "REQ-001" in result
     assert "REQ-002" in result
@@ -46,10 +62,19 @@ def test_build_qa_sdd_block_includes_req_ids():
 
 def test_build_qa_sdd_block_includes_acceptance_criteria():
     """S56-A: los criterios de aceptación aparecen en el bloque."""
-    sdd = _make_sdd([
-        {"id": "REQ-001", "priority": "must", "description": "Endpoint POST /imc",
-         "acceptance_criteria": ["Devuelve 200 con body JSON", "Rechaza peso negativo con 422"]},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "REQ-001",
+                "priority": "must",
+                "description": "Endpoint POST /imc",
+                "acceptance_criteria": [
+                    "Devuelve 200 con body JSON",
+                    "Rechaza peso negativo con 422",
+                ],
+            },
+        ]
+    )
     result = graph._build_qa_sdd_block(sdd)
     assert "Devuelve 200 con body JSON" in result
     assert "Rechaza peso negativo con 422" in result
@@ -64,9 +89,16 @@ def test_build_qa_sdd_block_empty_requirements():
 
 def test_build_qa_sdd_block_header():
     """S56-A: el bloque tiene el header de instrucción para el LLM."""
-    sdd = _make_sdd([
-        {"id": "REQ-001", "priority": "must", "description": "Calcular IMC", "acceptance_criteria": []},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "REQ-001",
+                "priority": "must",
+                "description": "Calcular IMC",
+                "acceptance_criteria": [],
+            },
+        ]
+    )
     result = graph._build_qa_sdd_block(sdd)
     assert "EVALÚA SOLO ESTOS" in result or "Requisitos del SDD a verificar" in result
 
@@ -75,12 +107,14 @@ def test_build_qa_sdd_block_header():
 # S56-B: _configure_app_loggers
 # ---------------------------------------------------------------------------
 
+
 def test_configure_app_loggers_sets_warning_by_default():
     """S56-B: sin OVD_LOG_LEVEL, el logger ovd-graph queda en WARNING."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("OVD_LOG_LEVEL", None)
         os.environ.pop("LOG_LEVEL", None)
         import api as api_mod
+
         api_mod._configure_app_loggers()
         lvl = logging.getLogger("ovd-graph").level
         assert lvl == logging.WARNING, f"Esperado WARNING (30), got {lvl}"
@@ -90,6 +124,7 @@ def test_configure_app_loggers_sets_info_from_env():
     """S56-B: OVD_LOG_LEVEL=INFO → logger ovd-graph en INFO."""
     with patch.dict(os.environ, {"OVD_LOG_LEVEL": "INFO"}):
         import api as api_mod
+
         api_mod._configure_app_loggers()
         lvl = logging.getLogger("ovd-graph").level
         assert lvl == logging.INFO, f"Esperado INFO (20), got {lvl}"
@@ -99,6 +134,7 @@ def test_configure_app_loggers_sets_debug_from_env():
     """S56-B: OVD_LOG_LEVEL=DEBUG → logger ovd-graph en DEBUG."""
     with patch.dict(os.environ, {"OVD_LOG_LEVEL": "DEBUG"}):
         import api as api_mod
+
         api_mod._configure_app_loggers()
         lvl = logging.getLogger("ovd-graph").level
         assert lvl == logging.DEBUG, f"Esperado DEBUG (10), got {lvl}"
@@ -108,16 +144,20 @@ def test_configure_app_loggers_has_handler():
     """S59-A/A1: _configure_app_loggers instala al menos un handler en el root logger."""
     with patch.dict(os.environ, {"OVD_LOG_LEVEL": "WARNING"}):
         import api as api_mod
+
         api_mod._configure_app_loggers()
         root = logging.getLogger()
         assert len(root.handlers) > 0, "Root logger sin handlers después de dictConfig"
         ovd_api = logging.getLogger("ovd.api")
-        assert ovd_api.level == logging.WARNING, f"ovd.api level inesperado: {ovd_api.level}"
+        assert ovd_api.level == logging.WARNING, (
+            f"ovd.api level inesperado: {ovd_api.level}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # S56-C: _strip_db_restrictions
 # ---------------------------------------------------------------------------
+
 
 def test_strip_db_restrictions_removes_oracle_lines():
     """S56-C: líneas con 'oracle' son eliminadas."""
@@ -153,8 +193,9 @@ def test_strip_db_restrictions_logs_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="ovd-graph"):
         graph._strip_db_restrictions(ctx)
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S56-C" in m for m in warning_msgs), \
+    assert any("S56-C" in m for m in warning_msgs), (
         f"No se encontró WARNING S56-C. Mensajes: {warning_msgs}"
+    )
 
 
 # ---------------------------------------------------------------------------

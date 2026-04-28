@@ -23,7 +23,9 @@ Uso como modulo:
   agent = ResearchAgent(bridge_url=..., jwt_token=..., org_id=..., project_id=...)
   result = await agent.run(project_context="...")
 """
+
 from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -35,13 +37,14 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Schema de structured output para los hallazgos
 # ---------------------------------------------------------------------------
 
+
 class CVEFinding(BaseModel):
     """Un CVE o vulnerabilidad conocida relevante al stack."""
+
     cve_id: str = Field(
         description="ID del CVE (ej: 'CVE-2024-XXXXX') o identificador unico si no es CVE formal",
     )
@@ -68,6 +71,7 @@ class CVEFinding(BaseModel):
 
 class DeprecationFinding(BaseModel):
     """Una API, patron o libreria deprecada en el stack."""
+
     component: str = Field(
         description="Componente o libreria afectada",
     )
@@ -91,6 +95,7 @@ class DeprecationFinding(BaseModel):
 
 class ResearchOutput(BaseModel):
     """Resultado completo del Research Agent."""
+
     cve_findings: list[CVEFinding] = Field(
         default_factory=list,
         description="CVEs y vulnerabilidades identificadas para el stack del proyecto",
@@ -143,6 +148,7 @@ necesitar verificacion adicional en fuentes externas (NVD, GitHub Advisories, et
 # ---------------------------------------------------------------------------
 # Clase principal del Research Agent
 # ---------------------------------------------------------------------------
+
 
 class ResearchAgent:
     """
@@ -233,10 +239,12 @@ class ResearchAgent:
             f"Stack del proyecto:\n{project_context or '(sin informacion de stack — analiza riesgos generales de una plataforma web multi-tenant con LangGraph + FastAPI + PostgreSQL + TypeScript)'}"
         )
 
-        result: ResearchOutput = await self._llm.ainvoke([
-            SystemMessage(content=_RESEARCH_SYSTEM_PROMPT),
-            HumanMessage(content=human_content),
-        ])
+        result: ResearchOutput = await self._llm.ainvoke(
+            [
+                SystemMessage(content=_RESEARCH_SYSTEM_PROMPT),
+                HumanMessage(content=human_content),
+            ]
+        )
         return result
 
     async def _index_findings(self, result: ResearchOutput) -> int:
@@ -253,20 +261,26 @@ class ResearchAgent:
                 f"Versiones afectadas: {cve.affected_versions}\n"
                 f"Descripcion: {cve.description}\n"
                 f"Remediacion: {cve.remediation}\n"
-                + (f"Referencias: {', '.join(cve.references)}" if cve.references else "")
+                + (
+                    f"Referencias: {', '.join(cve.references)}"
+                    if cve.references
+                    else ""
+                )
             )
-            documents.append({
-                "projectId": self.project_id,
-                "docType": "cve",
-                "title": f"{cve.cve_id} — {cve.component} ({cve.severity})",
-                "content": content,
-                "metadata": {
-                    "severity": cve.severity,
-                    "component": cve.component,
-                    "source": "research_agent",
-                    "indexed_at": datetime.utcnow().isoformat(),
-                },
-            })
+            documents.append(
+                {
+                    "projectId": self.project_id,
+                    "docType": "cve",
+                    "title": f"{cve.cve_id} — {cve.component} ({cve.severity})",
+                    "content": content,
+                    "metadata": {
+                        "severity": cve.severity,
+                        "component": cve.component,
+                        "source": "research_agent",
+                        "indexed_at": datetime.utcnow().isoformat(),
+                    },
+                }
+            )
 
         # Construir documentos RAG para deprecaciones
         for dep in result.deprecation_findings:
@@ -274,43 +288,55 @@ class ResearchAgent:
                 f"Deprecacion en: {dep.component}\n"
                 f"Item deprecado: {dep.deprecated_item}\n"
                 f"Desde version: {dep.deprecation_version}\n"
-                + (f"Eliminado en: {dep.removal_version}\n" if dep.removal_version else "")
+                + (
+                    f"Eliminado en: {dep.removal_version}\n"
+                    if dep.removal_version
+                    else ""
+                )
                 + f"Alternativa recomendada: {dep.replacement}\n"
                 f"Esfuerzo de migracion: {dep.migration_effort}"
             )
-            documents.append({
-                "projectId": self.project_id,
-                "docType": "deprecation",
-                "title": f"Deprecacion: {dep.deprecated_item} en {dep.component}",
-                "content": content,
-                "metadata": {
-                    "component": dep.component,
-                    "migration_effort": dep.migration_effort,
-                    "source": "research_agent",
-                    "indexed_at": datetime.utcnow().isoformat(),
-                },
-            })
+            documents.append(
+                {
+                    "projectId": self.project_id,
+                    "docType": "deprecation",
+                    "title": f"Deprecacion: {dep.deprecated_item} en {dep.component}",
+                    "content": content,
+                    "metadata": {
+                        "component": dep.component,
+                        "migration_effort": dep.migration_effort,
+                        "source": "research_agent",
+                        "indexed_at": datetime.utcnow().isoformat(),
+                    },
+                }
+            )
 
         # Documento de resumen general del research
         if result.security_recommendations or result.update_recommendations:
             rec_content = ""
             if result.security_recommendations:
                 rec_content += "## Recomendaciones de seguridad\n"
-                rec_content += "\n".join(f"- {r}" for r in result.security_recommendations)
+                rec_content += "\n".join(
+                    f"- {r}" for r in result.security_recommendations
+                )
             if result.update_recommendations:
                 rec_content += "\n\n## Actualizaciones recomendadas\n"
-                rec_content += "\n".join(f"- {r}" for r in result.update_recommendations)
-            documents.append({
-                "projectId": self.project_id,
-                "docType": "security_recommendations",
-                "title": f"Research Agent — Resumen de seguridad ({datetime.utcnow().strftime('%Y-%m-%d')})",
-                "content": f"Riesgo general: {result.risk_level}\n\n{result.summary}\n\n{rec_content}",
-                "metadata": {
-                    "risk_level": result.risk_level,
-                    "source": "research_agent",
-                    "indexed_at": datetime.utcnow().isoformat(),
-                },
-            })
+                rec_content += "\n".join(
+                    f"- {r}" for r in result.update_recommendations
+                )
+            documents.append(
+                {
+                    "projectId": self.project_id,
+                    "docType": "security_recommendations",
+                    "title": f"Research Agent — Resumen de seguridad ({datetime.utcnow().strftime('%Y-%m-%d')})",
+                    "content": f"Riesgo general: {result.risk_level}\n\n{result.summary}\n\n{rec_content}",
+                    "metadata": {
+                        "risk_level": result.risk_level,
+                        "source": "research_agent",
+                        "indexed_at": datetime.utcnow().isoformat(),
+                    },
+                }
+            )
 
         # Indexar en el RAG via Bridge
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -335,6 +361,7 @@ class ResearchAgent:
 # ---------------------------------------------------------------------------
 # Helper para usar desde api.py sin instanciar la clase
 # ---------------------------------------------------------------------------
+
 
 async def run_research(
     org_id: str,
@@ -368,9 +395,13 @@ if __name__ == "__main__":
     parser.add_argument("--project-id", required=True, help="ID del proyecto")
     parser.add_argument("--token", required=True, help="JWT del Bridge")
     parser.add_argument("--bridge-url", default="http://localhost:3000")
-    parser.add_argument("--stack", default="", help="Descripcion del stack (si no hay Project Profile)")
+    parser.add_argument(
+        "--stack", default="", help="Descripcion del stack (si no hay Project Profile)"
+    )
     parser.add_argument("--topic", default="", help="Tema especifico a investigar")
-    parser.add_argument("--model", default=None, help="Modelo Claude a usar (default: OVD_MODEL env)")
+    parser.add_argument(
+        "--model", default=None, help="Modelo Claude a usar (default: OVD_MODEL env)"
+    )
     parser.add_argument("--json", action="store_true", help="Salida en JSON puro")
     args = parser.parse_args()
 
@@ -401,7 +432,9 @@ if __name__ == "__main__":
             print("\nCVEs criticos/altos:")
             for cve in result["cve_findings"]:
                 if cve["severity"] in ("critical", "high"):
-                    print(f"  [{cve['severity'].upper()}] {cve['cve_id']} — {cve['component']}")
+                    print(
+                        f"  [{cve['severity'].upper()}] {cve['cve_id']} — {cve['component']}"
+                    )
                     print(f"    {cve['description'][:100]}...")
 
         if result["update_recommendations"]:

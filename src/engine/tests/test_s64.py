@@ -1,6 +1,7 @@
 """
 Tests S64 — manifest de módulos, infraestructura HTTP, tabla RUTs verificada, reglas templates.
 """
+
 import pathlib
 import sys
 
@@ -10,7 +11,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from graph import _build_sdd_module_manifest, _build_single_task_sdd_content
 
-
 # ---------------------------------------------------------------------------
 # S64-B: _build_sdd_module_manifest
 # ---------------------------------------------------------------------------
@@ -19,9 +19,17 @@ _SDD_WITH_TASKS = {
     "summary": "API contratos",
     "tasks": [
         {"agent": "backend", "file": "src/database.py", "description": "get_db"},
-        {"agent": "backend", "file": "src/contracts/service.py", "description": "service"},
+        {
+            "agent": "backend",
+            "file": "src/contracts/service.py",
+            "description": "service",
+        },
         {"agent": "backend", "file": "src/main.py", "description": "entry point"},
-        {"agent": "backend", "file": "tests/test_contracts.py", "description": "tests"},  # excluir
+        {
+            "agent": "backend",
+            "file": "tests/test_contracts.py",
+            "description": "tests",
+        },  # excluir
     ],
     "requirements": [],
     "constraints": [],
@@ -53,7 +61,13 @@ def test_s64b_manifest_includes_written_files():
 
 def test_s64b_manifest_empty_without_tasks():
     """Sin tareas .py en el SDD y sin written_files, el manifest retorna cadena vacía."""
-    sdd_empty = {"summary": "test", "tasks": [], "requirements": [], "constraints": [], "design": {}}
+    sdd_empty = {
+        "summary": "test",
+        "tasks": [],
+        "requirements": [],
+        "constraints": [],
+        "design": {},
+    }
     result = _build_sdd_module_manifest(sdd_empty, written_files=None)
     assert result == ""
 
@@ -63,9 +77,15 @@ def test_s64b_manifest_empty_without_py_tasks():
     sdd_sql = {
         "summary": "migrations",
         "tasks": [
-            {"agent": "database", "file": "migrations/001_up.sql", "description": "tabla"},
+            {
+                "agent": "database",
+                "file": "migrations/001_up.sql",
+                "description": "tabla",
+            },
         ],
-        "requirements": [], "constraints": [], "design": {},
+        "requirements": [],
+        "constraints": [],
+        "design": {},
     }
     result = _build_sdd_module_manifest(sdd_sql, written_files=None)
     assert result == ""
@@ -87,8 +107,15 @@ def test_s64b_manifest_deduplicates_tasks_and_written():
 
 def test_s64b_manifest_injected_at_start_of_task_content():
     """El manifest aparece al INICIO del contenido de la tarea (máxima atención del LLM)."""
-    task = {"agent": "backend", "file": "src/main.py", "description": "entry point", "id": "TASK-003"}
-    content = _build_single_task_sdd_content(_SDD_WITH_TASKS, "backend", task, 0, 1, written_files=["src/database.py"])
+    task = {
+        "agent": "backend",
+        "file": "src/main.py",
+        "description": "entry point",
+        "id": "TASK-003",
+    }
+    content = _build_single_task_sdd_content(
+        _SDD_WITH_TASKS, "backend", task, 0, 1, written_files=["src/database.py"]
+    )
     # El manifest debe estar antes que el Summary
     manifest_pos = content.find("[S64-B")
     summary_pos = content.find("## Summary")
@@ -100,11 +127,22 @@ def test_s64b_no_manifest_when_no_py_tasks():
     """_build_single_task_sdd_content sin módulos Python no agrega ruido innecesario."""
     sdd_no_py = {
         "summary": "migrations only",
-        "tasks": [{"agent": "database", "file": "migrations/up.sql", "description": "x"}],
-        "requirements": [], "constraints": [], "design": {},
+        "tasks": [
+            {"agent": "database", "file": "migrations/up.sql", "description": "x"}
+        ],
+        "requirements": [],
+        "constraints": [],
+        "design": {},
     }
-    task = {"agent": "database", "file": "migrations/up.sql", "description": "x", "id": "T-1"}
-    content = _build_single_task_sdd_content(sdd_no_py, "database", task, 0, 1, written_files=None)
+    task = {
+        "agent": "database",
+        "file": "migrations/up.sql",
+        "description": "x",
+        "id": "T-1",
+    }
+    content = _build_single_task_sdd_content(
+        sdd_no_py, "database", task, 0, 1, written_files=None
+    )
     assert "[S64-B" not in content
 
 
@@ -112,7 +150,9 @@ def test_s64b_no_manifest_when_no_py_tasks():
 # S64-A: tabla RUTs verificados en template backend_python.md
 # ---------------------------------------------------------------------------
 
-_TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "templates" / "stack" / "backend_python.md"
+_TEMPLATE_PATH = (
+    pathlib.Path(__file__).parent.parent / "templates" / "stack" / "backend_python.md"
+)
 
 
 def test_s64a_template_has_rut_table():
@@ -130,8 +170,8 @@ def test_s64a_template_rut_invalid_cases():
     """backend_python.md marca como inválidos los RUTs con DV incorrecto."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "12.345.678-9" in content  # inválido en la tabla
-    assert "9.999.999-K" in content   # inválido (DV real=3)
-    assert "1.234.567-0" in content   # inválido (DV real=4)
+    assert "9.999.999-K" in content  # inválido (DV real=3)
+    assert "1.234.567-0" in content  # inválido (DV real=4)
 
 
 def test_s64a_template_1234567_4_is_valid():
@@ -142,21 +182,33 @@ def test_s64a_template_1234567_4_is_valid():
     # No debe estar en la sección de inválidos con texto que lo marque como tal
     lines_with_rut = [l for l in content.splitlines() if "1.234.567-4" in l]
     # Al menos una línea debe indicar que es válido
-    valid_lines = [l for l in lines_with_rut if "válido" in l.lower() or "True" in l or "== True" in l]
-    assert valid_lines, f"1.234.567-4 no está marcado como válido. Líneas: {lines_with_rut}"
+    valid_lines = [
+        l
+        for l in lines_with_rut
+        if "válido" in l.lower() or "True" in l or "== True" in l
+    ]
+    assert valid_lines, (
+        f"1.234.567-4 no está marcado como válido. Líneas: {lines_with_rut}"
+    )
 
 
 def test_s64a_template_has_prohibition():
     """backend_python.md contiene instrucción PROHIBIDO para inventar RUTs."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert "PROHIBIDO" in content or "NUNCA inventes" in content or "NUNCA inventar" in content
+    assert (
+        "PROHIBIDO" in content
+        or "NUNCA inventes" in content
+        or "NUNCA inventar" in content
+    )
 
 
 # ---------------------------------------------------------------------------
 # S64-C: system_sdd.md regla infraestructura HTTP
 # ---------------------------------------------------------------------------
 
-_SDD_TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "templates" / "system_sdd.md"
+_SDD_TEMPLATE_PATH = (
+    pathlib.Path(__file__).parent.parent / "templates" / "system_sdd.md"
+)
 
 
 def test_s64c_sdd_template_has_infrastructure_rule():
@@ -181,20 +233,30 @@ def test_s64c_sdd_template_has_order_constraint():
     """system_sdd.md indica que infraestructura va ANTES que service y main."""
     content = _SDD_TEMPLATE_PATH.read_text(encoding="utf-8")
     # La regla debe mencionar orden explícito
-    assert "PRIMERO" in content or "antes" in content.lower() or "infraestructura" in content.lower()
+    assert (
+        "PRIMERO" in content
+        or "antes" in content.lower()
+        or "infraestructura" in content.lower()
+    )
 
 
 # ---------------------------------------------------------------------------
 # S64-D: system_backend.md reglas routing/ORM/datetime
 # ---------------------------------------------------------------------------
 
-_BACKEND_TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
+_BACKEND_TEMPLATE_PATH = (
+    pathlib.Path(__file__).parent.parent / "templates" / "system_backend.md"
+)
 
 
 def test_s64d1_routing_rule_present():
     """system_backend.md contiene regla de orden de rutas FastAPI (estáticas antes paramétricas)."""
     content = _BACKEND_TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert "S64-D" in content or "estática" in content.lower() or "estáticas" in content.lower()
+    assert (
+        "S64-D" in content
+        or "estática" in content.lower()
+        or "estáticas" in content.lower()
+    )
     assert "paramétrica" in content.lower() or "paramétric" in content.lower()
 
 

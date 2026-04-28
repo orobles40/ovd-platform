@@ -17,6 +17,7 @@ Endpoints protegidos (Bearer JWT) para el panel de administración:
 
   PUT  /api/v1/orgs/{org_id}/projects/{project_id}/profile — guardar stack profile
 """
+
 from __future__ import annotations
 
 import io
@@ -32,9 +33,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import pending_store
 from auth import AccessTokenPayload
 from routers.auth_router import inject_current_user
-import pending_store
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -45,14 +46,19 @@ router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 # Guard: el usuario solo puede acceder a su propio org_id
 # ---------------------------------------------------------------------------
 
+
 def _assert_org_access(current_user: AccessTokenPayload, org_id: str) -> None:
     if current_user.org_id != org_id and current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sin acceso a esta organización")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sin acceso a esta organización",
+        )
 
 
 # ---------------------------------------------------------------------------
 # Modelos
 # ---------------------------------------------------------------------------
+
 
 class ProjectCreate(BaseModel):
     name: str
@@ -87,6 +93,7 @@ class StackProfileUpsert(BaseModel):
 # Proyectos
 # ---------------------------------------------------------------------------
 
+
 @router.get("/orgs/{org_id}/projects")
 async def list_projects(
     org_id: str,
@@ -112,14 +119,14 @@ async def list_projects(
 
     return [
         {
-            "id":          r[0],
-            "name":        r[1],
+            "id": r[0],
+            "name": r[1],
             "description": r[2],
-            "directory":   r[3],
-            "active":      r[4],
-            "created_at":  r[5].isoformat() if r[5] else None,
+            "directory": r[3],
+            "active": r[4],
+            "created_at": r[5].isoformat() if r[5] else None,
             "stack": {
-                "language":  r[6],
+                "language": r[6],
                 "framework": r[7],
                 "db_engine": r[8],
             },
@@ -182,30 +189,30 @@ async def get_project(
     profile = None
     if r[6]:
         profile = {
-            "id":                    r[6],
-            "language":              r[7],
-            "framework":             r[8],
-            "db_engine":             r[9],
-            "runtime":               r[10],
-            "additional_stack":      r[11] or [],
-            "legacy_stack":          r[12],
+            "id": r[6],
+            "language": r[7],
+            "framework": r[8],
+            "db_engine": r[9],
+            "runtime": r[10],
+            "additional_stack": r[11] or [],
+            "legacy_stack": r[12],
             "external_integrations": r[13],
-            "qa_tools":              r[14],
-            "ci_cd":                 r[15],
-            "constraints":           r[16],
-            "code_style":            r[17],
-            "project_description":   r[18],
-            "team_size":             r[19],
+            "qa_tools": r[14],
+            "ci_cd": r[15],
+            "constraints": r[16],
+            "code_style": r[17],
+            "project_description": r[18],
+            "team_size": r[19],
         }
 
     return {
-        "id":          r[0],
-        "name":        r[1],
+        "id": r[0],
+        "name": r[1],
         "description": r[2],
-        "directory":   r[3],
-        "active":      r[4],
-        "created_at":  r[5].isoformat() if r[5] else None,
-        "profile":     profile,
+        "directory": r[3],
+        "active": r[4],
+        "created_at": r[5].isoformat() if r[5] else None,
+        "profile": profile,
     }
 
 
@@ -222,7 +229,8 @@ async def update_project(
     # por interpolación de nombres de columna (HIGH-01)
     _ALLOWED_PROJECT_COLUMNS = {"name", "description", "directory", "active"}
     updates = {
-        k: v for k, v in body.model_dump().items()
+        k: v
+        for k, v in body.model_dump().items()
         if v is not None and k in _ALLOWED_PROJECT_COLUMNS
     }
     if not updates:
@@ -243,7 +251,9 @@ async def update_project(
     return {"updated": True}
 
 
-@router.delete("/orgs/{org_id}/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/orgs/{org_id}/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def deactivate_project(
     org_id: str,
     project_id: str,
@@ -265,7 +275,10 @@ async def deactivate_project(
 # Stack Profile
 # ---------------------------------------------------------------------------
 
-@router.put("/orgs/{org_id}/projects/{project_id}/profile", status_code=status.HTTP_200_OK)
+
+@router.put(
+    "/orgs/{org_id}/projects/{project_id}/profile", status_code=status.HTTP_200_OK
+)
 async def upsert_stack_profile(
     org_id: str,
     project_id: str,
@@ -280,7 +293,8 @@ async def upsert_stack_profile(
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         # Verificar que el proyecto pertenece al org
         row = await conn.execute(
-            "SELECT id FROM ovd_projects WHERE id = %s AND org_id = %s", (project_id, org_id)
+            "SELECT id FROM ovd_projects WHERE id = %s AND org_id = %s",
+            (project_id, org_id),
         )
         if not await row.fetchone():
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
@@ -301,8 +315,11 @@ async def upsert_stack_profile(
             VALUES (%s, %s, %s, %s, %s, true)
             """,
             (
-                profile_id, project_id,
-                body.language, body.framework, body.db_engine,
+                profile_id,
+                project_id,
+                body.language,
+                body.framework,
+                body.db_engine,
             ),
         )
         await conn.commit()
@@ -313,6 +330,7 @@ async def upsert_stack_profile(
 # ---------------------------------------------------------------------------
 # Ciclos
 # ---------------------------------------------------------------------------
+
 
 @router.get("/orgs/{org_id}/cycles")
 async def list_cycles(
@@ -364,22 +382,24 @@ async def list_cycles(
         total = (await count_row.fetchone())[0]
 
     return {
-        "total":  total,
-        "limit":  limit,
+        "total": total,
+        "limit": limit,
         "offset": offset,
         "items": [
             {
-                "id":             r[0],
-                "project_id":     r[1],
-                "project_name":   r[2],
-                "session_id":     r[3],
-                "feature_request": r[4][:120] + "..." if r[4] and len(r[4]) > 120 else r[4],
-                "qa_score":       r[5],
-                "complexity":     r[6],
-                "fr_type":        r[7],
-                "tokens_total":   r[8],
-                "cost_usd":       float(r[9]) if r[9] else 0.0,
-                "created_at":     r[10].isoformat() if r[10] else None,
+                "id": r[0],
+                "project_id": r[1],
+                "project_name": r[2],
+                "session_id": r[3],
+                "feature_request": r[4][:120] + "..."
+                if r[4] and len(r[4]) > 120
+                else r[4],
+                "qa_score": r[5],
+                "complexity": r[6],
+                "fr_type": r[7],
+                "tokens_total": r[8],
+                "cost_usd": float(r[9]) if r[9] else 0.0,
+                "created_at": r[10].isoformat() if r[10] else None,
             }
             for r in records
         ],
@@ -426,26 +446,26 @@ async def get_cycle(
             return {}
 
     return {
-        "id":              r[0],
-        "project_id":      r[1],
-        "project_name":    r[2],
-        "session_id":      r[3],
-        "thread_id":       r[4],
+        "id": r[0],
+        "project_id": r[1],
+        "project_name": r[2],
+        "session_id": r[3],
+        "thread_id": r[4],
         "feature_request": r[5],
-        "fr_analysis":     _coerce(r[6]),
-        "sdd":             _coerce(r[7]),
-        "agent_results":   _coerce(r[8]),
-        "qa_result":       _coerce(r[9]),
-        "qa_score":        r[10],
-        "complexity":      r[11],
-        "fr_type":         r[12],
+        "fr_analysis": _coerce(r[6]),
+        "sdd": _coerce(r[7]),
+        "agent_results": _coerce(r[8]),
+        "qa_result": _coerce(r[9]),
+        "qa_score": r[10],
+        "complexity": r[11],
+        "fr_type": r[12],
         "tokens": {
-            "input":    r[13],
-            "output":   r[14],
-            "total":    r[15],
+            "input": r[13],
+            "output": r[14],
+            "total": r[15],
             "by_agent": _coerce(r[16]),
         },
-        "cost_usd":   float(r[17]) if r[17] else 0.0,
+        "cost_usd": float(r[17]) if r[17] else 0.0,
         "created_at": r[18].isoformat() if r[18] else None,
     }
 
@@ -453,6 +473,7 @@ async def get_cycle(
 # ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
+
 
 @router.get("/orgs/{org_id}/stats")
 async def get_stats(
@@ -506,24 +527,22 @@ async def get_stats(
         daily = await daily_rows.fetchall()
 
     return {
-        "period_days":        days,
-        "total_cycles":       r[0],
-        "avg_qa_score":       round(float(r[1]), 1),
-        "total_tokens":       int(r[2]),
-        "total_cost_usd":     round(float(r[3]), 4),
+        "period_days": days,
+        "total_cycles": r[0],
+        "avg_qa_score": round(float(r[1]), 1),
+        "total_tokens": int(r[2]),
+        "total_cost_usd": round(float(r[3]), 4),
         "high_quality_cycles": r[4],
-        "active_projects":    r[5],
+        "active_projects": r[5],
         "fr_type_distribution": {row[0]: row[1] for row in fr_types},
-        "daily_cycles": [
-            {"date": str(row[0]), "count": row[1]}
-            for row in daily
-        ],
+        "daily_cycles": [{"date": str(row[0]), "count": row[1]} for row in daily],
     }
 
 
 # ---------------------------------------------------------------------------
 # Aprobaciones pendientes (web dashboard — panel Approval.tsx)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/orgs/{org_id}/approvals/pending")
 async def list_pending_approvals(
@@ -556,15 +575,18 @@ async def list_pending_approvals(
             pass
 
     from datetime import datetime, timezone
+
     return [
         {
-            "thread_id":      item["thread_id"],
-            "session_id":     item["session_id"],
-            "project_name":   project_names.get(item.get("project_id", ""), None),
+            "thread_id": item["thread_id"],
+            "session_id": item["session_id"],
+            "project_name": project_names.get(item.get("project_id", ""), None),
             "feature_request": item["feature_request"],
-            "sdd_summary":    item["sdd_summary"],
-            "sdd":            item.get("sdd", {}),
-            "created_at":     datetime.fromtimestamp(item["stored_at"], tz=timezone.utc).isoformat(),
+            "sdd_summary": item["sdd_summary"],
+            "sdd": item.get("sdd", {}),
+            "created_at": datetime.fromtimestamp(
+                item["stored_at"], tz=timezone.utc
+            ).isoformat(),
             "revision_count": item.get("revision_count", 0),
         }
         for item in items
@@ -574,6 +596,7 @@ async def list_pending_approvals(
 # ---------------------------------------------------------------------------
 # Telemetría (S17.C) — métricas históricas para el panel de observabilidad
 # ---------------------------------------------------------------------------
+
 
 @router.get("/orgs/{org_id}/telemetry")
 async def get_telemetry(
@@ -667,20 +690,20 @@ async def get_telemetry(
         "period_days": days,
         "daily": [
             {
-                "date":        str(r[0]),
+                "date": str(r[0]),
                 "cycle_count": r[1],
-                "avg_qa":      round(float(r[2]), 1),
-                "cost_usd":    round(float(r[3]), 5),
-                "tokens_in":   int(r[4]),
-                "tokens_out":  int(r[5]),
+                "avg_qa": round(float(r[2]), 1),
+                "cost_usd": round(float(r[3]), 5),
+                "tokens_in": int(r[4]),
+                "tokens_out": int(r[5]),
             }
             for r in daily
         ],
         "agent_tokens": [
             {
-                "agent":       r[0],
-                "tokens_in":   int(r[1]) if r[1] else 0,
-                "tokens_out":  int(r[2]) if r[2] else 0,
+                "agent": r[0],
+                "tokens_in": int(r[1]) if r[1] else 0,
+                "tokens_out": int(r[2]) if r[2] else 0,
                 "cycle_count": int(r[3]),
             }
             for r in agents
@@ -700,7 +723,7 @@ async def get_telemetry(
 # ---------------------------------------------------------------------------
 
 _EXPORT_FORMAT_VERSION = "1.0"
-_EXPORT_MAX_CYCLES     = 500
+_EXPORT_MAX_CYCLES = 500
 
 
 @router.get("/orgs/{org_id}/projects/{project_id}/export")
@@ -732,8 +755,11 @@ async def export_project(
             raise HTTPException(404, detail="Proyecto no encontrado")
 
         project_data = {
-            "id": p[0], "name": p[1], "description": p[2],
-            "directory": p[3], "active": p[4],
+            "id": p[0],
+            "name": p[1],
+            "description": p[2],
+            "directory": p[3],
+            "active": p[4],
             "created_at": p[5].isoformat() if p[5] else None,
         }
 
@@ -753,11 +779,18 @@ async def export_project(
         profile_data = None
         if prof:
             profile_data = {
-                "language": prof[0], "framework": prof[1], "db_engine": prof[2],
-                "runtime": prof[3], "additional_stack": prof[4] or [],
-                "legacy_stack": prof[5], "external_integrations": prof[6],
-                "qa_tools": prof[7], "ci_cd": prof[8], "constraints": prof[9],
-                "code_style": prof[10], "project_description": prof[11],
+                "language": prof[0],
+                "framework": prof[1],
+                "db_engine": prof[2],
+                "runtime": prof[3],
+                "additional_stack": prof[4] or [],
+                "legacy_stack": prof[5],
+                "external_integrations": prof[6],
+                "qa_tools": prof[7],
+                "ci_cd": prof[8],
+                "constraints": prof[9],
+                "code_style": prof[10],
+                "project_description": prof[11],
                 "team_size": prof[12],
             }
 
@@ -782,32 +815,41 @@ async def export_project(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         manifest = {
             "format_version": _EXPORT_FORMAT_VERSION,
-            "exported_at":    now_str,
-            "org_id":         org_id,
-            "project_id":     project_id,
-            "project_name":   project_data["name"],
+            "exported_at": now_str,
+            "org_id": org_id,
+            "project_id": project_id,
+            "project_name": project_data["name"],
             "cycles_exported": len(cycles),
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        zf.writestr("project.json",  json.dumps(project_data, ensure_ascii=False, indent=2))
+        zf.writestr(
+            "project.json", json.dumps(project_data, ensure_ascii=False, indent=2)
+        )
 
         if profile_data:
-            zf.writestr("profile.json", json.dumps(profile_data, ensure_ascii=False, indent=2))
+            zf.writestr(
+                "profile.json", json.dumps(profile_data, ensure_ascii=False, indent=2)
+            )
 
         if cycles:
             lines = []
             for c in cycles:
-                lines.append(json.dumps({
-                    "id":              c[0],
-                    "session_id":      c[1],
-                    "feature_request": c[2],
-                    "qa_score":        c[3],
-                    "complexity":      c[4],
-                    "fr_type":         c[5],
-                    "tokens_total":    c[6],
-                    "cost_usd":        float(c[7]) if c[7] else 0.0,
-                    "created_at":      c[8].isoformat() if c[8] else None,
-                }, ensure_ascii=False))
+                lines.append(
+                    json.dumps(
+                        {
+                            "id": c[0],
+                            "session_id": c[1],
+                            "feature_request": c[2],
+                            "qa_score": c[3],
+                            "complexity": c[4],
+                            "fr_type": c[5],
+                            "tokens_total": c[6],
+                            "cost_usd": float(c[7]) if c[7] else 0.0,
+                            "created_at": c[8].isoformat() if c[8] else None,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             zf.writestr("cycles.jsonl", "\n".join(lines))
 
     buf.seek(0)
@@ -845,14 +887,21 @@ async def import_project(
         with zipfile.ZipFile(buf, "r") as zf:
             names = zf.namelist()
             if "manifest.json" not in names or "project.json" not in names:
-                raise HTTPException(400, detail="ZIP inválido: faltan manifest.json o project.json")
+                raise HTTPException(
+                    400, detail="ZIP inválido: faltan manifest.json o project.json"
+                )
 
             manifest = json.loads(zf.read("manifest.json"))
             if manifest.get("format_version") != _EXPORT_FORMAT_VERSION:
-                raise HTTPException(400, detail=f"Versión de export no soportada: {manifest.get('format_version')}")
+                raise HTTPException(
+                    400,
+                    detail=f"Versión de export no soportada: {manifest.get('format_version')}",
+                )
 
             project = json.loads(zf.read("project.json"))
-            profile = json.loads(zf.read("profile.json")) if "profile.json" in names else None
+            profile = (
+                json.loads(zf.read("profile.json")) if "profile.json" in names else None
+            )
 
     except zipfile.BadZipFile:
         raise HTTPException(400, detail="Archivo ZIP corrupto o inválido")
@@ -867,11 +916,13 @@ async def import_project(
             VALUES (%s, %s, %s, %s, %s, true, %s, %s)
             """,
             (
-                new_project_id, org_id,
+                new_project_id,
+                org_id,
                 project.get("name", "Proyecto importado"),
                 project.get("description", ""),
                 project.get("directory", ""),
-                now, now,
+                now,
+                now,
             ),
         )
 
@@ -888,23 +939,34 @@ async def import_project(
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s)
                 """,
                 (
-                    profile_id, org_id, new_project_id,
-                    profile.get("language"), profile.get("framework"), profile.get("db_engine"),
-                    profile.get("runtime"), additional, profile.get("legacy_stack"),
-                    profile.get("external_integrations"), profile.get("qa_tools"),
-                    profile.get("ci_cd"), profile.get("constraints"), profile.get("code_style"),
-                    profile.get("project_description"), profile.get("team_size"),
-                    now, now,
+                    profile_id,
+                    org_id,
+                    new_project_id,
+                    profile.get("language"),
+                    profile.get("framework"),
+                    profile.get("db_engine"),
+                    profile.get("runtime"),
+                    additional,
+                    profile.get("legacy_stack"),
+                    profile.get("external_integrations"),
+                    profile.get("qa_tools"),
+                    profile.get("ci_cd"),
+                    profile.get("constraints"),
+                    profile.get("code_style"),
+                    profile.get("project_description"),
+                    profile.get("team_size"),
+                    now,
+                    now,
                 ),
             )
 
         await conn.commit()
 
     return {
-        "id":            new_project_id,
-        "name":          project.get("name"),
+        "id": new_project_id,
+        "name": project.get("name"),
         "cycles_in_zip": manifest.get("cycles_exported", 0),
-        "profile":       profile is not None,
+        "profile": profile is not None,
     }
 
 
@@ -916,11 +978,14 @@ async def list_stale_sessions_endpoint(
 ):
     """PP-02 — Lista sesiones detectadas como colgadas (elapsed > umbral)."""
     _assert_org_access(current_user, org_id)
-    import sys, pathlib
+    import pathlib
+    import sys
+
     engine_dir = pathlib.Path(__file__).parent.parent
     if str(engine_dir) not in sys.path:
         sys.path.insert(0, str(engine_dir))
     from task_checkout import list_stale_sessions  # type: ignore
+
     return list_stale_sessions(org_id=org_id)
 
 
@@ -931,20 +996,23 @@ async def list_active_sessions(
 ):
     """PP-05 — Lista sesiones activas (en streaming) para el Org Chart."""
     _assert_org_access(current_user, org_id)
-    import sys
     import pathlib
+    import sys
+
     engine_dir = pathlib.Path(__file__).parent.parent
     if str(engine_dir) not in sys.path:
         sys.path.insert(0, str(engine_dir))
     from task_checkout import list_active_sessions  # type: ignore
+
     return list_active_sessions(org_id=org_id)
 
 
 # S17.A — Admin: gestión de usuarios del org
 # ---------------------------------------------------------------------------
 
+
 class UserRoleUpdate(BaseModel):
-    role:   str | None = None    # admin | developer | viewer
+    role: str | None = None  # admin | developer | viewer
     active: bool | None = None
 
 
@@ -956,7 +1024,10 @@ async def list_org_users(
     """S17.A — Lista usuarios del org. Solo accesible con role=admin."""
     _assert_org_access(current_user, org_id)
     if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden ver usuarios")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo admins pueden ver usuarios",
+        )
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         rows = await conn.execute(
@@ -967,10 +1038,10 @@ async def list_org_users(
 
     return [
         {
-            "id":         r[0],
-            "email":      r[1],
-            "role":       r[2],
-            "active":     r[3],
+            "id": r[0],
+            "email": r[1],
+            "role": r[2],
+            "active": r[3],
             "created_at": r[4].isoformat() if r[4] else None,
         }
         for r in users
@@ -987,9 +1058,14 @@ async def update_org_user(
     """S17.A — Cambia role o activa/desactiva un usuario. Solo admin."""
     _assert_org_access(current_user, org_id)
     if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden modificar usuarios")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo admins pueden modificar usuarios",
+        )
     if body.role and body.role not in ("admin", "developer", "viewer"):
-        raise HTTPException(status_code=400, detail="role debe ser admin|developer|viewer")
+        raise HTTPException(
+            status_code=400, detail="role debe ser admin|developer|viewer"
+        )
 
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
         if body.role is not None and body.active is not None:
@@ -1016,10 +1092,11 @@ async def update_org_user(
 # S17.D — Knowledge Bootstrap UI
 # ---------------------------------------------------------------------------
 
+
 class KnowledgeIndexRequest(BaseModel):
     project_id: str
     source_path: str
-    doc_type: str = "doc"   # codebase|doc|schema|contract|ticket|delivery
+    doc_type: str = "doc"  # codebase|doc|schema|contract|ticket|delivery
 
 
 @router.get("/orgs/{org_id}/knowledge/status")
@@ -1069,10 +1146,7 @@ async def get_knowledge_status(
 
     return {
         "total_chunks": int(total),
-        "by_project": [
-            {"collection": r[0], "chunks": int(r[1])}
-            for r in breakdown
-        ],
+        "by_project": [{"collection": r[0], "chunks": int(r[1])} for r in breakdown],
     }
 
 
@@ -1086,8 +1160,8 @@ async def trigger_knowledge_index(
     _assert_org_access(current_user, org_id)
 
     import asyncio
-    import sys
     import pathlib
+    import sys
 
     knowledge_dir = pathlib.Path(__file__).parent.parent.parent.parent / "knowledge"
     if str(knowledge_dir) not in sys.path:
@@ -1100,6 +1174,7 @@ async def trigger_knowledge_index(
         if str(knowledge_dir2) not in sys.path:
             sys.path.insert(0, str(knowledge_dir2))
         import importlib
+
         bootstrap = importlib.import_module("knowledge.bootstrap")
 
     async def _run():
@@ -1110,16 +1185,22 @@ async def trigger_knowledge_index(
             doc_type=body.doc_type,
         )
         import logging
+
         logging.getLogger("ovd.api").info("knowledge.index done: %s", result.summary())
 
     asyncio.create_task(_run())
 
-    return {"status": "indexing_started", "project_id": body.project_id, "source_path": body.source_path}
+    return {
+        "status": "indexing_started",
+        "project_id": body.project_id,
+        "source_path": body.source_path,
+    }
 
 
 # ---------------------------------------------------------------------------
 # S17.B — Model Dashboard: estado del dataset de fine-tuning
 # ---------------------------------------------------------------------------
+
 
 @router.get("/orgs/{org_id}/model/status")
 async def get_model_status(
@@ -1165,14 +1246,18 @@ async def get_model_status(
 
     training_ready = int(totals[1]) if totals[1] else 0
     return {
-        "total_cycles":    int(totals[0]) if totals[0] else 0,
-        "training_ready":  training_ready,
-        "high_quality":    int(totals[2]) if totals[2] else 0,
-        "avg_qa_score":    round(float(totals[3]), 1),
-        "m1_goal":         M1_GOAL,
+        "total_cycles": int(totals[0]) if totals[0] else 0,
+        "training_ready": training_ready,
+        "high_quality": int(totals[2]) if totals[2] else 0,
+        "avg_qa_score": round(float(totals[3]), 1),
+        "m1_goal": M1_GOAL,
         "m1_progress_pct": round(min(training_ready / M1_GOAL * 100, 100), 1),
         "by_project": [
-            {"project": r[0] or "Sin nombre", "total": int(r[1]), "training_ready": int(r[2])}
+            {
+                "project": r[0] or "Sin nombre",
+                "total": int(r[1]),
+                "training_ready": int(r[2]),
+            }
             for r in by_project
         ],
     }
@@ -1182,8 +1267,9 @@ async def get_model_status(
 # S11.H — Fuentes curadas por workspace
 # ---------------------------------------------------------------------------
 
+
 class WebSourceCreate(BaseModel):
-    url:   str
+    url: str
     label: str = ""
 
 
@@ -1207,12 +1293,20 @@ async def list_web_sources(
         )
         records = await rows.fetchall()
     return [
-        {"id": r[0], "url": r[1], "label": r[2], "created_at": r[3].isoformat() if r[3] else None}
+        {
+            "id": r[0],
+            "url": r[1],
+            "label": r[2],
+            "created_at": r[3].isoformat() if r[3] else None,
+        }
         for r in records
     ]
 
 
-@router.post("/orgs/{org_id}/projects/{project_id}/web-sources", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/orgs/{org_id}/projects/{project_id}/web-sources",
+    status_code=status.HTTP_201_CREATED,
+)
 async def add_web_source(
     org_id: str,
     project_id: str,
@@ -1222,7 +1316,9 @@ async def add_web_source(
     """S11.H — Agrega una URL curada al proyecto."""
     _assert_org_access(current_user, org_id)
     if not body.url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="La URL debe comenzar con http:// o https://")
+        raise HTTPException(
+            status_code=400, detail="La URL debe comenzar con http:// o https://"
+        )
 
     new_id = str(uuid.uuid4())
     async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
@@ -1237,13 +1333,18 @@ async def add_web_source(
             await conn.commit()
         except Exception as exc:
             if "idx_ovd_web_sources_uniq" in str(exc):
-                raise HTTPException(status_code=409, detail="Esa URL ya existe en este proyecto")
+                raise HTTPException(
+                    status_code=409, detail="Esa URL ya existe en este proyecto"
+                )
             raise
 
     return {"id": new_id, "url": body.url.strip(), "label": body.label.strip()}
 
 
-@router.delete("/orgs/{org_id}/projects/{project_id}/web-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/orgs/{org_id}/projects/{project_id}/web-sources/{source_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_web_source(
     org_id: str,
     project_id: str,
@@ -1273,7 +1374,7 @@ _VALID_TARGETS = {"ui-ux", "superpowers", "all"}
 
 
 class SkillsUpdateRequest(BaseModel):
-    target: str = "all"   # ui-ux | superpowers | all
+    target: str = "all"  # ui-ux | superpowers | all
 
 
 @router.post("/orgs/{org_id}/admin/skills/update", status_code=status.HTTP_202_ACCEPTED)
@@ -1285,9 +1386,15 @@ async def update_skills(
     """Ejecuta update-skills.sh en background. Solo admin."""
     _assert_org_access(current_user, org_id)
     if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden actualizar skills")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo admins pueden actualizar skills",
+        )
     if body.target not in _VALID_TARGETS:
-        raise HTTPException(status_code=400, detail=f"target debe ser: {', '.join(sorted(_VALID_TARGETS))}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"target debe ser: {', '.join(sorted(_VALID_TARGETS))}",
+        )
 
     if _skills_job["status"] == "running":
         raise HTTPException(status_code=409, detail="Ya hay una actualización en curso")
@@ -1295,9 +1402,15 @@ async def update_skills(
     import asyncio
     import pathlib
 
-    script_path = pathlib.Path(__file__).parent.parent.parent.parent / "scripts" / "update-skills.sh"
+    script_path = (
+        pathlib.Path(__file__).parent.parent.parent.parent
+        / "scripts"
+        / "update-skills.sh"
+    )
     if not script_path.exists():
-        raise HTTPException(status_code=500, detail=f"Script no encontrado: {script_path}")
+        raise HTTPException(
+            status_code=500, detail=f"Script no encontrado: {script_path}"
+        )
 
     _skills_job["status"] = "running"
     _skills_job["output"] = ""
@@ -1306,7 +1419,8 @@ async def update_skills(
     async def _run():
         env = {"TARGET": body.target, "PATH": os.environ.get("PATH", "")}
         proc = await asyncio.create_subprocess_exec(
-            "bash", str(script_path),
+            "bash",
+            str(script_path),
             env={**os.environ, **env},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -1330,10 +1444,13 @@ async def get_skills_status(
     """Retorna el estado del último job de actualización de skills. Solo admin."""
     _assert_org_access(current_user, org_id)
     if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins pueden ver el estado de skills")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo admins pueden ver el estado de skills",
+        )
 
     return {
-        "status":     _skills_job["status"],
-        "output":     _skills_job["output"],
+        "status": _skills_job["status"],
+        "output": _skills_job["output"],
         "updated_at": _skills_job["updated_at"],
     }

@@ -8,17 +8,21 @@ S42-D: _detect_duplicate_functions detecta funciones definidas en múltiples arc
 S42-E: template_loader selecciona template por stack_language
 S42-F: templates por stack existen y contienen contenido apropiado
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pathlib
 import tempfile
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # S42-A — system_sdd.md scope control
 # ---------------------------------------------------------------------------
+
 
 class TestS42AScopeControl:
     """S42-A: system_sdd.md incluye regla para funciones puras vs API."""
@@ -52,16 +56,19 @@ class TestS42AScopeControl:
 # S42-B — _cleanup_impl_files_from_prev_retry
 # ---------------------------------------------------------------------------
 
+
 class TestS42BWorkspaceCleanup:
     """S42-B: limpieza de archivos de implementación entre rounds de retry."""
 
     def _get_fn(self):
         import graph as g
+
         return g._cleanup_impl_files_from_prev_retry
 
     def test_elimina_archivos_py_del_ciclo(self):
         """S42-B: elimina archivos .py de implementación escritos en el ciclo."""
         import time
+
         fn = self._get_fn()
         with tempfile.TemporaryDirectory() as tmpdir:
             cycle_ts = time.time() - 10  # ciclo empezó hace 10s
@@ -83,6 +90,7 @@ class TestS42BWorkspaceCleanup:
     def test_no_elimina_archivos_preexistentes(self):
         """S42-B: no elimina archivos con mtime anterior al ciclo (pre-existentes)."""
         import time
+
         fn = self._get_fn()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Archivo creado antes del ciclo
@@ -100,6 +108,7 @@ class TestS42BWorkspaceCleanup:
     def test_no_elimina_conftest_ni_pytest_ini(self):
         """S42-B: no elimina archivos de infraestructura de pytest."""
         import time
+
         fn = self._get_fn()
         with tempfile.TemporaryDirectory() as tmpdir:
             cycle_ts = time.time() - 10
@@ -108,12 +117,15 @@ class TestS42BWorkspaceCleanup:
                 infra_file.write_text("# infra")
             fn(tmpdir, cycle_ts)
             for fname in ("conftest.py", "pytest.ini", "pyproject.toml", "setup.py"):
-                assert (pathlib.Path(tmpdir) / fname).exists(), f"{fname} no debe eliminarse"
+                assert (pathlib.Path(tmpdir) / fname).exists(), (
+                    f"{fname} no debe eliminarse"
+                )
 
     def test_noop_sin_directory(self):
         """S42-B: no falla si work_dir es vacío."""
         fn = self._get_fn()
         import time
+
         fn("", time.time())  # no debe lanzar excepción
 
     def test_noop_sin_cycle_ts(self):
@@ -126,6 +138,7 @@ class TestS42BWorkspaceCleanup:
 # ---------------------------------------------------------------------------
 # S42-C — Regla de float en system_backend_python.md
 # ---------------------------------------------------------------------------
+
 
 class TestS42CFloatRule:
     """S42-C: system_backend_python.md tiene regla reforzada de float precision."""
@@ -156,18 +169,24 @@ class TestS42CFloatRule:
     def test_menciona_una_sola_implementacion(self):
         """S42-C: el template prohíbe duplicar la función en múltiples archivos."""
         content = self._get_python_template()
-        assert "UN SOLO ARCHIVO" in content or "una sola" in content.lower() or "único" in content.lower()
+        assert (
+            "UN SOLO ARCHIVO" in content
+            or "una sola" in content.lower()
+            or "único" in content.lower()
+        )
 
 
 # ---------------------------------------------------------------------------
 # S42-D — _detect_duplicate_functions
 # ---------------------------------------------------------------------------
 
+
 class TestS42DDuplicateDetection:
     """S42-D: detector de funciones duplicadas en el workspace."""
 
     def _get_fn(self):
         import graph as g
+
         return g._detect_duplicate_functions
 
     def test_detecta_funcion_en_dos_archivos(self):
@@ -176,8 +195,12 @@ class TestS42DDuplicateDetection:
         with tempfile.TemporaryDirectory() as tmpdir:
             src = pathlib.Path(tmpdir) / "src"
             src.mkdir()
-            (src / "calculadora.py").write_text("def calculate_bmi(w, h):\n    return w/h**2\n")
-            (src / "utils.py").write_text("def calculate_bmi(peso, altura):\n    return peso/altura**2\n")
+            (src / "calculadora.py").write_text(
+                "def calculate_bmi(w, h):\n    return w/h**2\n"
+            )
+            (src / "utils.py").write_text(
+                "def calculate_bmi(peso, altura):\n    return peso/altura**2\n"
+            )
 
             result = fn(tmpdir)
             assert result, "Debe detectar el duplicado"
@@ -190,7 +213,9 @@ class TestS42DDuplicateDetection:
         with tempfile.TemporaryDirectory() as tmpdir:
             src = pathlib.Path(tmpdir) / "src"
             src.mkdir()
-            (src / "calculadora.py").write_text("def calculate_bmi(w, h):\n    return w/h**2\n")
+            (src / "calculadora.py").write_text(
+                "def calculate_bmi(w, h):\n    return w/h**2\n"
+            )
             (src / "utils.py").write_text("def helper_function(x):\n    return x * 2\n")
 
             result = fn(tmpdir)
@@ -206,10 +231,14 @@ class TestS42DDuplicateDetection:
             tests.mkdir()
             (src / "calc.py").write_text("def helper(x): return x\n")
             # Definir en test (common pattern: test que define helper local)
-            (tests / "test_calc.py").write_text("def helper(x): return x  # redefinida en test\n")
+            (tests / "test_calc.py").write_text(
+                "def helper(x): return x  # redefinida en test\n"
+            )
 
             result = fn(tmpdir)
-            assert result == "", "Las funciones en test_*.py no son duplicados relevantes"
+            assert result == "", (
+                "Las funciones en test_*.py no son duplicados relevantes"
+            )
 
     def test_ignora_pycache(self):
         """S42-D: no escanea __pycache__."""
@@ -236,12 +265,14 @@ class TestS42DDuplicateDetection:
 # S42-E — template_loader selección por stack
 # ---------------------------------------------------------------------------
 
+
 class TestS42ETemplateLoader:
     """S42-E: template_loader carga template específico del stack."""
 
     def test_load_con_stack_language_python(self):
         """S42-E: load('system_backend', stack_language='python') carga system_backend_python.md."""
         import template_loader
+
         template_loader.invalidate()  # limpiar cache
         content = template_loader.load("system_backend", stack_language="python")
         # El template Python tiene la regla de float reforzada
@@ -250,6 +281,7 @@ class TestS42ETemplateLoader:
     def test_load_fallback_cuando_no_existe_stack_template(self):
         """S42-E: si no hay template para el stack, usa el genérico."""
         import template_loader
+
         template_loader.invalidate()
         # "rust" no tiene template específico
         content = template_loader.load("system_backend", stack_language="rust")
@@ -259,6 +291,7 @@ class TestS42ETemplateLoader:
     def test_load_sin_stack_language_usa_generico(self):
         """S42-E: sin stack_language usa template genérico."""
         import template_loader
+
         template_loader.invalidate()
         content = template_loader.load("system_backend", stack_language="")
         assert content, "Debe cargar template genérico"
@@ -266,6 +299,7 @@ class TestS42ETemplateLoader:
     def test_render_pasa_stack_language_a_load(self):
         """S42-E: render() con stack_language='python' carga template Python."""
         import template_loader
+
         template_loader.invalidate()
         rendered = template_loader.render("system_backend", stack_language="python")
         assert "round(" in rendered, "render debe usar el template Python"
@@ -273,6 +307,7 @@ class TestS42ETemplateLoader:
     def test_cache_diferencia_stack_language(self):
         """S42-E: el cache guarda por separado {lang}:{stack}:{name}."""
         import template_loader
+
         template_loader.invalidate()
         content_py = template_loader.load("system_backend", stack_language="python")
         content_generic = template_loader.load("system_backend", stack_language="")
@@ -284,6 +319,7 @@ class TestS42ETemplateLoader:
     def test_invalidate_limpia_todas_las_variantes(self):
         """S42-E: invalidate('system_backend') limpia python, typescript y genérico."""
         import template_loader
+
         # Poblar cache con múltiples variantes
         template_loader.load("system_backend", stack_language="python")
         template_loader.load("system_backend", stack_language="")
@@ -297,6 +333,7 @@ class TestS42ETemplateLoader:
 # ---------------------------------------------------------------------------
 # S42-F — Templates por stack existen y tienen contenido apropiado
 # ---------------------------------------------------------------------------
+
 
 class TestS42FStackTemplates:
     """S42-F: verifica que los templates por stack existen y contienen señales esperadas."""

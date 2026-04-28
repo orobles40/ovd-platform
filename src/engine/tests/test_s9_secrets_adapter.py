@@ -2,11 +2,16 @@
 OVD Platform — Tests: Secrets Adapter (Sprint 9)
 No requiere Infisical real — usa EnvAdapter.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import asyncio
+
 import pytest
+
 from secrets_adapter import EnvAdapter, get_adapter, reset_adapter
 
 

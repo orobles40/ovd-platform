@@ -6,9 +6,10 @@ Tests S74
   S74-D: _warn_hardcoded_secrets — detecta secretos hardcoded y SHA-256
   S74-E: template system_backend_python.md incluye passlib/bcrypt
 """
+
+import logging
 import pathlib
 import sys
-import logging
 
 _ENGINE_DIR = pathlib.Path(__file__).parent.parent
 _TEMPLATES_DIR = _ENGINE_DIR / "templates"
@@ -21,9 +22,11 @@ sys.path.insert(0, str(_ENGINE_DIR))
 # S74-A: _fix_local_variable_shadowing
 # ---------------------------------------------------------------------------
 
+
 class TestS74A:
     def _fix(self, code: str) -> str:
         from code_postprocessor import _fix_local_variable_shadowing
+
         return _fix_local_variable_shadowing(code)
 
     def test_fix_shadow_basic(self):
@@ -80,6 +83,7 @@ class TestS74A:
     def test_skip_non_python_content(self):
         """Código con SyntaxError se devuelve sin cambios."""
         from code_postprocessor import _fix_local_variable_shadowing
+
         code = "esto no es python válido !!!"
         result = _fix_local_variable_shadowing(code)
         assert result == code
@@ -88,6 +92,7 @@ class TestS74A:
 # ---------------------------------------------------------------------------
 # S74-B: _ensure_test_task
 # ---------------------------------------------------------------------------
+
 
 class TestS74B:
     def _build_fr_analysis(self):
@@ -99,24 +104,55 @@ class TestS74B:
     def test_ensures_test_task_injected(self):
         """Cuando el SDD no tiene tests, debe inyectar TASK-INFRA-TESTS."""
         import graph as g
-        sdd = self._make_sdd([
-            {"id": "T1", "agent": "backend", "file": "src/auth/router.py",
-             "title": "Auth", "description": "auth", "depends_on": [], "estimated_complexity": "low"},
-        ])
+
+        sdd = self._make_sdd(
+            [
+                {
+                    "id": "T1",
+                    "agent": "backend",
+                    "file": "src/auth/router.py",
+                    "title": "Auth",
+                    "description": "auth",
+                    "depends_on": [],
+                    "estimated_complexity": "low",
+                },
+            ]
+        )
         result = g._ensure_test_task(sdd, self._build_fr_analysis())
-        test_tasks = [t for t in result["tasks"] if "test" in t.get("file", "").lower()
-                      or "test" in t.get("title", "").lower()]
+        test_tasks = [
+            t
+            for t in result["tasks"]
+            if "test" in t.get("file", "").lower()
+            or "test" in t.get("title", "").lower()
+        ]
         assert len(test_tasks) >= 1
 
     def test_ensure_test_task_no_op_when_exists(self):
         """Si ya hay tarea de tests, no duplicar."""
         import graph as g
-        sdd = self._make_sdd([
-            {"id": "T1", "agent": "backend", "file": "src/auth/router.py",
-             "title": "Auth", "description": "auth", "depends_on": [], "estimated_complexity": "low"},
-            {"id": "T2", "agent": "backend", "file": "tests/test_auth.py",
-             "title": "Tests auth", "description": "pytest", "depends_on": ["T1"], "estimated_complexity": "low"},
-        ])
+
+        sdd = self._make_sdd(
+            [
+                {
+                    "id": "T1",
+                    "agent": "backend",
+                    "file": "src/auth/router.py",
+                    "title": "Auth",
+                    "description": "auth",
+                    "depends_on": [],
+                    "estimated_complexity": "low",
+                },
+                {
+                    "id": "T2",
+                    "agent": "backend",
+                    "file": "tests/test_auth.py",
+                    "title": "Tests auth",
+                    "description": "pytest",
+                    "depends_on": ["T1"],
+                    "estimated_complexity": "low",
+                },
+            ]
+        )
         original_count = len(sdd["tasks"])
         result = g._ensure_test_task(sdd, self._build_fr_analysis())
         assert len(result["tasks"]) == original_count
@@ -124,16 +160,31 @@ class TestS74B:
     def test_test_task_has_correct_fields(self):
         """TASK-INFRA-TESTS debe tener id, agent, file, description."""
         import graph as g
-        sdd = self._make_sdd([
-            {"id": "T1", "agent": "backend", "file": "src/contracts/service.py",
-             "title": "Service", "description": "service", "depends_on": [], "estimated_complexity": "medium"},
-        ])
+
+        sdd = self._make_sdd(
+            [
+                {
+                    "id": "T1",
+                    "agent": "backend",
+                    "file": "src/contracts/service.py",
+                    "title": "Service",
+                    "description": "service",
+                    "depends_on": [],
+                    "estimated_complexity": "medium",
+                },
+            ]
+        )
         result = g._ensure_test_task(sdd, self._build_fr_analysis())
-        test_task = next((t for t in result["tasks"] if t.get("id") == "TASK-INFRA-TESTS"), None)
+        test_task = next(
+            (t for t in result["tasks"] if t.get("id") == "TASK-INFRA-TESTS"), None
+        )
         assert test_task is not None
         assert test_task["agent"] == "backend"
         assert test_task["file"].startswith("tests/")
-        assert "conftest" in test_task["description"].lower() or "pytest" in test_task["description"].lower()
+        assert (
+            "conftest" in test_task["description"].lower()
+            or "pytest" in test_task["description"].lower()
+        )
 
     def test_template_has_fewshot_testclient(self):
         """S74-B1: template contiene ejemplo con TestClient."""
@@ -155,12 +206,18 @@ class TestS74B:
 # S74-C: QA context API-only flag (lógica en graph.py)
 # ---------------------------------------------------------------------------
 
+
 class TestS74C:
     def _get_api_only_flag(self, fr_text: str) -> bool:
         """Simula la lógica S74-C de qa_review."""
         fr_lower = fr_text.lower()
-        is_api = any(kw in fr_lower for kw in ("api rest", "fastapi", "endpoint", "backend", "crud"))
-        has_frontend = any(kw in fr_lower for kw in ("react", "vue", "svelte", "frontend", "angular"))
+        is_api = any(
+            kw in fr_lower
+            for kw in ("api rest", "fastapi", "endpoint", "backend", "crud")
+        )
+        has_frontend = any(
+            kw in fr_lower for kw in ("react", "vue", "svelte", "frontend", "angular")
+        )
         return is_api and not has_frontend
 
     def test_qa_api_only_flag_fastapi(self):
@@ -184,9 +241,11 @@ class TestS74C:
 # S74-D: _warn_hardcoded_secrets
 # ---------------------------------------------------------------------------
 
+
 class TestS74D:
     def _warn(self, code: str, caplog) -> str:
         from code_postprocessor import _warn_hardcoded_secrets
+
         with caplog.at_level(logging.WARNING, logger="code_postprocessor"):
             _warn_hardcoded_secrets(code, "src/auth/router.py")
         return caplog.text
@@ -208,25 +267,36 @@ class TestS74D:
         """os.environ.get('SECRET_KEY') no debe generar warning."""
         code = "SECRET_KEY = os.environ.get('SECRET_KEY', '')\n"
         from code_postprocessor import _warn_hardcoded_secrets
+
         with caplog.at_level(logging.WARNING, logger="code_postprocessor"):
             _warn_hardcoded_secrets(code, "src/auth/router.py")
         # No debe haber warning sobre S74-D para SECRET_KEY
-        s74_warns = [r for r in caplog.records if "S74-D" in r.message and "SECRET_KEY" in r.message]
+        s74_warns = [
+            r
+            for r in caplog.records
+            if "S74-D" in r.message and "SECRET_KEY" in r.message
+        ]
         assert len(s74_warns) == 0
 
     def test_no_warn_placeholder_value(self, caplog):
         """Valor placeholder 'your-secret-key-here' no genera warning."""
         code = "SECRET_KEY = 'your-secret-key-here'\n"
         from code_postprocessor import _warn_hardcoded_secrets
+
         with caplog.at_level(logging.WARNING, logger="code_postprocessor"):
             _warn_hardcoded_secrets(code, "src/auth.py")
-        s74_warns = [r for r in caplog.records if "S74-D" in r.message and "SECRET_KEY" in r.message]
+        s74_warns = [
+            r
+            for r in caplog.records
+            if "S74-D" in r.message and "SECRET_KEY" in r.message
+        ]
         assert len(s74_warns) == 0
 
 
 # ---------------------------------------------------------------------------
 # S74-E: template system_backend_python.md incluye passlib/bcrypt
 # ---------------------------------------------------------------------------
+
 
 class TestS74E:
     def test_template_has_passlib(self):

@@ -14,6 +14,7 @@ Variables de entorno (configurables desde Dashboard por proyecto):
   github_repo   — URL del repo, ej: https://github.com/org/repo
   github_branch — branch base (default: main)
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,21 +35,22 @@ log = logging.getLogger(__name__)
 
 # Extensiones de archivos relevantes por tipo de agente
 _AGENT_EXTENSIONS: dict[str, list[str]] = {
-    "backend":  [".py", ".ts", ".js", ".go", ".java", ".rb", ".php"],
+    "backend": [".py", ".ts", ".js", ".go", ".java", ".rb", ".php"],
     "frontend": [".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte", ".html", ".css"],
     "database": [".sql", ".prisma", ".graphql"],
-    "devops":   ["Dockerfile", ".yml", ".yaml", ".sh", ".tf", ".hcl"],
-    "default":  [".py", ".ts", ".js", ".go", ".java", ".sql", ".yml"],
+    "devops": ["Dockerfile", ".yml", ".yaml", ".sh", ".tf", ".hcl"],
+    "default": [".py", ".ts", ".js", ".go", ".java", ".sql", ".yml"],
 }
 
-_MAX_FILES_PER_AGENT  = 6     # máximo de archivos a incluir como contexto
-_MAX_CHARS_PER_FILE   = 2_000 # truncar archivos largos
-_MAX_TOTAL_CHARS      = 8_000 # límite total de contexto de repo
+_MAX_FILES_PER_AGENT = 6  # máximo de archivos a incluir como contexto
+_MAX_CHARS_PER_FILE = 2_000  # truncar archivos largos
+_MAX_TOTAL_CHARS = 8_000  # límite total de contexto de repo
 
 
 # ---------------------------------------------------------------------------
 # G1.B — Clonar / actualizar repo
 # ---------------------------------------------------------------------------
+
 
 def _inject_token_in_url(url: str, token: str) -> str:
     """Inserta el PAT en la URL de GitHub para autenticación HTTPS."""
@@ -56,7 +58,9 @@ def _inject_token_in_url(url: str, token: str) -> str:
     return re.sub(r"https://", f"https://{token}@", url, count=1)
 
 
-def clone_or_pull(github_repo: str, github_token: str, github_branch: str = "main") -> str:
+def clone_or_pull(
+    github_repo: str, github_token: str, github_branch: str = "main"
+) -> str:
     """
     Clona el repo si no existe localmente, o hace git pull si ya está clonado.
     Retorna la ruta local del directorio clonado.
@@ -73,7 +77,9 @@ def clone_or_pull(github_repo: str, github_token: str, github_branch: str = "mai
     local_dir = Path("/tmp/ovd-repos") / repo_path_str
 
     # Solo inyectar token si está presente (repos públicos no lo requieren)
-    auth_url = _inject_token_in_url(github_repo, github_token) if github_token else github_repo
+    auth_url = (
+        _inject_token_in_url(github_repo, github_token) if github_token else github_repo
+    )
 
     if local_dir.exists():
         log.info("github_helper: repo ya clonado en %s — haciendo pull", local_dir)
@@ -90,15 +96,26 @@ def clone_or_pull(github_repo: str, github_token: str, github_branch: str = "mai
         log.info("github_helper: clonando %s en %s", github_repo, local_dir)
         local_dir.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
-            ["git", "clone", "--depth=1", "--branch", github_branch, auth_url, str(local_dir)],
+            [
+                "git",
+                "clone",
+                "--depth=1",
+                "--branch",
+                github_branch,
+                auth_url,
+                str(local_dir),
+            ],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode != 0:
             import re as _re
+
             # SEC HIGH-02: redactar PAT embebido en la URL antes de loguear/lanzar
-            safe_err = _re.sub(r"https?://[^:@\s]+:[^@\s]+@", "https://***:***@", result.stderr[:300])
+            safe_err = _re.sub(
+                r"https?://[^:@\s]+:[^@\s]+@", "https://***:***@", result.stderr[:300]
+            )
             raise RuntimeError(f"git clone falló: {safe_err}")
 
     return str(local_dir)
@@ -107,6 +124,7 @@ def clone_or_pull(github_repo: str, github_token: str, github_branch: str = "mai
 # ---------------------------------------------------------------------------
 # G1.C — Leer archivos del repo para contexto de agentes
 # ---------------------------------------------------------------------------
+
 
 def read_repo_context(directory: str, agent_name: str = "default") -> str:
     """
@@ -131,11 +149,19 @@ def read_repo_context(directory: str, agent_name: str = "default") -> str:
             candidates.extend(base.rglob(ext))
 
     # Filtrar: excluir node_modules, .venv, __pycache__, .git, dist, build
-    _EXCLUDE = {".git", "node_modules", ".venv", "__pycache__", "dist", "build", ".next"}
+    _EXCLUDE = {
+        ".git",
+        "node_modules",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        ".next",
+    }
     candidates = [
-        p for p in candidates
-        if not any(part in _EXCLUDE for part in p.parts)
-        and p.is_file()
+        p
+        for p in candidates
+        if not any(part in _EXCLUDE for part in p.parts) and p.is_file()
     ]
 
     # Ordenar por tamaño ascendente (preferir archivos pequeños/manejables)
@@ -171,6 +197,7 @@ def read_repo_context(directory: str, agent_name: str = "default") -> str:
 # G1.D — Crear branch, commit y PR automático
 # ---------------------------------------------------------------------------
 
+
 def _write_agent_artifacts(directory: str, agent_results: list[dict]) -> list[str]:
     """
     Escribe los artefactos de los agentes en el directorio del repo.
@@ -180,7 +207,7 @@ def _write_agent_artifacts(directory: str, agent_results: list[dict]) -> list[st
     created: list[str] = []
 
     for result in agent_results:
-        agent  = result.get("agent", "agent")
+        agent = result.get("agent", "agent")
         output = result.get("output", "")
         if not output:
             continue
@@ -191,8 +218,8 @@ def _write_agent_artifacts(directory: str, agent_results: list[dict]) -> list[st
         if code_blocks:
             for i, code in enumerate(code_blocks):
                 suffix = _infer_extension(agent, code)
-                fname  = f"ovd_{agent}_{i + 1}{suffix}"
-                fpath  = base / "ovd_output" / fname
+                fname = f"ovd_{agent}_{i + 1}{suffix}"
+                fpath = base / "ovd_output" / fname
                 fpath.parent.mkdir(parents=True, exist_ok=True)
                 fpath.write_text(code, encoding="utf-8")
                 created.append(str(fpath.relative_to(base)))
@@ -209,7 +236,9 @@ def _write_agent_artifacts(directory: str, agent_results: list[dict]) -> list[st
 
 def _infer_extension(agent: str, code: str) -> str:
     """Infiere la extensión del archivo según el agente y el contenido."""
-    if agent == "database" or code.strip().upper().startswith(("SELECT", "CREATE", "INSERT", "ALTER")):
+    if agent == "database" or code.strip().upper().startswith(
+        ("SELECT", "CREATE", "INSERT", "ALTER")
+    ):
         return ".sql"
     if agent == "devops":
         if "FROM " in code and "RUN " in code:
@@ -251,7 +280,11 @@ async def create_pr(
         # 1. Crear branch desde la base
         subprocess.run(
             ["git", "checkout", "-b", new_branch],
-            cwd=directory, capture_output=True, text=True, timeout=30, check=True,
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
         )
 
         # 2. Escribir artefactos al disco
@@ -262,19 +295,31 @@ async def create_pr(
         # 3. Git add + commit
         subprocess.run(
             ["git", "add", "ovd_output/"],
-            cwd=directory, capture_output=True, text=True, timeout=30, check=True,
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
         )
         commit_msg = f"feat(ovd): implementación automática — sesión {session_id[:8]}\n\nQA: {qa_score}/100 | Security: {security_score}/100"
         subprocess.run(
             ["git", "commit", "-m", commit_msg],
-            cwd=directory, capture_output=True, text=True, timeout=30, check=True,
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
         )
 
         # 4. Push de la branch
         auth_url = _inject_token_in_url(github_repo, github_token)
         subprocess.run(
             ["git", "push", auth_url, new_branch],
-            cwd=directory, capture_output=True, text=True, timeout=60, check=True,
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
         )
 
         # 5. Crear PR via GitHub REST API
@@ -311,7 +356,7 @@ async def create_pr(
 
         if resp.status_code in (200, 201):
             pr_data = resp.json()
-            pr_url  = pr_data.get("html_url", "")
+            pr_url = pr_data.get("html_url", "")
             pr_number = pr_data.get("number", 0)
             log.info("github_helper: PR creado — %s", pr_url)
             return {
@@ -322,11 +367,22 @@ async def create_pr(
                 "files": files_created,
             }
         else:
-            log.warning("github_helper: error creando PR — %s %s", resp.status_code, resp.text[:200])
-            return {"ok": False, "reason": f"GitHub API error {resp.status_code}", "branch": new_branch, "files": files_created}
+            log.warning(
+                "github_helper: error creando PR — %s %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return {
+                "ok": False,
+                "reason": f"GitHub API error {resp.status_code}",
+                "branch": new_branch,
+                "files": files_created,
+            }
 
     except subprocess.CalledProcessError as e:
-        log.error("github_helper: error git — %s", e.stderr[:200] if e.stderr else str(e))
+        log.error(
+            "github_helper: error git — %s", e.stderr[:200] if e.stderr else str(e)
+        )
         return {"ok": False, "reason": str(e)}
     except Exception as e:
         log.error("github_helper: error inesperado — %s", e)

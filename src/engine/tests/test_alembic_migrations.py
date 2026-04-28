@@ -11,12 +11,16 @@ Cubre:
 Para ejecutar:
     pytest tests/test_alembic_migrations.py -m integration -v
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import subprocess
-import pytest
+
 import psycopg
+import pytest
 
 # BD de test aislada — se usa ovd_dev que ya existe en el entorno local
 _TEST_DB_URL = os.environ.get(
@@ -68,7 +72,9 @@ def _alembic_current_revision() -> str:
     """Retorna la revisión actual del alembic_version."""
     try:
         with psycopg.connect(_TEST_DB_URL) as conn:
-            row = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
+            row = conn.execute(
+                "SELECT version_num FROM alembic_version LIMIT 1"
+            ).fetchone()
         return row[0] if row else ""
     except Exception:
         return ""
@@ -77,6 +83,7 @@ def _alembic_current_revision() -> str:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 class TestAlembicUpgrade:

@@ -9,15 +9,21 @@ Verifica que:
 - read_project_context() filtra archivos irrelevantes
 - make_file_tools() retorna [] si el directorio no existe
 """
-import sys
-import os
+
 import json
-import tempfile
+import os
 import pathlib
+import sys
+import tempfile
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"),
+)
 
 import pytest
+
 from tools.file_tools import make_file_tools, read_project_context
 
 
@@ -136,7 +142,9 @@ class TestEditFile:
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "app.py").write_text("version = 1\n")
             tool = self._get_tool(d)
-            result = tool.invoke({"path": "app.py", "old_str": "version = 1", "new_str": "version = 2"})
+            result = tool.invoke(
+                {"path": "app.py", "old_str": "version = 1", "new_str": "version = 2"}
+            )
             assert result == "OK"
             assert (pathlib.Path(d) / "app.py").read_text() == "version = 2\n"
 
@@ -144,7 +152,9 @@ class TestEditFile:
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "app.py").write_text("a = 1\n")
             tool = self._get_tool(d)
-            result = tool.invoke({"path": "app.py", "old_str": "no_existe", "new_str": "x"})
+            result = tool.invoke(
+                {"path": "app.py", "old_str": "no_existe", "new_str": "x"}
+            )
             assert "ERROR" in result
 
     def test_archivo_inexistente_retorna_error(self):
@@ -213,14 +223,18 @@ class TestReadProjectContext:
 
     def test_encuentra_archivos_python_para_backend(self):
         with tempfile.TemporaryDirectory() as d:
-            (pathlib.Path(d) / "api.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
+            (pathlib.Path(d) / "api.py").write_text(
+                "from fastapi import FastAPI\napp = FastAPI()\n"
+            )
             result = read_project_context(d, "backend")
         assert "api.py" in result
         assert "FastAPI" in result
 
     def test_encuentra_archivos_ts_para_frontend(self):
         with tempfile.TemporaryDirectory() as d:
-            (pathlib.Path(d) / "App.tsx").write_text("export default function App() {}\n")
+            (pathlib.Path(d) / "App.tsx").write_text(
+                "export default function App() {}\n"
+            )
             result = read_project_context(d, "frontend")
         assert "App.tsx" in result
 
@@ -285,7 +299,7 @@ class TestRegressionS17T:
         with tempfile.TemporaryDirectory() as d:
             tools = make_file_tools(d)
             write = next(t for t in tools if t.name == "write_file")
-            read  = next(t for t in tools if t.name == "read_file")
+            read = next(t for t in tools if t.name == "read_file")
 
             content = "# Este es el contenido\nprint('test')\n"
             write.invoke({"path": "roundtrip.py", "content": content})
@@ -297,8 +311,8 @@ class TestRegressionS17T:
         with tempfile.TemporaryDirectory() as d:
             tools = make_file_tools(d)
             write = next(t for t in tools if t.name == "write_file")
-            edit  = next(t for t in tools if t.name == "edit_file")
-            read  = next(t for t in tools if t.name == "read_file")
+            edit = next(t for t in tools if t.name == "edit_file")
+            read = next(t for t in tools if t.name == "read_file")
 
             write.invoke({"path": "ver.txt", "content": "v1"})
             edit.invoke({"path": "ver.txt", "old_str": "v1", "new_str": "v2"})

@@ -16,6 +16,7 @@ Contexto de proyecto:
   read_project_context(base_dir, agent_name) — lee archivos relevantes
   existentes para inyectar en el prompt del agente (S17T.C).
 """
+
 from __future__ import annotations
 
 import glob
@@ -25,43 +26,49 @@ from typing import List
 
 from langchain_core.tools import tool
 
-
 # ---------------------------------------------------------------------------
 # Constantes de seguridad
 # ---------------------------------------------------------------------------
 
-_MAX_READ_BYTES    = 32_768   # 32 KB por archivo al leer
-_MAX_LIST_RESULTS  = 50       # máximo de rutas en list_files
-_MAX_CTX_FILES     = 3        # archivos para read_project_context
-_MAX_CTX_CHARS     = 2_000    # caracteres por archivo en el contexto
+_MAX_READ_BYTES = 32_768  # 32 KB por archivo al leer
+_MAX_LIST_RESULTS = 50  # máximo de rutas en list_files
+_MAX_CTX_FILES = 3  # archivos para read_project_context
+_MAX_CTX_CHARS = 2_000  # caracteres por archivo en el contexto
 
 # Patrones relevantes por tipo de agente para read_project_context
 _AGENT_PATTERNS: dict[str, list[str]] = {
     # S47: frontend lee primero los archivos propios (tsx/ts/vue) y luego el código server-side
     # para conocer las rutas, schemas y modelos reales antes de generar la UI.
     # El orden importa: los propios van primero para no exceder _MAX_CTX_FILES con solo server files.
-    "frontend":  [
-        "*.tsx", "*.ts", "*.jsx", "*.js", "*.vue",  # propios
+    "frontend": [
+        "*.tsx",
+        "*.ts",
+        "*.jsx",
+        "*.js",
+        "*.vue",  # propios
         "package.json",
         # server-side — cualquier stack
-        "*.py", "requirements.txt",                  # Python (FastAPI, Django, Flask)
-        "*.java",                                     # Java (Spring Boot, etc.)
-        "*.go",                                       # Go
-        "*.rs",                                       # Rust (Actix, Axum)
-        "*.cs",                                       # C# (.NET)
-        "*.rb",                                       # Ruby (Rails)
-        "*.php",                                      # PHP (Laravel, etc.)
-        "*.sql", "schema*.sql",                       # SQL — modelos de BD
+        "*.py",
+        "requirements.txt",  # Python (FastAPI, Django, Flask)
+        "*.java",  # Java (Spring Boot, etc.)
+        "*.go",  # Go
+        "*.rs",  # Rust (Actix, Axum)
+        "*.cs",  # C# (.NET)
+        "*.rb",  # Ruby (Rails)
+        "*.php",  # PHP (Laravel, etc.)
+        "*.sql",
+        "schema*.sql",  # SQL — modelos de BD
     ],
-    "backend":   ["*.py", "requirements.txt", "*.toml", "*.cfg"],
-    "database":  ["*.sql", "migrations/*.py", "models.py", "schema*.sql"],
-    "devops":    ["Dockerfile*", "docker-compose*.yml", "*.yaml", "*.tf"],
+    "backend": ["*.py", "requirements.txt", "*.toml", "*.cfg"],
+    "database": ["*.sql", "migrations/*.py", "models.py", "schema*.sql"],
+    "devops": ["Dockerfile*", "docker-compose*.yml", "*.yaml", "*.tf"],
 }
 
 
 # ---------------------------------------------------------------------------
 # Validación de rutas (previene path traversal)
 # ---------------------------------------------------------------------------
+
 
 def _resolve_safe(base_dir: str, relative_path: str) -> str:
     """
@@ -82,6 +89,7 @@ def _resolve_safe(base_dir: str, relative_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Fábrica principal
 # ---------------------------------------------------------------------------
+
 
 def make_file_tools(base_dir: str) -> list:
     """
@@ -155,11 +163,9 @@ def make_file_tools(base_dir: str) -> list:
         """
         base = pathlib.Path(base_dir)
         matches = list(base.glob(pattern))
-        files = [
-            str(p.relative_to(base))
-            for p in sorted(matches)
-            if p.is_file()
-        ][:_MAX_LIST_RESULTS]
+        files = [str(p.relative_to(base)) for p in sorted(matches) if p.is_file()][
+            :_MAX_LIST_RESULTS
+        ]
         return "\n".join(files) if files else "(sin archivos)"
 
     return [write_file, read_file, edit_file, list_files]
@@ -168,6 +174,7 @@ def make_file_tools(base_dir: str) -> list:
 # ---------------------------------------------------------------------------
 # S17T.C — Contexto de proyecto existente
 # ---------------------------------------------------------------------------
+
 
 def read_project_context(base_dir: str, agent_name: str) -> str:
     """
@@ -194,8 +201,11 @@ def read_project_context(base_dir: str, agent_name: str) -> str:
                 break
             # Ignorar node_modules, .git, __pycache__, etc.
             rel = str(filepath.relative_to(base))
-            if any(part.startswith(".") or part in ("node_modules", "__pycache__", "dist", "build")
-                   for part in pathlib.Path(rel).parts):
+            if any(
+                part.startswith(".")
+                or part in ("node_modules", "__pycache__", "dist", "build")
+                for part in pathlib.Path(rel).parts
+            ):
                 continue
             try:
                 with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
@@ -219,6 +229,7 @@ def read_project_context(base_dir: str, agent_name: str) -> str:
 # S53-A — calculate_expression: cálculo matemático seguro para tests
 # ---------------------------------------------------------------------------
 
+
 @tool
 def calculate_expression(expression: str) -> dict:
     """Evalúa una expresión matemática de forma segura.
@@ -231,9 +242,16 @@ def calculate_expression(expression: str) -> dict:
         → assert data["imc"] == 19.03
     """
     import math as _math
+
     _safe_names = {
-        "round": round, "abs": abs, "pow": pow, "min": min, "max": max,
-        "math": _math, "sqrt": _math.sqrt, "pi": _math.pi,
+        "round": round,
+        "abs": abs,
+        "pow": pow,
+        "min": min,
+        "max": max,
+        "math": _math,
+        "sqrt": _math.sqrt,
+        "pi": _math.pi,
     }
     try:
         raw = eval(expression, {"__builtins__": {}}, _safe_names)  # noqa: S307

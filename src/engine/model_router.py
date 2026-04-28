@@ -20,18 +20,20 @@ Sprint 8 — Stack Registry routing:
   Regla: legacy_stack/restricciones → claude | stack moderno → ollama
   El operador puede sobreescribir con model_routing explícito en el profile.
 """
+
 from __future__ import annotations
+
+import logging
 import os
 import re
-import logging
 import time
-from typing import Any
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger("ovd-model-router")
@@ -45,14 +47,14 @@ _BRIDGE_SECRET = os.environ.get("OVD_ENGINE_SECRET", "")
 
 # Defaults del sistema si la API no responde o no hay config
 _DEFAULT_PROVIDER = "ollama"
-_DEFAULT_MODEL    = os.environ.get("OVD_MODEL", "qwen2.5-coder:7b")
+_DEFAULT_MODEL = os.environ.get("OVD_MODEL", "qwen2.5-coder:7b")
 _DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # OVD_AGENT_PROVIDER / OVD_AGENT_MODEL — provider y modelo para agentes de implementación
 # (backend, frontend, database, devops, security). Permite usar Claude para los agentes
 # mientras se mantiene Ollama para los roles de análisis (analyzer, sdd, qa).
 _AGENT_PROVIDER = os.environ.get("OVD_AGENT_PROVIDER", _DEFAULT_PROVIDER)
-_AGENT_MODEL    = os.environ.get("OVD_AGENT_MODEL",    _DEFAULT_MODEL)
+_AGENT_MODEL = os.environ.get("OVD_AGENT_MODEL", _DEFAULT_MODEL)
 
 # Roles que usan el provider/modelo de agente (no el de análisis)
 _AGENT_ROLES = {"backend", "frontend", "database", "devops", "security_exec"}
@@ -65,8 +67,8 @@ _LLM_TIMEOUT = float(os.environ.get("OVD_LLM_TIMEOUT_SECS", "300"))
 # Para uso con OSS se recomienda 14b+ en analyzer/sdd; 7b suficiente para qa.
 _ANALYSIS_ROLE_DEFAULTS: dict[str, str] = {
     "analyzer": os.environ.get("OVD_MODEL_ANALYZER", _DEFAULT_MODEL),
-    "sdd":      os.environ.get("OVD_MODEL_SDD",      _DEFAULT_MODEL),
-    "qa":       os.environ.get("OVD_MODEL_QA",        _DEFAULT_MODEL),
+    "sdd": os.environ.get("OVD_MODEL_SDD", _DEFAULT_MODEL),
+    "qa": os.environ.get("OVD_MODEL_QA", _DEFAULT_MODEL),
 }
 
 # P2.C — Roles que usan structured output — requieren temperature baja para estabilidad
@@ -77,7 +79,7 @@ _STRUCTURED_ROLES = {"analyzer", "sdd", "qa", "security", "router"}
 # ---------------------------------------------------------------------------
 
 _CB_FAIL_THRESHOLD = int(os.environ.get("OVD_CB_FAIL_THRESHOLD", "5"))
-_CB_RECOVERY_SECS  = float(os.environ.get("OVD_CB_RECOVERY_SECS", "30"))
+_CB_RECOVERY_SECS = float(os.environ.get("OVD_CB_RECOVERY_SECS", "30"))
 
 
 class CircuitOpenError(Exception):
@@ -96,8 +98,8 @@ class _CircuitBreaker:
 
     def __init__(self, threshold: int, recovery_secs: float) -> None:
         self._threshold = threshold
-        self._recovery  = recovery_secs
-        self._failures:   dict[str, int]   = {}
+        self._recovery = recovery_secs
+        self._failures: dict[str, int] = {}
         self._open_since: dict[str, float] = {}
 
     def is_open(self, provider: str) -> bool:
@@ -116,7 +118,8 @@ class _CircuitBreaker:
             if provider not in self._open_since:
                 log.warning(
                     "circuit_breaker: circuito ABIERTO para provider='%s' tras %d fallos",
-                    provider, count,
+                    provider,
+                    count,
                 )
             self._open_since[provider] = time.monotonic()
 
@@ -149,7 +152,8 @@ def _warn_if_small_model(model: str, role: str) -> None:
         log.warning(
             "model_router: modelo '%s' (role=%s) parece tener menos de 7B parámetros — "
             "el structured output puede ser inestable; se recomienda 7b+ para roles analíticos",
-            model, role,
+            model,
+            role,
         )
 
 
@@ -167,6 +171,7 @@ def _resolve_temperature(role: str, provider: str) -> float:
 # Tipos
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ResolvedConfig:
     provider: str
@@ -176,7 +181,7 @@ class ResolvedConfig:
     extra_instructions: str | None
     constraints: str | None
     code_style: str | None
-    resolved_from: str   # default | org | project | agent
+    resolved_from: str  # default | org | project | agent
     temperature: float = 0.0  # P2.C — calculado por _resolve_temperature
 
 
@@ -205,6 +210,7 @@ def invalidate_cache(org_id: str | None = None) -> None:
 # Resolucion de config via API del Bridge
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_resolved(
     org_id: str,
     project_id: str,
@@ -231,7 +237,9 @@ async def _fetch_resolved(
         async with httpx.AsyncClient(timeout=5.0) as client:
             res = await client.get(url, headers=headers)
             if not res.is_success:
-                log.warning("model_router: bridge returned %s for config", res.status_code)
+                log.warning(
+                    "model_router: bridge returned %s for config", res.status_code
+                )
                 return None
 
             data = res.json()
@@ -255,13 +263,16 @@ async def _fetch_resolved(
     try:
         return await _do_fetch()
     except Exception as exc:
-        log.warning("model_router: failed to fetch config from bridge tras reintentos: %s", exc)
+        log.warning(
+            "model_router: failed to fetch config from bridge tras reintentos: %s", exc
+        )
         return None
 
 
 # ---------------------------------------------------------------------------
 # API publica
 # ---------------------------------------------------------------------------
+
 
 async def resolve(
     agent_role: str,
@@ -285,10 +296,10 @@ async def resolve(
         # Agentes de implementación usan OVD_AGENT_PROVIDER/OVD_AGENT_MODEL si están configurados
         if agent_role in _AGENT_ROLES:
             provider = _AGENT_PROVIDER
-            model    = _AGENT_MODEL
+            model = _AGENT_MODEL
         else:
             provider = _DEFAULT_PROVIDER
-            model    = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
+            model = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
         config = ResolvedConfig(
             provider=provider,
             model=model,
@@ -308,7 +319,10 @@ async def resolve(
     _cache[key] = config
     log.info(
         "model_router resolved: role=%s provider=%s model=%s from=%s",
-        agent_role, config.provider, config.model, config.resolved_from,
+        agent_role,
+        config.provider,
+        config.model,
+        config.resolved_from,
     )
     # P3.C — advertir si el modelo es probablemente < 7B (structured output inestable)
     _warn_if_small_model(config.model, agent_role)
@@ -387,7 +401,10 @@ def build_llm(config: ResolvedConfig) -> Any:
         )
 
     # Fallback: Ollama con modelo por defecto
-    log.warning("model_router: provider desconocido '%s', usando Ollama default", config.provider)
+    log.warning(
+        "model_router: provider desconocido '%s', usando Ollama default",
+        config.provider,
+    )
     return ChatOpenAI(
         model=_DEFAULT_MODEL,
         base_url=f"{_DEFAULT_OLLAMA_URL}/v1",
@@ -395,7 +412,7 @@ def build_llm(config: ResolvedConfig) -> Any:
         max_tokens=8192,
         temperature=0.0,
         request_timeout=_LLM_TIMEOUT,
-        extra_body={"think": False},   # Deshabilita thinking mode en modelos Qwen3+
+        extra_body={"think": False},  # Deshabilita thinking mode en modelos Qwen3+
     )
 
 
@@ -489,7 +506,11 @@ async def resolve_with_context(
     config = _apply_stack_routing(config, stack_routing)
     log.info(
         "model_router stack_routing: role=%s stack_routing=%s → provider=%s model=%s from=%s",
-        agent_role, stack_routing, config.provider, config.model, config.resolved_from,
+        agent_role,
+        stack_routing,
+        config.provider,
+        config.model,
+        config.resolved_from,
     )
     return config
 

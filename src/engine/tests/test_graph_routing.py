@@ -3,33 +3,35 @@ OVD Platform — Tests para las funciones de routing puro del grafo
 Sprint: S6+
 Estas funciones son síncronas y no llaman LLM, por lo que no requieren mocks de LLM.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
 import pytest
+from factories import make_state
 from langgraph.graph import END
 from langgraph.types import Send
 
-from factories import make_state
 from graph import (
-    route_after_approval,
-    route_after_security,
-    route_after_qa,
-    _dispatch_agents,
-    update_security_retry,
-    update_qa_retry,
-    _build_security_feedback,
     _build_qa_feedback,
+    _build_security_feedback,
+    _dispatch_agents,
+    route_after_approval,
+    route_after_qa,
+    route_after_security,
+    update_qa_retry,
+    update_security_retry,
 )
-
 
 # ---------------------------------------------------------------------------
 # TestRouteAfterApproval
 # ---------------------------------------------------------------------------
 
-class TestRouteAfterApproval:
 
+class TestRouteAfterApproval:
     def test_approved_va_a_route_agents(self):
         state = make_state(approval_decision="approved")
         assert route_after_approval(state) == "route_agents"
@@ -47,8 +49,8 @@ class TestRouteAfterApproval:
 # TestRouteAfterSecurity
 # ---------------------------------------------------------------------------
 
-class TestRouteAfterSecurity:
 
+class TestRouteAfterSecurity:
     def test_passed_true_va_a_qa(self):
         state = make_state(
             security_result={"passed": True, "score": 90},
@@ -62,6 +64,7 @@ class TestRouteAfterSecurity:
             security_retry_count=0,
         )
         import graph
+
         # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar el retry
         monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
         assert route_after_security(state) == "route_agents"
@@ -72,6 +75,7 @@ class TestRouteAfterSecurity:
             security_retry_count=3,
         )
         import graph
+
         # S48-A: bypass activo cuando _SECURITY_MIN_SCORE=0; forzar 70 para probar la escalada
         monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 70)
         assert route_after_security(state) == "handle_escalation"
@@ -79,6 +83,7 @@ class TestRouteAfterSecurity:
     def test_score_supera_umbral_pasa(self, monkeypatch):
         """Si passed=False pero score >= _SECURITY_MIN_SCORE, debe pasar a qa_review."""
         import graph
+
         monkeypatch.setattr(graph, "_SECURITY_MIN_SCORE", 80)
         state = make_state(
             security_result={"passed": False, "score": 85},
@@ -91,8 +96,8 @@ class TestRouteAfterSecurity:
 # TestRouteAfterQA
 # ---------------------------------------------------------------------------
 
-class TestRouteAfterQA:
 
+class TestRouteAfterQA:
     def test_qa_passed_va_a_run_tests(self):
         """S22: QA pasa → run_tests (ya no va directo a deliver)."""
         state = make_state(
@@ -120,12 +125,14 @@ class TestRouteAfterQA:
 # TestDispatchAgents
 # ---------------------------------------------------------------------------
 
-class TestDispatchAgents:
 
+class TestDispatchAgents:
     def test_genera_send_solo_grupo_server_side(self):
         """S47: con backend+frontend, _dispatch_agents despacha solo el server-side (backend).
         Frontend queda en pending_agents, se despacha después vía dispatch_frontend."""
-        state = make_state(selected_agents=["backend", "frontend"], pending_agents=["frontend"])
+        state = make_state(
+            selected_agents=["backend", "frontend"], pending_agents=["frontend"]
+        )
         sends = _dispatch_agents(state)
         # Solo backend va en el primer fan-out
         assert len(sends) == 1
@@ -133,7 +140,9 @@ class TestDispatchAgents:
 
     def test_frontend_no_va_en_primer_fanout(self):
         """S47: frontend no aparece en los Send() del primer fan-out."""
-        state = make_state(selected_agents=["backend", "frontend"], pending_agents=["frontend"])
+        state = make_state(
+            selected_agents=["backend", "frontend"], pending_agents=["frontend"]
+        )
         sends = _dispatch_agents(state)
         agents_in_sends = {s.arg["current_agent"] for s in sends}
         assert "backend" in agents_in_sends
@@ -156,8 +165,8 @@ class TestDispatchAgents:
 # TestUpdateRetry
 # ---------------------------------------------------------------------------
 
-class TestUpdateRetry:
 
+class TestUpdateRetry:
     def test_security_retry_incrementa_contador(self):
         state = make_state(
             security_retry_count=0,

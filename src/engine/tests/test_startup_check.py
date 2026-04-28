@@ -5,8 +5,10 @@ Copyright 2026 Omar Robles
 Verifica que assert_env() y check_env() fallen correctamente cuando
 faltan variables críticas del Engine.
 """
-import sys
+
 import os
+import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -59,7 +61,7 @@ class TestCheckEnv:
         valid_env(monkeypatch)
         monkeypatch.delenv("NATS_URL", raising=False)
         result = check_env()
-        assert result.ok is True   # no error, sigue funcionando sin NATS
+        assert result.ok is True  # no error, sigue funcionando sin NATS
         assert any("NATS_URL" in w for w in result.warnings)
 
     def test_devuelve_multiples_errores(self, monkeypatch):

@@ -5,21 +5,25 @@ Sprint: S6+
 request_approval usa interrupt() de LangGraph, que lanza GraphInterrupt.
 Los tests verifican el comportamiento con y sin auto_approve.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+from factories import make_fr_analysis, make_sdd, make_state
 from langgraph.errors import GraphInterrupt
 
-from factories import make_state, make_sdd, make_fr_analysis
 from graph import request_approval
-
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_approval_lanza_interrupt():
@@ -33,7 +37,19 @@ async def test_approval_lanza_interrupt():
     )
 
     # interrupt() de langgraph.types necesita contexto de graph — mockearlo
-    with patch("graph.interrupt", side_effect=GraphInterrupt([MagicMock(value={"type": "pending_approval", "context": {"sdd_summary": "test"}})])):
+    with patch(
+        "graph.interrupt",
+        side_effect=GraphInterrupt(
+            [
+                MagicMock(
+                    value={
+                        "type": "pending_approval",
+                        "context": {"sdd_summary": "test"},
+                    }
+                )
+            ]
+        ),
+    ):
         with pytest.raises(GraphInterrupt):
             await request_approval(state)
 
@@ -95,8 +111,11 @@ async def test_approval_payload_incluye_sdd():
         except GraphInterrupt:
             pass
 
-    assert "type" in captured_payload, f"El payload debe tener 'type'. Payload: {captured_payload}"
+    assert "type" in captured_payload, (
+        f"El payload debe tener 'type'. Payload: {captured_payload}"
+    )
     assert captured_payload["type"] == "pending_approval"
     context = captured_payload.get("context", {})
-    assert "sdd_summary" in context or "tasks" in context or "sdd" in str(context).lower(), \
-        f"El contexto debe incluir info del SDD. Context: {context}"
+    assert (
+        "sdd_summary" in context or "tasks" in context or "sdd" in str(context).lower()
+    ), f"El contexto debe incluir info del SDD. Context: {context}"

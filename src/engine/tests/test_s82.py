@@ -1,12 +1,14 @@
 """Tests for S82-A, S82-B, S82-F fixes."""
+
 import pathlib
-import pytest
 from unittest.mock import patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # S82-A — _fix_orm_in_service respects models.py existence
 # ---------------------------------------------------------------------------
+
 
 def test_s82a_skips_when_models_missing(tmp_path):
     """S82-A: si models.py no existe en disco, preserva ORM en service.py."""
@@ -23,7 +25,9 @@ def test_s82a_skips_when_models_missing(tmp_path):
     contracts_dir = tmp_path / "src" / "contracts"
     contracts_dir.mkdir(parents=True)
 
-    result = _fix_orm_in_service(content, "src/contracts/service.py", work_dir=str(tmp_path))
+    result = _fix_orm_in_service(
+        content, "src/contracts/service.py", work_dir=str(tmp_path)
+    )
     assert "class ContractORM" in result, "ORM debe preservarse si models.py no existe"
     assert "from src.contracts.models import" not in result
 
@@ -43,7 +47,9 @@ def test_s82a_removes_when_models_exists(tmp_path):
     contracts_dir.mkdir(parents=True)
     (contracts_dir / "models.py").write_text("# models stub")
 
-    result = _fix_orm_in_service(content, "src/contracts/service.py", work_dir=str(tmp_path))
+    result = _fix_orm_in_service(
+        content, "src/contracts/service.py", work_dir=str(tmp_path)
+    )
     assert "class ContractORM" not in result, "ORM debe eliminarse si models.py existe"
     assert "from src.contracts.models import ContractORM" in result
 
@@ -76,7 +82,9 @@ def test_s82a_postprocess_passes_work_dir(tmp_path):
     contracts_dir.mkdir(parents=True)
     # models.py NO existe → ORM debe preservarse
 
-    result = postprocess_python_file(content, "src/contracts/service.py", work_dir=str(tmp_path))
+    result = postprocess_python_file(
+        content, "src/contracts/service.py", work_dir=str(tmp_path)
+    )
     assert "class ContractORM" in result
 
 
@@ -84,20 +92,35 @@ def test_s82a_postprocess_passes_work_dir(tmp_path):
 # S82-B — _ensure_contracts_models_task
 # ---------------------------------------------------------------------------
 
+
 def _make_sdd(tasks):
     return {"tasks": tasks, "requirements": [], "constraints": []}
 
 
 def test_s82b_injects_when_contracts_missing_models():
     """S82-B: inyecta TASK-INFRA-CONTRACTS-MODELS cuando contracts existe pero models.py no."""
-    import sys, os
+    import os
+    import sys
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from graph import _ensure_contracts_models_task
 
-    sdd = _make_sdd([
-        {"id": "T1", "agent": "backend", "file": "src/contracts/service.py", "title": "service"},
-        {"id": "T2", "agent": "backend", "file": "src/contracts/router.py", "title": "router"},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "T1",
+                "agent": "backend",
+                "file": "src/contracts/service.py",
+                "title": "service",
+            },
+            {
+                "id": "T2",
+                "agent": "backend",
+                "file": "src/contracts/router.py",
+                "title": "router",
+            },
+        ]
+    )
     result = _ensure_contracts_models_task(sdd)
     files = [t["file"] for t in result["tasks"]]
     assert "src/contracts/models.py" in files
@@ -105,29 +128,54 @@ def test_s82b_injects_when_contracts_missing_models():
 
 def test_s82b_does_not_inject_when_models_exists():
     """S82-B: no inyecta si src/contracts/models.py ya está en el SDD."""
-    import sys, os
+    import os
+    import sys
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from graph import _ensure_contracts_models_task
 
-    sdd = _make_sdd([
-        {"id": "T1", "agent": "backend", "file": "src/contracts/models.py", "title": "models"},
-        {"id": "T2", "agent": "backend", "file": "src/contracts/service.py", "title": "service"},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "T1",
+                "agent": "backend",
+                "file": "src/contracts/models.py",
+                "title": "models",
+            },
+            {
+                "id": "T2",
+                "agent": "backend",
+                "file": "src/contracts/service.py",
+                "title": "service",
+            },
+        ]
+    )
     result = _ensure_contracts_models_task(sdd)
-    contracts_models_tasks = [t for t in result["tasks"] if t["file"] == "src/contracts/models.py"]
+    contracts_models_tasks = [
+        t for t in result["tasks"] if t["file"] == "src/contracts/models.py"
+    ]
     assert len(contracts_models_tasks) == 1, "No debe duplicar la tarea de models.py"
 
 
 def test_s82b_does_not_inject_without_contracts():
     """S82-B: no inyecta si el SDD no tiene ningún módulo contracts."""
-    import sys, os
+    import os
+    import sys
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from graph import _ensure_contracts_models_task
 
-    sdd = _make_sdd([
-        {"id": "T1", "agent": "backend", "file": "src/auth/models.py", "title": "auth models"},
-        {"id": "T2", "agent": "backend", "file": "src/main.py", "title": "main"},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "T1",
+                "agent": "backend",
+                "file": "src/auth/models.py",
+                "title": "auth models",
+            },
+            {"id": "T2", "agent": "backend", "file": "src/main.py", "title": "main"},
+        ]
+    )
     original_len = len(sdd["tasks"])
     result = _ensure_contracts_models_task(sdd)
     assert len(result["tasks"]) == original_len
@@ -135,30 +183,50 @@ def test_s82b_does_not_inject_without_contracts():
 
 def test_s82b_inserts_after_database_task():
     """S82-B: la tarea de contracts/models.py se inserta justo después de database.py."""
-    import sys, os
+    import os
+    import sys
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from graph import _ensure_contracts_models_task
 
-    sdd = _make_sdd([
-        {"id": "T1", "agent": "backend", "file": "src/database.py", "title": "db"},
-        {"id": "T2", "agent": "backend", "file": "src/contracts/service.py", "title": "service"},
-    ])
+    sdd = _make_sdd(
+        [
+            {"id": "T1", "agent": "backend", "file": "src/database.py", "title": "db"},
+            {
+                "id": "T2",
+                "agent": "backend",
+                "file": "src/contracts/service.py",
+                "title": "service",
+            },
+        ]
+    )
     result = _ensure_contracts_models_task(sdd)
     files = [t["file"] for t in result["tasks"]]
     db_idx = files.index("src/database.py")
     models_idx = files.index("src/contracts/models.py")
-    assert models_idx == db_idx + 1, "contracts/models.py debe estar justo después de database.py"
+    assert models_idx == db_idx + 1, (
+        "contracts/models.py debe estar justo después de database.py"
+    )
 
 
 def test_s82b_task_has_orm_description():
     """S82-B: la tarea inyectada incluye descripción con ContractORM y BenefitORM."""
-    import sys, os
+    import os
+    import sys
+
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from graph import _ensure_contracts_models_task
 
-    sdd = _make_sdd([
-        {"id": "T1", "agent": "backend", "file": "src/contracts/router.py", "title": "router"},
-    ])
+    sdd = _make_sdd(
+        [
+            {
+                "id": "T1",
+                "agent": "backend",
+                "file": "src/contracts/router.py",
+                "title": "router",
+            },
+        ]
+    )
     result = _ensure_contracts_models_task(sdd)
     task = next(t for t in result["tasks"] if t["file"] == "src/contracts/models.py")
     assert "ContractORM" in task["description"]
@@ -169,6 +237,7 @@ def test_s82b_task_has_orm_description():
 # ---------------------------------------------------------------------------
 # S82-F — Oracle URL → PostgreSQL patch en database.py
 # ---------------------------------------------------------------------------
+
 
 def test_s82f_patches_oracle_url_in_database_py(tmp_path):
     """S82-F: si FR menciona PostgreSQL y database.py tiene Oracle URL, se parchea en disco."""
@@ -224,9 +293,7 @@ def test_s82f_no_patch_when_fr_mentions_oracle(tmp_path):
 
 def test_s82f_no_patch_when_already_postgresql(tmp_path):
     """S82-F: no parchea si database.py ya tiene URL PostgreSQL."""
-    pg_content = (
-        "DATABASE_URL = 'postgresql+psycopg://user:pass@localhost:5432/db'\n"
-    )
+    pg_content = "DATABASE_URL = 'postgresql+psycopg://user:pass@localhost:5432/db'\n"
     db_file = tmp_path / "src" / "database.py"
     db_file.parent.mkdir(parents=True)
     db_file.write_text(pg_content)

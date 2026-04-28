@@ -2,24 +2,32 @@
 OVD Platform — Fixtures globales de regresión
 Disponibles automáticamente en todos los tests sin importar explícito.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # ─── JWT ────────────────────────────────────────────────────────────────────
 
-TEST_JWT_SECRET = "a" * 64   # 64 chars, cumple mínimo 32
+TEST_JWT_SECRET = "a" * 64  # 64 chars, cumple mínimo 32
+
 
 @pytest.fixture(autouse=True)
 def set_jwt_secret(monkeypatch):
     """Inyecta JWT_SECRET en todos los tests para evitar RuntimeError."""
     import auth
+
     monkeypatch.setattr(auth, "_JWT_SECRET", TEST_JWT_SECRET)
 
+
 # ─── Telemetría NO-OP ────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def mock_telemetry(monkeypatch):
@@ -51,32 +59,40 @@ def mock_telemetry(monkeypatch):
     monkeypatch.setattr(telemetry, "record_qa_result", MagicMock())
     monkeypatch.setattr(telemetry, "record_security_result", MagicMock())
 
+
 # ─── NATS NO-OP ──────────────────────────────────────────────────────────────
 # NO autouse — solo para tests que no prueban nats_client directamente.
 # Solicitar explícitamente con @pytest.mark.usefixtures("mock_nats") o como parámetro.
+
 
 @pytest.fixture()
 def mock_nats(monkeypatch):
     """Reemplaza todas las publicaciones NATS con AsyncMock no-op."""
     import nats_client
-    monkeypatch.setattr(nats_client, "publish_started",  AsyncMock())
-    monkeypatch.setattr(nats_client, "publish_done",     AsyncMock())
+
+    monkeypatch.setattr(nats_client, "publish_started", AsyncMock())
+    monkeypatch.setattr(nats_client, "publish_done", AsyncMock())
     monkeypatch.setattr(nats_client, "publish_approved", AsyncMock())
-    monkeypatch.setattr(nats_client, "close",            AsyncMock())
+    monkeypatch.setattr(nats_client, "close", AsyncMock())
+
 
 # ─── AuditLogger NO-OP ───────────────────────────────────────────────────────
 # NO autouse — solo para tests que no prueban audit_logger directamente.
+
 
 @pytest.fixture()
 def mock_audit_logger(monkeypatch):
     """Reemplaza AuditLogger para que no intente conectar a BD."""
     import audit_logger
-    monkeypatch.setattr(audit_logger.AuditLogger, "log",              AsyncMock())
-    monkeypatch.setattr(audit_logger.AuditLogger, "session_created",  AsyncMock())
-    monkeypatch.setattr(audit_logger.AuditLogger, "cycle_completed",  AsyncMock())
-    monkeypatch.setattr(audit_logger.AuditLogger, "secret_accessed",  AsyncMock())
+
+    monkeypatch.setattr(audit_logger.AuditLogger, "log", AsyncMock())
+    monkeypatch.setattr(audit_logger.AuditLogger, "session_created", AsyncMock())
+    monkeypatch.setattr(audit_logger.AuditLogger, "cycle_completed", AsyncMock())
+    monkeypatch.setattr(audit_logger.AuditLogger, "secret_accessed", AsyncMock())
+
 
 # ─── LLM mock reutilizable ───────────────────────────────────────────────────
+
 
 def make_llm_mock(return_value):
     """

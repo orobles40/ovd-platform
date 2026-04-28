@@ -16,6 +16,7 @@ Uso en api.py lifespan:
 Uso en graph.py agent_executor:
     tools = make_file_tools(directory) + mcp_pool.get_langchain_tools(agent_name)
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,8 +35,8 @@ class MCPClientPool:
 
     def __init__(self) -> None:
         self._stack = AsyncExitStack()
-        self._sessions: dict[str, Any] = {}       # nombre → ClientSession
-        self._lc_tools: dict[str, list] = {}       # nombre → [LangChain tools]
+        self._sessions: dict[str, Any] = {}  # nombre → ClientSession
+        self._lc_tools: dict[str, list] = {}  # nombre → [LangChain tools]
         self.available: bool = False
 
     # ------------------------------------------------------------------
@@ -50,7 +51,9 @@ class MCPClientPool:
         if self.available:
             log.info("MCP pool iniciado: %s", list(self._sessions.keys()))
         else:
-            log.warning("MCP pool: ningún servidor disponible — agentes funcionarán sin MCP tools")
+            log.warning(
+                "MCP pool: ningún servidor disponible — agentes funcionarán sin MCP tools"
+            )
 
     async def stop(self) -> None:
         """Cierra todas las sesiones MCP."""
@@ -84,9 +87,11 @@ class MCPClientPool:
         """Lanza context7 como subproceso stdio y registra sus tools."""
         try:
             from mcp import ClientSession
-            from mcp.client.stdio import stdio_client, StdioServerParameters
+            from mcp.client.stdio import StdioServerParameters, stdio_client
         except ImportError:
-            log.warning("MCP context7: librería 'mcp' no instalada — ejecutar: uv add mcp")
+            log.warning(
+                "MCP context7: librería 'mcp' no instalada — ejecutar: uv add mcp"
+            )
             return
 
         # Verificar que npx esté disponible
@@ -117,7 +122,10 @@ class MCPClientPool:
                 [t.name for t in result.tools],
             )
         except Exception as exc:
-            log.warning("MCP context7: no disponible (%s) — agentes funcionarán sin context7", exc)
+            log.warning(
+                "MCP context7: no disponible (%s) — agentes funcionarán sin context7",
+                exc,
+            )
 
 
 # ------------------------------------------------------------------
@@ -131,15 +139,18 @@ pool = MCPClientPool()
 # Helpers internos
 # ------------------------------------------------------------------
 
+
 def _find_npx() -> str | None:
     """Busca npx en PATH."""
     import shutil
+
     return shutil.which("npx")
 
 
 def _build_langchain_tools(session: Any, tool_defs: list) -> list:
     """Convierte definiciones MCP a LangChain StructuredTool."""
     from tools.mcp_tools import make_mcp_tool
+
     lc_tools = []
     for td in tool_defs:
         try:

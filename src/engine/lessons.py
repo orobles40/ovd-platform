@@ -7,6 +7,7 @@ consulta solo sus propias lecciones antes de escribir código.
 
 doc_type por agente: lesson_backend, lesson_frontend, lesson_database, lesson_devops, lesson_general
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,15 +44,24 @@ async def _index(chunks: list[dict], project_id: str, org_id: str, label: str) -
     """Helper: indexa chunks en pgvector; fire-and-forget — no propaga errores."""
     try:
         import rag
+
         await rag.index_chunks_async(chunks, project_id=project_id, org_id=org_id)
-        log.info("S41: %s — %d chunk(s) indexados en proyecto '%s'", label, len(chunks), project_id)
+        log.info(
+            "S41: %s — %d chunk(s) indexados en proyecto '%s'",
+            label,
+            len(chunks),
+            project_id,
+        )
     except Exception as exc:
-        log.warning("S41: error indexando %s en proyecto '%s': %s", label, project_id, exc)
+        log.warning(
+            "S41: error indexando %s en proyecto '%s': %s", label, project_id, exc
+        )
 
 
 # ---------------------------------------------------------------------------
 # S41.A2 — Indexar QA findings
 # ---------------------------------------------------------------------------
+
 
 async def index_qa_finding(
     *,
@@ -81,18 +91,20 @@ async def index_qa_finding(
             f"Issues detectados en la implementación:\n{issues_text}\n"
             f"Asegúrate de resolver estos issues antes de finalizar tu implementación."
         )
-        chunks.append({
-            "content": content,
-            "doc_type": _lesson_doc_type(agent_name),
-            "source_file": f"qa_finding/{short_id}",
-            "metadata": {
-                "lesson_type": "qa",
-                "agent_name": agent_name,
-                "cycle_id": cycle_id,
-                "qa_score": score,
-                "created_at": date,
-            },
-        })
+        chunks.append(
+            {
+                "content": content,
+                "doc_type": _lesson_doc_type(agent_name),
+                "source_file": f"qa_finding/{short_id}",
+                "metadata": {
+                    "lesson_type": "qa",
+                    "agent_name": agent_name,
+                    "cycle_id": cycle_id,
+                    "qa_score": score,
+                    "created_at": date,
+                },
+            }
+        )
 
     await _index(chunks, project_id, org_id, f"QA finding (score={score})")
 
@@ -100,6 +112,7 @@ async def index_qa_finding(
 # ---------------------------------------------------------------------------
 # S41.A3 — Indexar Security findings
 # ---------------------------------------------------------------------------
+
 
 async def index_security_finding(
     *,
@@ -132,19 +145,21 @@ async def index_security_finding(
             f"Vulnerabilidades encontradas:\n{vulns_text}\n"
             f"Evita estos patrones de seguridad en tu implementación."
         )
-        chunks.append({
-            "content": content,
-            "doc_type": _lesson_doc_type(agent_name),
-            "source_file": f"security_finding/{short_id}",
-            "metadata": {
-                "lesson_type": "security",
-                "agent_name": agent_name,
-                "severity": severity,
-                "cycle_id": cycle_id,
-                "qa_score": score,
-                "created_at": date,
-            },
-        })
+        chunks.append(
+            {
+                "content": content,
+                "doc_type": _lesson_doc_type(agent_name),
+                "source_file": f"security_finding/{short_id}",
+                "metadata": {
+                    "lesson_type": "security",
+                    "agent_name": agent_name,
+                    "severity": severity,
+                    "cycle_id": cycle_id,
+                    "qa_score": score,
+                    "created_at": date,
+                },
+            }
+        )
 
     await _index(chunks, project_id, org_id, f"Security finding (severity={severity})")
 
@@ -152,6 +167,7 @@ async def index_security_finding(
 # ---------------------------------------------------------------------------
 # S41.A4 — Indexar Test failures
 # ---------------------------------------------------------------------------
+
 
 async def index_test_failure(
     *,
@@ -182,18 +198,20 @@ async def index_test_failure(
             f"Errores detectados:\n{error_truncated}\n"
             f"Corrige estos errores en la implementación para que los tests pasen."
         )
-        chunks.append({
-            "content": content,
-            "doc_type": _lesson_doc_type(agent_name),
-            "source_file": f"test_failure/{short_id}",
-            "metadata": {
-                "lesson_type": "test",
-                "agent_name": agent_name,
-                "runner": runner,
-                "cycle_id": cycle_id,
-                "created_at": date,
-            },
-        })
+        chunks.append(
+            {
+                "content": content,
+                "doc_type": _lesson_doc_type(agent_name),
+                "source_file": f"test_failure/{short_id}",
+                "metadata": {
+                    "lesson_type": "test",
+                    "agent_name": agent_name,
+                    "runner": runner,
+                    "cycle_id": cycle_id,
+                    "created_at": date,
+                },
+            }
+        )
 
     await _index(chunks, project_id, org_id, f"Test failure (runner={runner})")
 
@@ -201,6 +219,7 @@ async def index_test_failure(
 # ---------------------------------------------------------------------------
 # S41.A5 — Post-mortem del ciclo completo
 # ---------------------------------------------------------------------------
+
 
 async def index_cycle_postmortem(
     *,
@@ -222,7 +241,9 @@ async def index_cycle_postmortem(
 
     short_id = cycle_id[:8] if cycle_id else "?"
     date = _date_str()
-    retries_text = ", ".join(f"{k}={v}" for k, v in retry_counts.items() if v > 0) or "ninguno"
+    retries_text = (
+        ", ".join(f"{k}={v}" for k, v in retry_counts.items() if v > 0) or "ninguno"
+    )
     agents_text = ", ".join(agent_names) if agent_names else "ninguno"
 
     content = (
@@ -236,18 +257,20 @@ async def index_cycle_postmortem(
 
     chunks = []
     for agent_name in agents_to_index:
-        chunks.append({
-            "content": content,
-            "doc_type": _lesson_doc_type(agent_name),
-            "source_file": f"postmortem/{short_id}",
-            "metadata": {
-                "lesson_type": "postmortem",
-                "agent_name": agent_name,
-                "cycle_id": cycle_id,
-                "qa_score": qa_score,
-                "created_at": date,
-            },
-        })
+        chunks.append(
+            {
+                "content": content,
+                "doc_type": _lesson_doc_type(agent_name),
+                "source_file": f"postmortem/{short_id}",
+                "metadata": {
+                    "lesson_type": "postmortem",
+                    "agent_name": agent_name,
+                    "cycle_id": cycle_id,
+                    "qa_score": qa_score,
+                    "created_at": date,
+                },
+            }
+        )
 
     await _index(chunks, project_id, org_id, "Postmortem")
 
@@ -255,6 +278,7 @@ async def index_cycle_postmortem(
 # ---------------------------------------------------------------------------
 # S41.B1 — Consultar lecciones para un agente
 # ---------------------------------------------------------------------------
+
 
 async def query_lessons_context(
     *,
@@ -292,5 +316,7 @@ async def query_lessons_context(
         )
         return context
     except Exception as exc:
-        log.warning("S41.B1: error consultando lecciones para agente '%s': %s", agent_name, exc)
+        log.warning(
+            "S41.B1: error consultando lecciones para agente '%s': %s", agent_name, exc
+        )
         return ""

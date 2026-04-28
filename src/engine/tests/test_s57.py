@@ -6,25 +6,30 @@ S57-B: run_tests distingue exit 4 (USAGE_ERROR) de collection errors reales (rc=
 S57-C: conftest.py se regenera en rounds de retry
 S57-D: _write_artifacts(preserve_nonempty=True) en fallback de tool calling
 """
-import sys, os, pathlib
+
+import os
+import pathlib
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 
 import graph
-
 
 # ---------------------------------------------------------------------------
 # S57-A: _keep_best_qa reducer
 # ---------------------------------------------------------------------------
 
+
 def test_keep_best_qa_prefers_higher_score():
     """S57-A: con score mayor en update, reemplaza el existente."""
     existing = {"score": 65, "passed": False, "sdd_compliance": False}
-    update   = {"score": 95, "passed": True,  "sdd_compliance": True}
+    update = {"score": 95, "passed": True, "sdd_compliance": True}
     result = graph._keep_best_qa(existing, update)
     assert result["score"] == 95
     assert result["sdd_compliance"] is True
@@ -32,8 +37,8 @@ def test_keep_best_qa_prefers_higher_score():
 
 def test_keep_best_qa_preserves_existing_when_update_lower():
     """S57-A: si update tiene score menor, preserva el existente."""
-    existing = {"score": 95, "passed": True,  "sdd_compliance": True}
-    update   = {"score": 65, "passed": False, "sdd_compliance": False}
+    existing = {"score": 95, "passed": True, "sdd_compliance": True}
+    update = {"score": 65, "passed": False, "sdd_compliance": False}
     result = graph._keep_best_qa(existing, update)
     assert result["score"] == 95
     assert result["sdd_compliance"] is True
@@ -54,8 +59,8 @@ def test_keep_best_qa_empty_update_returns_existing():
 
 def test_keep_best_qa_equal_scores_preserves_existing():
     """S57-A: scores iguales → no reemplaza (semantica estable)."""
-    existing = {"score": 75, "passed": True,  "sdd_compliance": True}
-    update   = {"score": 75, "passed": False, "sdd_compliance": False}
+    existing = {"score": 75, "passed": True, "sdd_compliance": True}
+    update = {"score": 75, "passed": False, "sdd_compliance": False}
     result = graph._keep_best_qa(existing, update)
     # Con scores iguales, >= preserva el existente
     assert result["sdd_compliance"] is True
@@ -64,9 +69,15 @@ def test_keep_best_qa_equal_scores_preserves_existing():
 def test_keep_best_qa_cycle_simulation():
     """S57-A: simulación del ciclo S56 — 65→95→65 debe reportar 95."""
     state = {}
-    state = graph._keep_best_qa(state, {"score": 65, "passed": False, "sdd_compliance": False})
-    state = graph._keep_best_qa(state, {"score": 95, "passed": True,  "sdd_compliance": True})
-    state = graph._keep_best_qa(state, {"score": 65, "passed": False, "sdd_compliance": False})
+    state = graph._keep_best_qa(
+        state, {"score": 65, "passed": False, "sdd_compliance": False}
+    )
+    state = graph._keep_best_qa(
+        state, {"score": 95, "passed": True, "sdd_compliance": True}
+    )
+    state = graph._keep_best_qa(
+        state, {"score": 65, "passed": False, "sdd_compliance": False}
+    )
     assert state["score"] == 95, f"Esperado 95, got {state['score']}"
     assert state["sdd_compliance"] is True
 
@@ -74,6 +85,7 @@ def test_keep_best_qa_cycle_simulation():
 # ---------------------------------------------------------------------------
 # S57-B: corrección exit codes pytest
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_run_tests_exit4_logs_usage_error(tmp_path, caplog):
@@ -102,22 +114,28 @@ async def test_run_tests_exit4_logs_usage_error(tmp_path, caplog):
     # Simular un proceso que retorna exit 4
     mock_proc = AsyncMock()
     mock_proc.returncode = 4
-    mock_proc.communicate = AsyncMock(return_value=(b"ERROR: unrecognized arguments: --bad-flag", None))
+    mock_proc.communicate = AsyncMock(
+        return_value=(b"ERROR: unrecognized arguments: --bad-flag", None)
+    )
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         with caplog.at_level(logging.WARNING, logger="ovd-graph"):
             await graph.run_tests(state)
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S57-B" in m and "USAGE_ERROR" in m for m in warning_msgs), \
+    assert any("S57-B" in m and "USAGE_ERROR" in m for m in warning_msgs), (
         f"No se encontró WARNING S57-B USAGE_ERROR. Mensajes: {warning_msgs}"
+    )
     # No debe mencionar "collection error" en exit 4
-    assert not any("collection error" in m.lower() and "exit 4" in m for m in warning_msgs), \
-        "Exit 4 sigue siendo descrito como collection error"
+    assert not any(
+        "collection error" in m.lower() and "exit 4" in m for m in warning_msgs
+    ), "Exit 4 sigue siendo descrito como collection error"
 
 
 @pytest.mark.asyncio
-async def test_run_tests_exit1_zero_items_detected_as_collection_error(tmp_path, caplog):
+async def test_run_tests_exit1_zero_items_detected_as_collection_error(
+    tmp_path, caplog
+):
     """S57-B: rc=1 con 'collected 0 items' + ImportError → detection de collection error."""
     test_file = tmp_path / "tests" / "test_dummy.py"
     test_file.parent.mkdir()
@@ -152,13 +170,15 @@ async def test_run_tests_exit1_zero_items_detected_as_collection_error(tmp_path,
             await graph.run_tests(state)
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S57-B" in m and "collection error" in m.lower() for m in warning_msgs), \
-        f"No se detectó collection error S57-B. Mensajes: {warning_msgs}"
+    assert any(
+        "S57-B" in m and "collection error" in m.lower() for m in warning_msgs
+    ), f"No se detectó collection error S57-B. Mensajes: {warning_msgs}"
 
 
 # ---------------------------------------------------------------------------
 # S57-C: conftest.py regenerado en retry
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_conftest_regenerated_in_retry_round(tmp_path, caplog):
@@ -205,8 +225,9 @@ async def test_conftest_regenerated_in_retry_round(tmp_path, caplog):
     assert "src" in new_content, "conftest.py regenerado no apunta a src/"
 
     warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("S57-C" in m for m in warning_msgs), \
+    assert any("S57-C" in m for m in warning_msgs), (
         f"No se encontró WARNING S57-C. Mensajes: {warning_msgs}"
+    )
 
 
 @pytest.mark.asyncio
@@ -243,12 +264,15 @@ async def test_conftest_not_regenerated_in_first_round(tmp_path):
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         await graph.run_tests(state)
 
-    assert conftest.read_text() == original, "conftest.py fue modificado en round 0 (no debe serlo)"
+    assert conftest.read_text() == original, (
+        "conftest.py fue modificado en round 0 (no debe serlo)"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S57-D: preserve_nonempty en fallback de tool calling
 # ---------------------------------------------------------------------------
+
 
 def test_write_artifacts_fallback_preserves_with_retry_feedback(tmp_path):
     """S57-D: fallback _write_artifacts usa preserve_nonempty=True cuando hay retry_feedback."""
@@ -261,7 +285,11 @@ def test_write_artifacts_fallback_preserves_with_retry_feedback(tmp_path):
     # Nuevo output con contenido vacío (LLM truncado)
     output_truncado = "```python:src/imc/service.py\n\n```"
 
-    result = graph._write_artifacts(output_truncado, str(tmp_path), "backend", preserve_nonempty=True)
+    result = graph._write_artifacts(
+        output_truncado, str(tmp_path), "backend", preserve_nonempty=True
+    )
 
-    assert target.read_text() == original, "Archivo fue sobreescrito con contenido vacío (no debe)"
+    assert target.read_text() == original, (
+        "Archivo fue sobreescrito con contenido vacío (no debe)"
+    )
     assert len(result) == 1

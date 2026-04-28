@@ -14,6 +14,7 @@ Configuración:
   TAVILY_API_KEY=tvly-...                              (solo para Tavily)
   OVD_SEARXNG_URL=http://searxng:8080                 (solo para SearXNG)
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,18 +29,20 @@ log = logging.getLogger("ovd.search")
 # Resultado de búsqueda normalizado
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SearchResult:
     title: str
     url: str
     snippet: str
-    score: float = 0.0          # relevancia 0.0–1.0 (si el provider lo devuelve)
-    published_date: str = ""    # ISO date si está disponible
+    score: float = 0.0  # relevancia 0.0–1.0 (si el provider lo devuelve)
+    published_date: str = ""  # ISO date si está disponible
 
 
 # ---------------------------------------------------------------------------
 # Interfaz abstracta
 # ---------------------------------------------------------------------------
+
 
 class SearchProvider(ABC):
     """Interfaz base para proveedores de búsqueda web."""
@@ -62,6 +65,7 @@ class SearchProvider(ABC):
 # DuckDuckGo (default — gratis, sin API key)
 # ---------------------------------------------------------------------------
 
+
 class DuckDuckGoProvider(SearchProvider):
     """
     Proveedor DuckDuckGo usando duckduckgo-search (ya en pyproject.toml).
@@ -76,18 +80,22 @@ class DuckDuckGoProvider(SearchProvider):
         try:
             from duckduckgo_search import AsyncDDGS
         except ImportError:
-            log.error("duckduckgo-search no instalado. Ejecutar: uv add duckduckgo-search")
+            log.error(
+                "duckduckgo-search no instalado. Ejecutar: uv add duckduckgo-search"
+            )
             return []
 
         results: list[SearchResult] = []
         try:
             async with AsyncDDGS() as ddgs:
                 async for r in ddgs.atext(query, max_results=max_results):
-                    results.append(SearchResult(
-                        title=r.get("title", ""),
-                        url=r.get("href", ""),
-                        snippet=r.get("body", ""),
-                    ))
+                    results.append(
+                        SearchResult(
+                            title=r.get("title", ""),
+                            url=r.get("href", ""),
+                            snippet=r.get("body", ""),
+                        )
+                    )
         except Exception as e:
             log.warning("DuckDuckGo search error para '%s': %s", query[:60], e)
         return results
@@ -96,6 +104,7 @@ class DuckDuckGoProvider(SearchProvider):
 # ---------------------------------------------------------------------------
 # Tavily (alta calidad, requiere API key)
 # ---------------------------------------------------------------------------
+
 
 class TavilyProvider(SearchProvider):
     """
@@ -119,6 +128,7 @@ class TavilyProvider(SearchProvider):
             return []
 
         import httpx
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
@@ -138,19 +148,22 @@ class TavilyProvider(SearchProvider):
 
         results = []
         for r in data.get("results", []):
-            results.append(SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("content", ""),
-                score=r.get("score", 0.0),
-                published_date=r.get("published_date", ""),
-            ))
+            results.append(
+                SearchResult(
+                    title=r.get("title", ""),
+                    url=r.get("url", ""),
+                    snippet=r.get("content", ""),
+                    score=r.get("score", 0.0),
+                    published_date=r.get("published_date", ""),
+                )
+            )
         return results
 
 
 # ---------------------------------------------------------------------------
 # SearXNG (self-hosted, sin límites)
 # ---------------------------------------------------------------------------
+
 
 class SearXNGProvider(SearchProvider):
     """
@@ -174,6 +187,7 @@ class SearXNGProvider(SearchProvider):
             return []
 
         import httpx
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
@@ -188,13 +202,15 @@ class SearXNGProvider(SearchProvider):
 
         results = []
         for r in data.get("results", [])[:max_results]:
-            results.append(SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("content", ""),
-                score=r.get("score", 0.0),
-                published_date=r.get("publishedDate", ""),
-            ))
+            results.append(
+                SearchResult(
+                    title=r.get("title", ""),
+                    url=r.get("url", ""),
+                    snippet=r.get("content", ""),
+                    score=r.get("score", 0.0),
+                    published_date=r.get("publishedDate", ""),
+                )
+            )
         return results
 
 

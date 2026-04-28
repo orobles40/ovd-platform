@@ -1,21 +1,26 @@
 """
 OVD Platform — Tests S34: detección de error repetido + extracción de bloque de test fallido
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-import pytest
 import inspect
-from factories import make_state
 
+import pytest
+from factories import make_state
 
 # ---------------------------------------------------------------------------
 # Helpers bajo test
 # ---------------------------------------------------------------------------
 
+
 def _get_graph():
     import graph as _graph
+
     return _graph
 
 
@@ -23,13 +28,16 @@ def _get_graph():
 # S34-A — Detección de error repetido
 # ---------------------------------------------------------------------------
 
+
 class TestS34ARepeatDetection:
     """S34-A: update_test_retry detecta cuando el mismo AssertionError se repite."""
 
     def test_extract_assert_errors_existe(self):
         """_extract_assert_errors es una función accesible en graph."""
         g = _get_graph()
-        assert hasattr(g, "_extract_assert_errors"), "_extract_assert_errors no encontrada en graph"
+        assert hasattr(g, "_extract_assert_errors"), (
+            "_extract_assert_errors no encontrada en graph"
+        )
 
     def test_extract_assert_errors_detecta_linea_E(self):
         """Detecta líneas que empiezan con 'E ' y contienen assert o ==."""
@@ -58,22 +66,31 @@ class TestS34ARepeatDetection:
         g = _get_graph()
         assert_line = "E   assert 951.34 == 32.0"
         state = make_state(
-            test_results={"passed": False, "output": f"FAILED\n{assert_line}\n1 failed", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": f"FAILED\n{assert_line}\n1 failed",
+                "runner": "pytest",
+            },
             test_retry_count=1,
             # existing ya contiene el mismo error del round anterior
             retry_feedback=f"TESTS FALLIDOS (ronda 1/2)\n{assert_line}\nOutput anterior",
         )
         result = g.update_test_retry(state)
         feedback = result["retry_feedback"]
-        assert "S34-A" in feedback or "MISMO ERROR" in feedback, \
+        assert "S34-A" in feedback or "MISMO ERROR" in feedback, (
             "S34-A no detectó el error repetido"
+        )
         assert "951.34" in feedback
 
     def test_update_test_retry_no_falso_positivo_sin_repeticion(self):
         """No agrega hint S34-A cuando el error NO se repite."""
         g = _get_graph()
         state = make_state(
-            test_results={"passed": False, "output": "E   assert 5 == 10\n1 failed", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": "E   assert 5 == 10\n1 failed",
+                "runner": "pytest",
+            },
             test_retry_count=1,
             retry_feedback="TESTS FALLIDOS (ronda 1/2)\nE   assert 100 == 200\noutput anterior",
         )
@@ -86,7 +103,11 @@ class TestS34ARepeatDetection:
         """En el primer retry (sin existing), nunca hay hint de repetición."""
         g = _get_graph()
         state = make_state(
-            test_results={"passed": False, "output": "E   assert 1 == 2\n1 failed", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": "E   assert 1 == 2\n1 failed",
+                "runner": "pytest",
+            },
             test_retry_count=0,
             retry_feedback="",
         )
@@ -99,19 +120,28 @@ class TestS34ARepeatDetection:
         g = _get_graph()
         assert_line = "E   assert 951.34 == 32.0"
         state = make_state(
-            test_results={"passed": False, "output": f"FAILED\n{assert_line}", "runner": "pytest"},
+            test_results={
+                "passed": False,
+                "output": f"FAILED\n{assert_line}",
+                "runner": "pytest",
+            },
             test_retry_count=1,
             retry_feedback=f"Round 1\n{assert_line}",
         )
         result = g.update_test_retry(state)
         feedback = result["retry_feedback"]
         if "MISMO ERROR" in feedback:
-            assert "fórmula" in feedback.lower() or "lógica" in feedback.lower() or "implementación" in feedback.lower()
+            assert (
+                "fórmula" in feedback.lower()
+                or "lógica" in feedback.lower()
+                or "implementación" in feedback.lower()
+            )
 
 
 # ---------------------------------------------------------------------------
 # S34-B — Extracción de bloque de test fallido
 # ---------------------------------------------------------------------------
+
 
 class TestS34BFailedTestBlock:
     """S34-B: extrae el bloque FAILED con nombre de test y línea de aserción."""
@@ -139,10 +169,12 @@ PASSED tests/test_temp.py::test_kelvin_valid
         """No extrae más de 3 bloques aunque haya más fallos."""
         g = _get_graph()
         # Generar 5 bloques FAILED
-        blocks = "\n".join([
-            f"FAILED tests/test_foo.py::test_{i}\n    def test_{i}():\nE       assert {i} == 0"
-            for i in range(5)
-        ])
+        blocks = "\n".join(
+            [
+                f"FAILED tests/test_foo.py::test_{i}\n    def test_{i}():\nE       assert {i} == 0"
+                for i in range(5)
+            ]
+        )
         result = g._extract_failed_test_blocks(blocks)
         # Máximo 3 bloques
         count = result.count("FAILED")

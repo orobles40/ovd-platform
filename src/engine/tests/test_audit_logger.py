@@ -8,22 +8,25 @@ Estrategia:
   - Se mockea _write_audit_log (la capa de escritura a BD) con AsyncMock.
   - Se forza DATABASE_URL="" para probar el path de "sin BD".
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 import logging
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from audit_logger import AuditLogger, AUDIT_EVENTS
+import pytest
 
+from audit_logger import AUDIT_EVENTS, AuditLogger
 
 # ---------------------------------------------------------------------------
 # TestAuditEvents — verificaciones básicas del conjunto de eventos
 # ---------------------------------------------------------------------------
 
-class TestAuditEvents:
 
+class TestAuditEvents:
     def test_audit_events_contiene_session_created(self):
         """AUDIT_EVENTS debe contener 'session_created'."""
         assert "session_created" in AUDIT_EVENTS
@@ -44,6 +47,7 @@ class TestAuditEvents:
 # TestAuditLoggerDirecto — prueba la lógica real desactivando el mock del conftest
 # ---------------------------------------------------------------------------
 
+
 class TestAuditLoggerDirecto:
     # mock_audit_logger NO es autouse → los métodos reales están disponibles aquí.
     # Solo forzamos DATABASE_URL="" para aislar de BD real.
@@ -52,6 +56,7 @@ class TestAuditLoggerDirecto:
     def force_empty_db_url(self, monkeypatch):
         """Fuerza DATABASE_URL="" para que log() retorne sin intentar conectar."""
         import audit_logger
+
         monkeypatch.setattr(audit_logger, "_DATABASE_URL", "")
 
     @pytest.mark.asyncio
@@ -108,12 +113,14 @@ class TestAuditLoggerDirecto:
         captured_calls = []
 
         async def fake_log(event, org_id, resource_type, summary, **kwargs):
-            captured_calls.append({
-                "event": event,
-                "org_id": org_id,
-                "resource_type": resource_type,
-                "summary": summary,
-            })
+            captured_calls.append(
+                {
+                    "event": event,
+                    "org_id": org_id,
+                    "resource_type": resource_type,
+                    "summary": summary,
+                }
+            )
 
         monkeypatch.setattr(audit_logger.AuditLogger, "log", fake_log)
 
@@ -174,8 +181,10 @@ class TestAuditLoggerDirecto:
         mock_write.assert_called_once()
         call_kwargs = mock_write.call_args
         # Verificar que el evento correcto fue pasado
-        assert call_kwargs.kwargs.get("event") == "session_created" or \
-               call_kwargs.args[0] == "session_created"
+        assert (
+            call_kwargs.kwargs.get("event") == "session_created"
+            or call_kwargs.args[0] == "session_created"
+        )
 
     @pytest.mark.asyncio
     async def test_error_en_write_no_propaga(self, monkeypatch):

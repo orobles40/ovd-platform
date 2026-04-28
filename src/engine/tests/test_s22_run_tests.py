@@ -1,19 +1,23 @@
 """
 S22 — Tests del nodo run_tests, helper _detect_test_runner y routing _route_after_tests.
 """
+
 from __future__ import annotations
-import pytest
+
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys, os
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tests.factories import make_state
 
-
 # ---------------------------------------------------------------------------
 # _detect_test_runner
 # ---------------------------------------------------------------------------
+
 
 def _make_agent_results(paths: list[str]) -> list[dict]:
     """Genera agent_results con bloques de código en los paths indicados."""
@@ -23,24 +27,28 @@ def _make_agent_results(paths: list[str]) -> list[dict]:
 
 def test_detect_test_runner_pytest():
     import graph as g
+
     results = _make_agent_results(["src/api.py", "tests/test_login.py"])
     assert g._detect_test_runner(results) == "pytest"
 
 
 def test_detect_test_runner_vitest():
     import graph as g
+
     results = _make_agent_results(["src/Login.tsx", "src/Login.test.tsx"])
     assert g._detect_test_runner(results) == "vitest"
 
 
 def test_detect_test_runner_no_tests():
     import graph as g
+
     results = _make_agent_results(["src/api.py", "src/models.py"])
     assert g._detect_test_runner(results) is None
 
 
 def test_detect_test_runner_empty():
     import graph as g
+
     assert g._detect_test_runner([]) is None
 
 
@@ -48,34 +56,48 @@ def test_detect_test_runner_empty():
 # _route_after_tests
 # ---------------------------------------------------------------------------
 
+
 def test_route_after_tests_passed():
     import graph as g
-    state = make_state(test_results={"passed": True, "runner": "pytest"}, test_retry_count=0)
+
+    state = make_state(
+        test_results={"passed": True, "runner": "pytest"}, test_retry_count=0
+    )
     assert g._route_after_tests(state) == "generate_docs"
 
 
 def test_route_after_tests_failed_first_retry():
     import graph as g
-    state = make_state(test_results={"passed": False, "runner": "pytest"}, test_retry_count=0)
+
+    state = make_state(
+        test_results={"passed": False, "runner": "pytest"}, test_retry_count=0
+    )
     assert g._route_after_tests(state) == "test_retry"
 
 
 def test_route_after_tests_failed_second_retry():
     import graph as g
-    state = make_state(test_results={"passed": False, "runner": "pytest"}, test_retry_count=1)
+
+    state = make_state(
+        test_results={"passed": False, "runner": "pytest"}, test_retry_count=1
+    )
     assert g._route_after_tests(state) == "test_retry"
 
 
 def test_route_after_tests_max_retries_reached():
     """Con test_retry_count >= 2, siempre va a generate_docs (no bloquea)."""
     import graph as g
-    state = make_state(test_results={"passed": False, "runner": "pytest"}, test_retry_count=2)
+
+    state = make_state(
+        test_results={"passed": False, "runner": "pytest"}, test_retry_count=2
+    )
     assert g._route_after_tests(state) == "generate_docs"
 
 
 def test_route_after_tests_no_results_defaults_to_generate_docs():
     """Sin test_results, passed=True por defecto (no bloquea)."""
     import graph as g
+
     state = make_state(test_results={}, test_retry_count=0)
     assert g._route_after_tests(state) == "generate_docs"
 
@@ -84,11 +106,15 @@ def test_route_after_tests_no_results_defaults_to_generate_docs():
 # run_tests — no-op sin archivos de test
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_tests_noop_without_test_files():
     import graph as g
+
     state = make_state(
-        agent_results=[{"agent": "backend", "output": "```python:src/api.py\n# code\n```"}],
+        agent_results=[
+            {"agent": "backend", "output": "```python:src/api.py\n# code\n```"}
+        ],
         directory="",
         test_retry_count=0,
     )
@@ -101,7 +127,10 @@ async def test_run_tests_noop_without_test_files():
 @pytest.mark.asyncio
 async def test_run_tests_timeout_returns_failed():
     """Si el proceso de tests excede el timeout, retorna passed=False con mensaje de timeout."""
-    import asyncio, tempfile, os
+    import asyncio
+    import os
+    import tempfile
+
     import graph as g
 
     # S32-A: necesita test files en el directorio para que pytest se ejecute
@@ -137,7 +166,9 @@ async def test_run_tests_timeout_returns_failed():
 @pytest.mark.asyncio
 async def test_run_tests_runner_not_installed():
     """Si el runner no está instalado, retorna passed=True (no bloquear)."""
-    import tempfile, os
+    import os
+    import tempfile
+
     import graph as g
 
     # S32-A: necesita test files en el directorio para que llegue al subprocess
@@ -152,7 +183,10 @@ async def test_run_tests_runner_not_installed():
             test_retry_count=0,
         )
 
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("pytest not found")):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=FileNotFoundError("pytest not found"),
+        ):
             result = await g.run_tests(state)
 
     assert result["test_results"]["passed"] is True

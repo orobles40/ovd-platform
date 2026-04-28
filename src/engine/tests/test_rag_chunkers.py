@@ -12,24 +12,35 @@ Verifica todos los chunkers con fixtures estáticas (sin infraestructura):
 - get_chunks: dispatcher principal
 - _split_text: chunking con overlap
 """
-import sys
-import os
+
 import json
-import tempfile
+import os
 import pathlib
+import sys
+import tempfile
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".."))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..")
+)
 
 import pytest
 from knowledge.chunkers import (
-    chunk_codebase, chunk_schema, chunk_contract, chunk_doc,
-    chunk_delivery, chunk_tickets, get_chunks, _split_text, Chunk,
+    Chunk,
+    _split_text,
+    chunk_codebase,
+    chunk_contract,
+    chunk_delivery,
+    chunk_doc,
+    chunk_schema,
+    chunk_tickets,
+    get_chunks,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write(tmp: str, name: str, content: str) -> pathlib.Path:
     p = pathlib.Path(tmp) / name
@@ -41,6 +52,7 @@ def _write(tmp: str, name: str, content: str) -> pathlib.Path:
 # ---------------------------------------------------------------------------
 # _split_text
 # ---------------------------------------------------------------------------
+
 
 class TestSplitText:
     def test_texto_corto_no_se_divide(self):
@@ -76,6 +88,7 @@ class TestSplitText:
 # ---------------------------------------------------------------------------
 # chunk_codebase — Python AST
 # ---------------------------------------------------------------------------
+
 
 class TestChunkCodebasePython:
     def test_funcion_simple_genera_chunk(self):
@@ -143,7 +156,9 @@ class TestChunkCodebaseTypeScript:
 
     def test_tsx_extension_reconocida(self):
         with tempfile.TemporaryDirectory() as d:
-            _write(d, "Button.tsx", "export const Button = () => <button>Click</button>;\n")
+            _write(
+                d, "Button.tsx", "export const Button = () => <button>Click</button>;\n"
+            )
             chunks = list(chunk_codebase(pathlib.Path(d)))
         assert len(chunks) >= 1
 
@@ -157,6 +172,7 @@ class TestChunkCodebaseTypeScript:
 # ---------------------------------------------------------------------------
 # chunk_schema — DDL
 # ---------------------------------------------------------------------------
+
 
 class TestChunkSchema:
     DDL = """
@@ -210,6 +226,7 @@ $$ LANGUAGE plpgsql;
 # ---------------------------------------------------------------------------
 # chunk_doc — Markdown / TXT
 # ---------------------------------------------------------------------------
+
 
 class TestChunkDoc:
     MD = """# Título Principal
@@ -266,6 +283,7 @@ Contenido de la sección B con más información.
 # ---------------------------------------------------------------------------
 # chunk_delivery — informes ovd-delivery-*.md
 # ---------------------------------------------------------------------------
+
 
 class TestChunkDelivery:
     REPORT = """# Informe de Entrega OVD
@@ -327,13 +345,26 @@ Login implementado con JWT y refresh tokens.
 # chunk_tickets — JSON de tickets
 # ---------------------------------------------------------------------------
 
+
 class TestChunkTickets:
-    TICKETS_JSON = json.dumps([
-        {"key": "OVD-1", "summary": "Implementar login", "description": "Auth con JWT",
-         "status": "Done", "issuetype": {"name": "Story"}},
-        {"key": "OVD-2", "summary": "Fix bug en logout", "description": "Token no expira",
-         "status": "In Progress", "issuetype": {"name": "Bug"}},
-    ])
+    TICKETS_JSON = json.dumps(
+        [
+            {
+                "key": "OVD-1",
+                "summary": "Implementar login",
+                "description": "Auth con JWT",
+                "status": "Done",
+                "issuetype": {"name": "Story"},
+            },
+            {
+                "key": "OVD-2",
+                "summary": "Fix bug en logout",
+                "description": "Token no expira",
+                "status": "In Progress",
+                "issuetype": {"name": "Bug"},
+            },
+        ]
+    )
 
     def test_genera_chunk_por_ticket(self):
         with tempfile.TemporaryDirectory() as d:
@@ -365,6 +396,7 @@ class TestChunkTickets:
 # ---------------------------------------------------------------------------
 # get_chunks — dispatcher
 # ---------------------------------------------------------------------------
+
 
 class TestGetChunks:
     def test_dispatch_codebase(self):

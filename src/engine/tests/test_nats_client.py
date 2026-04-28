@@ -14,47 +14,56 @@ Verifica el comportamiento del cliente NATS:
   N7.9 — close es seguro si la conexión nunca fue abierta
   N7.10 — _get_connection retorna None sin NATS_URL
 """
-import sys
-import os
+
 import asyncio
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import nats_client
 
-
 # ---------------------------------------------------------------------------
 # Estado de prueba base
 # ---------------------------------------------------------------------------
 
+
 def _make_state(**overrides) -> dict:
     base = {
-        "session_id":       "sess-abc123",
-        "org_id":           "org-test",
-        "project_id":       "proj-001",
-        "feature_request":  "Agregar autenticación OAuth2",
-        "fr_analysis":      {"type": "feature", "complexity": "medium"},
+        "session_id": "sess-abc123",
+        "org_id": "org-test",
+        "project_id": "proj-001",
+        "feature_request": "Agregar autenticación OAuth2",
+        "fr_analysis": {"type": "feature", "complexity": "medium"},
         "sdd": {
-            "summary":      "Implementar OAuth2 con PKCE",
+            "summary": "Implementar OAuth2 con PKCE",
             "requirements": ["req1", "req2", "req3"],
-            "tasks":        ["task1", "task2"],
+            "tasks": ["task1", "task2"],
         },
         "approval_comment": "Aprobado sin observaciones",
         "agent_results": [
-            {"agent": "backend",  "output": "def auth(): pass", "tokens": {"input": 100, "output": 50}},
-            {"agent": "frontend", "output": "export default Login", "tokens": {"input": 80, "output": 40}},
+            {
+                "agent": "backend",
+                "output": "def auth(): pass",
+                "tokens": {"input": 100, "output": 50},
+            },
+            {
+                "agent": "frontend",
+                "output": "export default Login",
+                "tokens": {"input": 80, "output": 40},
+            },
         ],
-        "security_result":        {"passed": True, "score": 88, "vulnerabilities": []},
-        "qa_result":              {"passed": True, "score": 91, "issues": []},
+        "security_result": {"passed": True, "score": 88, "vulnerabilities": []},
+        "qa_result": {"passed": True, "score": 91, "issues": []},
         "token_usage": {
-            "backend":  {"input": 100, "output": 50},
+            "backend": {"input": 100, "output": 50},
             "frontend": {"input": 80, "output": 40},
         },
-        "github_pr":              {"ok": True, "pr_url": "https://github.com/org/repo/pull/42"},
-        "security_retry_count":   0,
-        "qa_retry_count":         1,
-        "escalation_resolution":  "Resuelto por arquitecto",
+        "github_pr": {"ok": True, "pr_url": "https://github.com/org/repo/pull/42"},
+        "security_retry_count": 0,
+        "qa_retry_count": 1,
+        "escalation_resolution": "Resuelto por arquitecto",
     }
     base.update(overrides)
     return base
@@ -68,6 +77,7 @@ def run(coro):
 # ---------------------------------------------------------------------------
 # N7.1 — publish es no-op sin NATS_URL
 # ---------------------------------------------------------------------------
+
 
 class TestPublishNoOp:
     def test_publish_noop_sin_nats_url(self):
@@ -100,15 +110,22 @@ class TestPublishNoOp:
 # N7.2 — fire-and-forget: errores no propagan
 # ---------------------------------------------------------------------------
 
+
 class TestFireAndForget:
     def test_publish_no_propaga_excepcion_de_conexion(self):
         """Si _get_connection lanza, publish lo captura y no propaga."""
         original = nats_client.NATS_URL
         nats_client.NATS_URL = "nats://localhost:4222"
         try:
+
             async def _run():
-                with patch.object(nats_client, "_get_connection", side_effect=RuntimeError("conn refused")):
+                with patch.object(
+                    nats_client,
+                    "_get_connection",
+                    side_effect=RuntimeError("conn refused"),
+                ):
                     await nats_client.publish("ovd.org.session.started", {"k": "v"})
+
             run(_run())
         finally:
             nats_client.NATS_URL = original
@@ -118,12 +135,14 @@ class TestFireAndForget:
         original = nats_client.NATS_URL
         nats_client.NATS_URL = "nats://localhost:4222"
         try:
+
             async def _run():
                 mock_nc = AsyncMock()
                 mock_nc.is_connected = True
                 mock_nc.publish = AsyncMock(side_effect=IOError("broken pipe"))
                 with patch.object(nats_client, "_get_connection", return_value=mock_nc):
                     await nats_client.publish("ovd.org.session.started", {"k": "v"})
+
             run(_run())
         finally:
             nats_client.NATS_URL = original
@@ -133,26 +152,28 @@ class TestFireAndForget:
 # N7.3 — _base_payload
 # ---------------------------------------------------------------------------
 
+
 class TestBasePayload:
     def test_extrae_campos_correctos(self):
         state = _make_state()
         payload = nats_client._base_payload(state)
-        assert payload["session_id"]      == "sess-abc123"
-        assert payload["org_id"]          == "org-test"
-        assert payload["project_id"]      == "proj-001"
+        assert payload["session_id"] == "sess-abc123"
+        assert payload["org_id"] == "org-test"
+        assert payload["project_id"] == "proj-001"
         assert payload["feature_request"] == "Agregar autenticación OAuth2"
 
     def test_defaults_para_campos_ausentes(self):
         payload = nats_client._base_payload({})
-        assert payload["session_id"]      == ""
-        assert payload["org_id"]          == ""
-        assert payload["project_id"]      == ""
+        assert payload["session_id"] == ""
+        assert payload["org_id"] == ""
+        assert payload["project_id"] == ""
         assert payload["feature_request"] == ""
 
 
 # ---------------------------------------------------------------------------
 # N7.4 — publish_started
 # ---------------------------------------------------------------------------
+
 
 class TestPublishStarted:
     def test_payload_incluye_fr_analysis(self):
@@ -164,13 +185,17 @@ class TestPublishStarted:
             async def fake_publish(subject, payload):
                 captured["subject"] = subject
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_started(state)
 
         run(_run())
 
         assert captured["subject"] == "ovd.org-test.session.started"
-        assert captured["payload"]["fr_analysis"] == {"type": "feature", "complexity": "medium"}
+        assert captured["payload"]["fr_analysis"] == {
+            "type": "feature",
+            "complexity": "medium",
+        }
         assert captured["payload"]["session_id"] == "sess-abc123"
 
     def test_subject_usa_org_id_del_state(self):
@@ -180,6 +205,7 @@ class TestPublishStarted:
         async def _run():
             async def fake_publish(subject, payload):
                 captured["subject"] = subject
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_started(state)
 
@@ -191,6 +217,7 @@ class TestPublishStarted:
 # N7.5 — publish_approved
 # ---------------------------------------------------------------------------
 
+
 class TestPublishApproved:
     def test_payload_incluye_sdd_fields(self):
         state = _make_state()
@@ -200,6 +227,7 @@ class TestPublishApproved:
             async def fake_publish(subject, payload):
                 captured["subject"] = subject
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_approved(state)
 
@@ -207,27 +235,35 @@ class TestPublishApproved:
 
         assert captured["subject"] == "ovd.org-test.session.approved"
         p = captured["payload"]
-        assert p["sdd_summary"]        == "Implementar OAuth2 con PKCE"
+        assert p["sdd_summary"] == "Implementar OAuth2 con PKCE"
         assert p["requirements_count"] == 3
-        assert p["tasks_count"]        == 2
-        assert p["approval_comment"]   == "Aprobado sin observaciones"
+        assert p["tasks_count"] == 2
+        assert p["approval_comment"] == "Aprobado sin observaciones"
 
 
 # ---------------------------------------------------------------------------
 # N7.6 — publish_done: truncado de agent output
 # ---------------------------------------------------------------------------
 
+
 class TestPublishDoneTruncation:
     def test_output_mayor_8192_se_trunca(self):
         long_output = "x" * 10_000
-        state = _make_state(agent_results=[
-            {"agent": "backend", "output": long_output, "tokens": {"input": 10, "output": 5}},
-        ])
+        state = _make_state(
+            agent_results=[
+                {
+                    "agent": "backend",
+                    "output": long_output,
+                    "tokens": {"input": 10, "output": 5},
+                },
+            ]
+        )
         captured = {}
 
         async def _run():
             async def fake_publish(subject, payload):
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_done(state, 120.0, 0.05)
 
@@ -239,14 +275,21 @@ class TestPublishDoneTruncation:
 
     def test_output_menor_8192_no_se_trunca(self):
         short_output = "def foo(): pass"
-        state = _make_state(agent_results=[
-            {"agent": "backend", "output": short_output, "tokens": {"input": 10, "output": 5}},
-        ])
+        state = _make_state(
+            agent_results=[
+                {
+                    "agent": "backend",
+                    "output": short_output,
+                    "tokens": {"input": 10, "output": 5},
+                },
+            ]
+        )
         captured = {}
 
         async def _run():
             async def fake_publish(subject, payload):
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_done(state, 60.0, 0.01)
 
@@ -261,6 +304,7 @@ class TestPublishDoneTruncation:
 # N7.7 — publish_done: campos del ciclo
 # ---------------------------------------------------------------------------
 
+
 class TestPublishDoneFields:
     def test_payload_incluye_todos_los_campos(self):
         state = _make_state()
@@ -270,6 +314,7 @@ class TestPublishDoneFields:
             async def fake_publish(subject, payload):
                 captured["subject"] = subject
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_done(state, 329.5, 0.0234)
 
@@ -282,12 +327,12 @@ class TestPublishDoneFields:
         assert p["sdd"]["summary"] == "Implementar OAuth2 con PKCE"
         # Resultados de calidad
         assert p["security_result"]["score"] == 88
-        assert p["qa_result"]["score"]       == 91
+        assert p["qa_result"]["score"] == 91
         # Métricas
-        assert p["duration_secs"]  == 329.5
-        assert p["cost_usd"]       == 0.0234
+        assert p["duration_secs"] == 329.5
+        assert p["cost_usd"] == 0.0234
         # Tokens agregados (100+80=180 in, 50+40=90 out)
-        assert p["token_usage"]["total_input"]  == 180
+        assert p["token_usage"]["total_input"] == 180
         assert p["token_usage"]["total_output"] == 90
         # GitHub PR
         assert p["github_pr"]["ok"] is True
@@ -296,6 +341,7 @@ class TestPublishDoneFields:
 # ---------------------------------------------------------------------------
 # N7.8 — publish_escalated
 # ---------------------------------------------------------------------------
+
 
 class TestPublishEscalated:
     def test_payload_incluye_reason_y_retry_counts(self):
@@ -306,6 +352,7 @@ class TestPublishEscalated:
             async def fake_publish(subject, payload):
                 captured["subject"] = subject
                 captured["payload"] = payload
+
             with patch.object(nats_client, "publish", side_effect=fake_publish):
                 await nats_client.publish_escalated(state, "Max reintentos alcanzado")
 
@@ -313,15 +360,16 @@ class TestPublishEscalated:
 
         assert captured["subject"] == "ovd.org-test.session.escalated"
         p = captured["payload"]
-        assert p["reason"]               == "Max reintentos alcanzado"
+        assert p["reason"] == "Max reintentos alcanzado"
         assert p["security_retry_count"] == 0
-        assert p["qa_retry_count"]       == 1
+        assert p["qa_retry_count"] == 1
         assert p["escalation_resolution"] == "Resuelto por arquitecto"
 
 
 # ---------------------------------------------------------------------------
 # N7.9 — close es seguro sin conexión abierta
 # ---------------------------------------------------------------------------
+
 
 class TestClose:
     def test_close_sin_conexion_no_lanza(self):
@@ -352,6 +400,7 @@ class TestClose:
 # N7.10 — _get_connection retorna None sin NATS_URL
 # ---------------------------------------------------------------------------
 
+
 class TestGetConnection:
     def test_get_connection_retorna_none_sin_url(self):
         original = nats_client.NATS_URL
@@ -368,7 +417,7 @@ class TestGetConnection:
         mock_nc.is_connected = True
 
         original_url = nats_client.NATS_URL
-        original_nc  = nats_client._nc
+        original_nc = nats_client._nc
         nats_client.NATS_URL = "nats://localhost:4222"
         nats_client._nc = mock_nc
         try:

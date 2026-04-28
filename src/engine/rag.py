@@ -24,6 +24,7 @@ Variables de entorno:
   OVD_RAG_TOP_K                 — top-K resultados en búsqueda (default: 5)
   OVD_RAG_MIN_SCORE             — score mínimo de similitud 0.0-1.0 (default: 0.65)
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,12 +34,12 @@ from typing import Any
 
 log = logging.getLogger("ovd.rag")
 
-_DATABASE_URL      = os.environ.get("DATABASE_URL", "")
-_EMBED_PROVIDER    = os.environ.get("OVD_RAG_EMBEDDING_PROVIDER", "ollama").lower()
-_OLLAMA_URL        = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-_EMBED_MODEL       = os.environ.get("OVD_EMBED_MODEL", "")
-_TOP_K             = int(os.environ.get("OVD_RAG_TOP_K", "5"))
-_MIN_SCORE         = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_EMBED_PROVIDER = os.environ.get("OVD_RAG_EMBEDDING_PROVIDER", "ollama").lower()
+_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+_EMBED_MODEL = os.environ.get("OVD_EMBED_MODEL", "")
+_TOP_K = int(os.environ.get("OVD_RAG_TOP_K", "5"))
+_MIN_SCORE = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
 
 # Modelos default por provider
 _DEFAULT_MODEL = {
@@ -54,6 +55,7 @@ _COLLECTION_PREFIX = "ovd_project_"
 # OB-01 — Filtros estructurados de metadatos
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RagFilters:
     """
@@ -64,10 +66,11 @@ class RagFilters:
     after_date:   incluir solo chunks con created_at >= "YYYY-MM-DD"
     before_date:  incluir solo chunks con created_at <= "YYYY-MM-DD"
     """
-    doc_types:     list[str] = field(default_factory=list)
-    min_qa_score:  int | None = None
-    after_date:    str | None = None   # "YYYY-MM-DD"
-    before_date:   str | None = None   # "YYYY-MM-DD"
+
+    doc_types: list[str] = field(default_factory=list)
+    min_qa_score: int | None = None
+    after_date: str | None = None  # "YYYY-MM-DD"
+    before_date: str | None = None  # "YYYY-MM-DD"
 
     def to_pgvector_filter(self) -> dict | None:
         """
@@ -119,11 +122,13 @@ def _get_embeddings():
 
     if _EMBED_PROVIDER == "openai":
         from langchain_openai import OpenAIEmbeddings
+
         log.debug("rag: usando OpenAIEmbeddings (model=%s)", model)
         return OpenAIEmbeddings(model=model)
 
     # Default: Ollama
     from langchain_ollama import OllamaEmbeddings
+
     log.debug("rag: usando OllamaEmbeddings (model=%s, url=%s)", model, _OLLAMA_URL)
     return OllamaEmbeddings(model=model, base_url=_OLLAMA_URL)
 
@@ -145,6 +150,7 @@ def _get_store(project_id: str):
 # ---------------------------------------------------------------------------
 # API pública
 # ---------------------------------------------------------------------------
+
 
 def index_chunks(
     chunks: list[dict],
@@ -176,19 +182,27 @@ def index_chunks(
         docs = []
         for chunk in chunks:
             meta = chunk.get("metadata", {}) or {}
-            meta.update({
-                "org_id": org_id,
-                "project_id": project_id,
-                "doc_type": chunk.get("doc_type", "doc"),
-                "source_file": chunk.get("source_file", ""),
-            })
-            docs.append(Document(
-                page_content=chunk["content"],
-                metadata=meta,
-            ))
+            meta.update(
+                {
+                    "org_id": org_id,
+                    "project_id": project_id,
+                    "doc_type": chunk.get("doc_type", "doc"),
+                    "source_file": chunk.get("source_file", ""),
+                }
+            )
+            docs.append(
+                Document(
+                    page_content=chunk["content"],
+                    metadata=meta,
+                )
+            )
 
         store.add_documents(docs)
-        log.info("rag.index_chunks: %d chunks indexados en proyecto %s", len(docs), project_id)
+        log.info(
+            "rag.index_chunks: %d chunks indexados en proyecto %s",
+            len(docs),
+            project_id,
+        )
         return len(docs)
 
     except Exception as e:
@@ -229,11 +243,16 @@ def search(
                 filter_dict.update(pf)
 
         # Si hay filtros de rango (qa_score, fechas), ampliar el fetch para compensar
-        fetch_k = top_k * 4 if rag_filters and (
-            rag_filters.min_qa_score is not None
-            or rag_filters.after_date
-            or rag_filters.before_date
-        ) else top_k
+        fetch_k = (
+            top_k * 4
+            if rag_filters
+            and (
+                rag_filters.min_qa_score is not None
+                or rag_filters.after_date
+                or rag_filters.before_date
+            )
+            else top_k
+        )
 
         results = store.similarity_search_with_relevance_scores(
             query,
@@ -246,7 +265,11 @@ def search(
 
         # OB-01: post-filtro de metadatos (qa_score, created_at)
         if rag_filters:
-            relevant = [(doc, score) for doc, score in relevant if rag_filters.passes(doc.metadata)]
+            relevant = [
+                (doc, score)
+                for doc, score in relevant
+                if rag_filters.passes(doc.metadata)
+            ]
 
         # Tomar los top_k finales
         relevant = relevant[:top_k]
@@ -254,15 +277,19 @@ def search(
         if not relevant:
             return ""
 
-        lines = [f"Contexto RAG — {len(relevant)} documento(s) relevante(s) del proyecto:"]
+        lines = [
+            f"Contexto RAG — {len(relevant)} documento(s) relevante(s) del proyecto:"
+        ]
         for i, (doc, score) in enumerate(relevant, 1):
-            meta     = doc.metadata
+            meta = doc.metadata
             doc_type = meta.get("doc_type", "doc")
-            source   = meta.get("source_file", "")
-            qa       = meta.get("qa_score")
-            title    = source if source else f"doc-{i}"
+            source = meta.get("source_file", "")
+            qa = meta.get("qa_score")
+            title = source if source else f"doc-{i}"
             qa_label = f", QA={qa}" if qa is not None else ""
-            lines.append(f"\n### [{i}] {title} (tipo: {doc_type}{qa_label}, similitud: {score:.2f})")
+            lines.append(
+                f"\n### [{i}] {title} (tipo: {doc_type}{qa_label}, similitud: {score:.2f})"
+            )
             lines.append(doc.page_content[:800])
 
         return "\n".join(lines)
@@ -279,6 +306,7 @@ async def index_chunks_async(
 ) -> int:
     """Versión async de index_chunks para uso en nodos LangGraph."""
     import asyncio
+
     return await asyncio.to_thread(index_chunks, chunks, project_id, org_id)
 
 
@@ -292,4 +320,7 @@ async def search_async(
 ) -> str:
     """Versión async de search para uso en nodos LangGraph."""
     import asyncio
-    return await asyncio.to_thread(search, query, project_id, top_k, min_score, filters, rag_filters)
+
+    return await asyncio.to_thread(
+        search, query, project_id, top_k, min_score, filters, rag_filters
+    )

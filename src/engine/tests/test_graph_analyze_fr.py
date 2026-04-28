@@ -2,16 +2,20 @@
 OVD Platform — Tests para el nodo analyze_fr
 Sprint: S6+
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
 import time
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from factories import make_state
-from graph import analyze_fr, FRAnalysisOutput
+
+from graph import FRAnalysisOutput, analyze_fr
 
 # analyze_fr llama nats_client.publish_started → mockear para unit tests
 pytestmark = pytest.mark.usefixtures("mock_nats")
@@ -20,6 +24,7 @@ pytestmark = pytest.mark.usefixtures("mock_nats")
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def make_llm_mock(return_value):
     structured = MagicMock()
@@ -43,6 +48,7 @@ def _make_fr_output(fr_type="feature", complexity="medium"):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_analyze_fr_retorna_analisis_correcto():
@@ -124,4 +130,6 @@ async def test_analyze_fr_registra_cycle_start_ts():
     after = time.time()
     ts = result["cycle_start_ts"]
     assert ts > 0, "cycle_start_ts debe ser positivo"
-    assert before <= ts <= after + 1, "cycle_start_ts debe ser cercano al momento de ejecución"
+    assert before <= ts <= after + 1, (
+        "cycle_start_ts debe ser cercano al momento de ejecución"
+    )

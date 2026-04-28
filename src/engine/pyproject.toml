@@ -50,12 +50,44 @@ markers = [
     "docker: requiere Docker daemon corriendo (Block D)",
 ]
 
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = [".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "migrations"]
+
+[tool.ruff.lint]
+# Fases activas: E (errores estilo), F (Pyflakes), I (imports)
+# UP / B / C4 / SIM se habilitan en sprints futuros según PLAN_MANTENIBILIDAD.md
+select = ["E", "F", "I"]
+ignore = [
+    "E401",  # múltiples imports en una línea — limpiar gradual
+    "E402",  # import no al inicio — intencional (load_dotenv antes de imports)
+    "E501",  # línea demasiado larga — lo gestiona ruff format
+    "E741",  # nombre de variable ambiguo — requiere revisión manual
+    "F401",  # import no usado — gestionar por archivo (graph.py usa imports dinámicos)
+    "F811",  # redefinición — común en tests
+    "F821",  # nombre indefinido — requiere investigación individual
+    "F841",  # variable local no usada — requiere revisión manual
+    "B008",  # function call en default arg — patrón FastAPI Depends()
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "E402"]
+"graph.py" = ["F401"]
+"tests/**/*.py" = ["F401", "F811", "F841"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = false
+
 [tool.uv]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.12",
 ]
 # uv genera uv.lock automáticamente al hacer `uv sync`
 # Commitear uv.lock para reproducibilidad en CI/CD y Docker

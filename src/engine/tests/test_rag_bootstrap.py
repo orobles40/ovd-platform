@@ -10,20 +10,25 @@ Verifica sin infraestructura real (mock de rag.index_chunks_async):
 - BootstrapResult.summary() tiene el formato esperado
 - bridge_url y jwt_token opcionales (compatibilidad)
 """
-import sys
+
 import os
-import tempfile
 import pathlib
+import sys
+import tempfile
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".."))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..")
+)
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def tmp_md(tmp_path):
@@ -45,9 +50,11 @@ def tmp_py(tmp_path):
 # BootstrapResult
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapResult:
     def test_summary_formato(self):
         from knowledge.bootstrap import BootstrapResult
+
         r = BootstrapResult(
             doc_type="doc",
             source="/tmp/docs",
@@ -66,16 +73,20 @@ class TestBootstrapResult:
 # run() — dry_run
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapRunDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_no_indexa(self, tmp_md, monkeypatch):
         from knowledge import bootstrap
+
         mock_index = AsyncMock(return_value=0)
         monkeypatch.setattr("rag.index_chunks_async", mock_index)
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_md, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_md,
+            doc_type="doc",
             dry_run=True,
         )
         mock_index.assert_not_called()
@@ -85,11 +96,14 @@ class TestBootstrapRunDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_reporta_chunks_generados(self, tmp_py, monkeypatch):
         from knowledge import bootstrap
+
         monkeypatch.setattr("rag.index_chunks_async", AsyncMock(return_value=0))
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_py, doc_type="codebase",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_py,
+            doc_type="codebase",
             dry_run=True,
         )
         assert result.total_chunks >= 1
@@ -100,16 +114,20 @@ class TestBootstrapRunDryRun:
 # run() — indexación real (mock de rag)
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapRunIndexing:
     @pytest.mark.asyncio
     async def test_indexa_chunks_del_directorio(self, tmp_md, monkeypatch):
         from knowledge import bootstrap
+
         mock_index = AsyncMock(return_value=5)
         monkeypatch.setattr("rag.index_chunks_async", mock_index)
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_md, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_md,
+            doc_type="doc",
         )
         assert mock_index.called
         assert result.indexed > 0
@@ -118,11 +136,14 @@ class TestBootstrapRunIndexing:
     async def test_bridge_url_y_jwt_token_opcionales(self, tmp_md, monkeypatch):
         """Compatibilidad: run() funciona sin bridge_url y jwt_token."""
         from knowledge import bootstrap
+
         monkeypatch.setattr("rag.index_chunks_async", AsyncMock(return_value=3))
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_md, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_md,
+            doc_type="doc",
             # Sin bridge_url ni jwt_token
         )
         assert result.failed == 0
@@ -131,14 +152,17 @@ class TestBootstrapRunIndexing:
     async def test_error_en_lote_no_propaga(self, tmp_md, monkeypatch):
         """Error en indexación → se reporta en errors, no lanza excepción."""
         from knowledge import bootstrap
+
         monkeypatch.setattr(
             "rag.index_chunks_async",
             AsyncMock(side_effect=RuntimeError("pgvector caído")),
         )
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_md, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_md,
+            doc_type="doc",
         )
         assert result.failed > 0
         assert len(result.errors) > 0
@@ -148,9 +172,11 @@ class TestBootstrapRunIndexing:
     @pytest.mark.asyncio
     async def test_ruta_inexistente_lanza_file_not_found(self):
         from knowledge import bootstrap
+
         with pytest.raises(FileNotFoundError):
             await bootstrap.run(
-                org_id="o1", project_id="p1",
+                org_id="o1",
+                project_id="p1",
                 source_path="/ruta/que/no/existe-ovd-test",
                 doc_type="doc",
             )
@@ -158,11 +184,14 @@ class TestBootstrapRunIndexing:
     @pytest.mark.asyncio
     async def test_resultado_incluye_doc_type_y_source(self, tmp_md, monkeypatch):
         from knowledge import bootstrap
+
         monkeypatch.setattr("rag.index_chunks_async", AsyncMock(return_value=2))
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_md, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_md,
+            doc_type="doc",
         )
         assert result.doc_type == "doc"
         assert str(tmp_md) in result.source
@@ -179,6 +208,7 @@ class TestBootstrapRunIndexing:
             )
 
         llamadas = []
+
         async def _mock_index(chunks, project_id, org_id):
             llamadas.append(len(chunks))
             return len(chunks)
@@ -186,8 +216,10 @@ class TestBootstrapRunIndexing:
         monkeypatch.setattr("rag.index_chunks_async", _mock_index)
 
         await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_path, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_path,
+            doc_type="doc",
             batch_size=3,
         )
         # Cada lote debe tener máximo 3 chunks
@@ -209,8 +241,10 @@ class TestBootstrapRunIndexing:
         )
 
         result = await bootstrap.run(
-            org_id="o1", project_id="p1",
-            source_path=tmp_path, doc_type="doc",
+            org_id="o1",
+            project_id="p1",
+            source_path=tmp_path,
+            doc_type="doc",
             batch_size=1,
         )
         assert len(result.errors) <= 20

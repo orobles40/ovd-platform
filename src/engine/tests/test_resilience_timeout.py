@@ -1,23 +1,28 @@
 """
 S20 — GAP-R1: Tests de timeout por nodo (agent_executor) y timeout global SSE.
 """
+
 from __future__ import annotations
+
 import asyncio
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Tests de _NODE_TIMEOUT en agent_executor
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_node_timeout_reads_from_env():
     """_NODE_TIMEOUT se lee de OVD_NODE_TIMEOUT_SECS."""
     import importlib
+
     with patch.dict(os.environ, {"OVD_NODE_TIMEOUT_SECS": "42"}):
         import graph as g
+
         importlib.reload(g)
         assert g._NODE_TIMEOUT == 42.0
     importlib.reload(g)

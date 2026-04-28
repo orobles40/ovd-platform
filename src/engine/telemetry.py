@@ -35,6 +35,7 @@ Uso en graph.py:
       span.set_attribute("complexity", result.complexity)
       ...
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,11 +72,13 @@ def setup_telemetry(service_name: str = "ovd-engine") -> None:
     if _initialized:
         return
 
-    resource = Resource.create({
-        "service.name":    service_name,
-        "service.version": "0.1.0",
-        "deployment.environment": os.environ.get("NODE_ENV", "development"),
-    })
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": "0.1.0",
+            "deployment.environment": os.environ.get("NODE_ENV", "development"),
+        }
+    )
 
     provider = TracerProvider(resource=resource)
 
@@ -90,7 +93,9 @@ def setup_telemetry(service_name: str = "ovd-engine") -> None:
         # Desarrollo: imprimir spans en consola solo si DEBUG
         if os.environ.get("LOG_LEVEL", "info").lower() == "debug":
             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        log.info("telemetry: OTEL_EXPORTER_OTLP_ENDPOINT no configurado — spans locales únicamente")
+        log.info(
+            "telemetry: OTEL_EXPORTER_OTLP_ENDPOINT no configurado — spans locales únicamente"
+        )
 
     trace.set_tracer_provider(provider)
     _tracer = trace.get_tracer("ovd.engine")
@@ -117,6 +122,7 @@ def get_trace_id(span: trace.Span) -> str:
 # Span de ciclo (raíz)
 # ---------------------------------------------------------------------------
 
+
 @contextmanager
 def cycle_span(
     thread_id: str,
@@ -139,13 +145,15 @@ def cycle_span(
         name="ovd.cycle",
         kind=trace.SpanKind.SERVER,
     ) as span:
-        span.set_attributes({
-            "ovd.thread_id":      thread_id,
-            "ovd.org_id":         org_id,
-            "ovd.project_id":     project_id,
-            "ovd.fr_preview":     feature_request[:120],
-            "ovd.stack_routing":  stack_routing,
-        })
+        span.set_attributes(
+            {
+                "ovd.thread_id": thread_id,
+                "ovd.org_id": org_id,
+                "ovd.project_id": project_id,
+                "ovd.fr_preview": feature_request[:120],
+                "ovd.stack_routing": stack_routing,
+            }
+        )
         try:
             yield span
         except Exception as e:
@@ -156,6 +164,7 @@ def cycle_span(
 # ---------------------------------------------------------------------------
 # Span de nodo (hijo del ciclo)
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def node_span(
@@ -182,13 +191,15 @@ async def node_span(
         context=parent_context,
         kind=trace.SpanKind.INTERNAL,
     ) as span:
-        span.set_attributes({
-            "ovd.node":       node_name,
-            "ovd.org_id":     state.get("org_id", ""),
-            "ovd.project_id": state.get("project_id", ""),
-            "ovd.thread_id":  state.get("session_id", ""),
-            "ovd.stack_routing": state.get("stack_routing", "auto"),
-        })
+        span.set_attributes(
+            {
+                "ovd.node": node_name,
+                "ovd.org_id": state.get("org_id", ""),
+                "ovd.project_id": state.get("project_id", ""),
+                "ovd.thread_id": state.get("session_id", ""),
+                "ovd.stack_routing": state.get("stack_routing", "auto"),
+            }
+        )
         try:
             yield span
         except Exception as e:
@@ -209,6 +220,7 @@ def _get_parent_context(trace_id_hex: str) -> Any:
     try:
         from opentelemetry.trace import TraceFlags
         from opentelemetry.trace.span import SpanContext
+
         ctx = SpanContext(
             trace_id=int(trace_id_hex, 16),
             span_id=trace.INVALID_SPAN_ID,
@@ -224,38 +236,49 @@ def _get_parent_context(trace_id_hex: str) -> Any:
 # Helpers para atributos comunes
 # ---------------------------------------------------------------------------
 
+
 def record_token_usage(span: trace.Span, token_usage: dict[str, dict]) -> None:
     """
     Registra el uso de tokens por agente como atributos del span.
     Formato entrada: {"backend": {"input": 1200, "output": 800}, ...}
     """
-    total_input  = sum(v.get("input", 0)  for v in token_usage.values() if isinstance(v, dict))
-    total_output = sum(v.get("output", 0) for v in token_usage.values() if isinstance(v, dict))
-    span.set_attributes({
-        "ovd.tokens.total_input":  total_input,
-        "ovd.tokens.total_output": total_output,
-        "ovd.tokens.total":        total_input + total_output,
-    })
+    total_input = sum(
+        v.get("input", 0) for v in token_usage.values() if isinstance(v, dict)
+    )
+    total_output = sum(
+        v.get("output", 0) for v in token_usage.values() if isinstance(v, dict)
+    )
+    span.set_attributes(
+        {
+            "ovd.tokens.total_input": total_input,
+            "ovd.tokens.total_output": total_output,
+            "ovd.tokens.total": total_input + total_output,
+        }
+    )
     for agent, usage in token_usage.items():
         if isinstance(usage, dict):
-            span.set_attribute(f"ovd.tokens.{agent}.input",  usage.get("input",  0))
+            span.set_attribute(f"ovd.tokens.{agent}.input", usage.get("input", 0))
             span.set_attribute(f"ovd.tokens.{agent}.output", usage.get("output", 0))
 
 
 def record_qa_result(span: trace.Span, qa_result: dict) -> None:
     """Registra el resultado QA como atributos del span."""
-    span.set_attributes({
-        "ovd.qa.passed": qa_result.get("passed", False),
-        "ovd.qa.score":  qa_result.get("score", 0),
-        "ovd.qa.issues": len(qa_result.get("issues", [])),
-    })
+    span.set_attributes(
+        {
+            "ovd.qa.passed": qa_result.get("passed", False),
+            "ovd.qa.score": qa_result.get("score", 0),
+            "ovd.qa.issues": len(qa_result.get("issues", [])),
+        }
+    )
 
 
 def record_security_result(span: trace.Span, security_result: dict) -> None:
     """Registra el resultado de security audit como atributos del span."""
-    span.set_attributes({
-        "ovd.security.passed":   security_result.get("passed", False),
-        "ovd.security.score":    security_result.get("score", 0),
-        "ovd.security.severity": security_result.get("severity", "none"),
-        "ovd.security.vulns":    len(security_result.get("vulnerabilities", [])),
-    })
+    span.set_attributes(
+        {
+            "ovd.security.passed": security_result.get("passed", False),
+            "ovd.security.score": security_result.get("score", 0),
+            "ovd.security.severity": security_result.get("severity", "none"),
+            "ovd.security.vulns": len(security_result.get("vulnerabilities", [])),
+        }
+    )

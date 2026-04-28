@@ -6,10 +6,12 @@ Valida que las variables de entorno criticas esten presentes al arrancar el Engi
 Se ejecuta en el lifespan de FastAPI antes de inicializar LangGraph.
 Falla rapido con un mensaje claro en lugar de errores cripticos en runtime.
 """
+
 from __future__ import annotations
+
+import logging
 import os
 import sys
-import logging
 from dataclasses import dataclass, field
 
 import httpx
@@ -22,7 +24,7 @@ class EnvVar:
     name: str
     required: bool
     description: str
-    validate: callable = None   # (value: str) -> str | None
+    validate: callable = None  # (value: str) -> str | None
 
 
 # Variables de entorno del OVD Engine
@@ -30,23 +32,30 @@ _ENGINE_ENV_VARS: list[EnvVar] = [
     # --- CRITICAS ---
     EnvVar(
         name="ANTHROPIC_API_KEY",
-        required=False,   # Opcional cuando se usa Ollama como provider
+        required=False,  # Opcional cuando se usa Ollama como provider
         description="API key de Anthropic para los agentes LLM (no requerida con Ollama)",
-        validate=lambda v: None if v.startswith("sk-ant-") else "debe empezar con sk-ant-",
+        validate=lambda v: (
+            None if v.startswith("sk-ant-") else "debe empezar con sk-ant-"
+        ),
     ),
     EnvVar(
         name="DATABASE_URL",
         required=True,
         description="URL de conexion PostgreSQL para el checkpointer LangGraph",
-        validate=lambda v: None if v.startswith(("postgresql://", "postgres://")) else "debe empezar con postgresql://",
+        validate=lambda v: (
+            None
+            if v.startswith(("postgresql://", "postgres://"))
+            else "debe empezar con postgresql://"
+        ),
     ),
     EnvVar(
         name="NATS_URL",
-        required=False,   # Opcional — solo requerida para eventos asincrónicos
+        required=False,  # Opcional — solo requerida para eventos asincrónicos
         description="URL de NATS JetStream para mensajeria asincronica",
-        validate=lambda v: None if v.startswith("nats://") else "debe empezar con nats://",
+        validate=lambda v: (
+            None if v.startswith("nats://") else "debe empezar con nats://"
+        ),
     ),
-
     # --- IMPORTANTES ---
     EnvVar(
         name="OVD_MODEL",
@@ -63,7 +72,6 @@ _ENGINE_ENV_VARS: list[EnvVar] = [
         required=False,
         description="URL del Bridge para RAG callbacks y Research Agent",
     ),
-
     # --- TELEMETRIA ---
     EnvVar(
         name="OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -94,7 +102,9 @@ def check_env() -> CheckResult:
             if var.required:
                 result.errors.append(f"[REQUIRED] {var.name} — {var.description}")
             else:
-                result.warnings.append(f"[OPTIONAL] {var.name} no definida — {var.description}")
+                result.warnings.append(
+                    f"[OPTIONAL] {var.name} no definida — {var.description}"
+                )
             continue
 
         if var.validate:
@@ -106,8 +116,8 @@ def check_env() -> CheckResult:
 
     # Validacion especial: al menos un provider LLM debe estar configurado
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-"))
-    has_ollama    = bool(os.environ.get("OLLAMA_BASE_URL"))
-    has_openai    = bool(os.environ.get("OPENAI_API_KEY"))
+    has_ollama = bool(os.environ.get("OLLAMA_BASE_URL"))
+    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     if not (has_anthropic or has_ollama or has_openai):
         result.errors.append(
             "[REQUIRED] Sin provider LLM — define ANTHROPIC_API_KEY, OLLAMA_BASE_URL u OPENAI_API_KEY"
@@ -144,10 +154,15 @@ def assert_env() -> None:
         log.warning(w)
 
     if not result.ok:
-        log.error("startup config errors — el engine no puede arrancar (%d error(es)):", len(result.errors))
+        log.error(
+            "startup config errors — el engine no puede arrancar (%d error(es)):",
+            len(result.errors),
+        )
         for e in result.errors:
             log.error("  %s", e)
-        log.error("copia .env.example a .env y completa las variables marcadas con [REQUIRED]")
+        log.error(
+            "copia .env.example a .env y completa las variables marcadas con [REQUIRED]"
+        )
         sys.exit(1)
 
     log.info("startup config ok (warnings: %d)", len(result.warnings))
@@ -192,12 +207,15 @@ async def check_ollama_model() -> None:
                     "startup: modelo Ollama '%s' NO encontrado en la lista local. "
                     "Modelos disponibles: %s. "
                     "Ejecuta: ollama pull %s",
-                    model, available or ["(ninguno)"], model,
+                    model,
+                    available or ["(ninguno)"],
+                    model,
                 )
 
     except Exception as exc:
         log.warning(
             "startup: no se pudo conectar a Ollama en %s (%s) — "
             "verifica que el servicio esté corriendo",
-            ollama_url, exc,
+            ollama_url,
+            exc,
         )

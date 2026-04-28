@@ -8,6 +8,7 @@ S77-C: _verify_main_includes_routers — 3 tests
 S77-D: _extract_failing_files (helper) — 4 tests
 S77-F: auth _get_user_by_email BD errors — 2 tests
 """
+
 import pathlib
 import re
 import textwrap
@@ -15,15 +16,15 @@ import textwrap
 import pytest
 
 from code_postprocessor import (
-    _fix_sqlalchemy_oracle_params,
     _fix_pydantic_decorator_order,
+    _fix_sqlalchemy_oracle_params,
     postprocess_python_file,
 )
-
 
 # ---------------------------------------------------------------------------
 # S77-A — _fix_sqlalchemy_oracle_params
 # ---------------------------------------------------------------------------
+
 
 class TestS77A:
     def test_removes_thick_true(self):
@@ -59,7 +60,9 @@ class TestS77A:
     def test_no_op_outside_create_engine(self):
         code = "# thick=True es un comentario\nengine = create_engine(DATABASE_URL)"
         result = _fix_sqlalchemy_oracle_params(code)
-        assert result == code  # thick= en comentario no afecta nada útil, create_engine sin params ok
+        assert (
+            result == code
+        )  # thick= en comentario no afecta nada útil, create_engine sin params ok
 
     def test_no_op_when_no_create_engine(self):
         code = "x = thick=True  # código random"
@@ -70,6 +73,7 @@ class TestS77A:
 # ---------------------------------------------------------------------------
 # S77-B — _fix_pydantic_decorator_order
 # ---------------------------------------------------------------------------
+
 
 class TestS77B:
     def test_reorders_classmethod_field_validator(self):
@@ -180,28 +184,35 @@ class TestS77B:
 # S77-C — _verify_main_includes_routers
 # ---------------------------------------------------------------------------
 
+
 class TestS77C:
     def test_detects_missing_auth_router(self, tmp_path):
         # Crear estructura: src/auth/router.py + src/main.py sin auth
         (tmp_path / "src" / "auth").mkdir(parents=True)
-        (tmp_path / "src" / "auth" / "router.py").write_text("router = None", encoding="utf-8")
+        (tmp_path / "src" / "auth" / "router.py").write_text(
+            "router = None", encoding="utf-8"
+        )
         (tmp_path / "src" / "main.py").write_text(
             "from fastapi import FastAPI\napp = FastAPI()\n",
             encoding="utf-8",
         )
         from graph import _verify_main_includes_routers
+
         missing, _ = _verify_main_includes_routers(str(tmp_path))
         assert "auth" in missing
 
     def test_no_op_when_all_routers_included(self, tmp_path):
         (tmp_path / "src" / "contracts").mkdir(parents=True)
-        (tmp_path / "src" / "contracts" / "router.py").write_text("router = None", encoding="utf-8")
+        (tmp_path / "src" / "contracts" / "router.py").write_text(
+            "router = None", encoding="utf-8"
+        )
         (tmp_path / "src" / "main.py").write_text(
             "from src.contracts.router import router as contracts_router\n"
             "app.include_router(contracts_router, prefix='/contracts')\n",
             encoding="utf-8",
         )
         from graph import _verify_main_includes_routers
+
         missing, fix = _verify_main_includes_routers(str(tmp_path))
         assert missing == []
         assert fix is None
@@ -213,6 +224,7 @@ class TestS77C:
             encoding="utf-8",
         )
         from graph import _verify_main_includes_routers
+
         missing, fix = _verify_main_includes_routers(str(tmp_path))
         assert missing == []
         assert fix is None
@@ -222,9 +234,10 @@ class TestS77C:
 # S77-D — helper extracción de archivos fallidos de pytest output
 # ---------------------------------------------------------------------------
 
+
 def _extract_failing_files_from_pytest(test_output: str) -> list[str]:
     """S77-D helper — mismo pattern que usará update_test_retry."""
-    pattern = re.compile(r'(?:src|tests)/[\w/]+\.py(?=:|\s|$)')
+    pattern = re.compile(r"(?:src|tests)/[\w/]+\.py(?=:|\s|$)")
     return list(set(pattern.findall(test_output)))
 
 
@@ -258,6 +271,7 @@ class TestS77D:
 # S77-F — auth_router._get_user_by_email BD errors
 # ---------------------------------------------------------------------------
 
+
 class TestS77F:
     @pytest.mark.asyncio
     async def test_login_503_when_db_down(self, monkeypatch):
@@ -268,15 +282,22 @@ class TestS77F:
         async def _mock_connect(*a, **kw):
             raise psycopg.OperationalError("Connection refused")
 
-        monkeypatch.setattr(psycopg, "AsyncConnection", type("_M", (), {"connect": staticmethod(_mock_connect)}))
+        monkeypatch.setattr(
+            psycopg,
+            "AsyncConnection",
+            type("_M", (), {"connect": staticmethod(_mock_connect)}),
+        )
 
-        import importlib, sys
+        import importlib
+        import sys
+
         # Re-importar para que monkeypatch tome efecto
         if "routers.auth_router" in sys.modules:
             del sys.modules["routers.auth_router"]
 
         try:
             from routers.auth_router import _get_user_by_email
+
             await _get_user_by_email("test@example.com")
             pytest.fail("Debería haber lanzado HTTPException")
         except HTTPException as exc:
@@ -285,30 +306,44 @@ class TestS77F:
     @pytest.mark.asyncio
     async def test_login_logs_undefined_column(self, monkeypatch, caplog):
         """psycopg UndefinedColumn → HTTPException 500 con mensaje de config."""
-        import psycopg
-        from fastapi import HTTPException
         import logging
 
+        import psycopg
+        from fastapi import HTTPException
+
         class _MockConn:
-            async def __aenter__(self): return self
-            async def __aexit__(self, *a): pass
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
             async def execute(self, *a, **kw):
                 raise psycopg.errors.UndefinedColumn("column active does not exist")
 
         async def _mock_connect(*a, **kw):
             return _MockConn()
 
-        monkeypatch.setattr(psycopg, "AsyncConnection", type("_M", (), {"connect": staticmethod(_mock_connect)}))
+        monkeypatch.setattr(
+            psycopg,
+            "AsyncConnection",
+            type("_M", (), {"connect": staticmethod(_mock_connect)}),
+        )
 
         import sys
+
         if "routers.auth_router" in sys.modules:
             del sys.modules["routers.auth_router"]
 
         with caplog.at_level(logging.ERROR):
             try:
                 from routers.auth_router import _get_user_by_email
+
                 await _get_user_by_email("test@example.com")
                 pytest.fail("Debería lanzar HTTPException")
             except HTTPException as exc:
                 assert exc.status_code == 500
-                assert "configuración" in exc.detail.lower() or "config" in exc.detail.lower()
+                assert (
+                    "configuración" in exc.detail.lower()
+                    or "config" in exc.detail.lower()
+                )

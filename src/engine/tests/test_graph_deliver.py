@@ -2,15 +2,25 @@
 OVD Platform — Tests para el nodo deliver
 Sprint: S6+
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))  # para factories
 
 import time
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from factories import make_state, make_sdd, make_agent_result, make_security_result, make_qa_result
+import pytest
+from factories import (
+    make_agent_result,
+    make_qa_result,
+    make_sdd,
+    make_security_result,
+    make_state,
+)
+
 from graph import deliver
 from model_router import ResolvedConfig
 
@@ -54,6 +64,7 @@ def _make_deliver_state(**overrides):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_deliver_incluye_sdd_como_artefacto():
     """El deliverable de tipo 'sdd' está presente cuando hay sdd en el state."""
@@ -76,7 +87,9 @@ async def test_deliver_incluye_resultados_agentes():
         )
         result = await deliver(state)
 
-    impl_deliverables = [d for d in result["deliverables"] if d["type"] == "implementation"]
+    impl_deliverables = [
+        d for d in result["deliverables"] if d["type"] == "implementation"
+    ]
     assert len(impl_deliverables) == 2
     agents_in_deliverables = {d["agent"] for d in impl_deliverables}
     assert "backend" in agents_in_deliverables
@@ -118,21 +131,33 @@ async def test_deliver_agrega_mensaje_final():
     # El mensaje de deliver menciona "Entrega completada" o variantes
     entrega_keywords = ["Entrega completada", "artefacto", "Ciclo completado"]
     found = any(kw in combined for kw in entrega_keywords)
-    assert found, f"El mensaje debería mencionar la entrega. Contenido: {combined[:200]}"
+    assert found, (
+        f"El mensaje debería mencionar la entrega. Contenido: {combined[:200]}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # OB-02 — YAML frontmatter en informe de entrega
 # ---------------------------------------------------------------------------
 
+
 class TestOB02Frontmatter:
     """OB-02: el informe de entrega incluye YAML frontmatter con metadatos del ciclo."""
 
     def _call_generate(self, **state_overrides):
         """Llama _generate_delivery_report con un state mínimo y retorna el contenido."""
-        import tempfile, os
+        import os
+        import tempfile
+
+        from factories import (
+            make_agent_result,
+            make_qa_result,
+            make_sdd,
+            make_security_result,
+            make_state,
+        )
+
         from graph import _generate_delivery_report
-        from factories import make_state, make_sdd, make_agent_result, make_security_result, make_qa_result
 
         with tempfile.TemporaryDirectory() as tmpdir:
             state = make_state(
@@ -145,7 +170,9 @@ class TestOB02Frontmatter:
                 qa_result=make_qa_result(score=90, passed=True),
                 **state_overrides,
             )
-            name = _generate_delivery_report(state, [], 0.01, "1m 30s", 1000, 500, "anthropic")
+            name = _generate_delivery_report(
+                state, [], 0.01, "1m 30s", 1000, 500, "anthropic"
+            )
             if not name:
                 return ""
             path = os.path.join(tmpdir, name)
@@ -155,7 +182,9 @@ class TestOB02Frontmatter:
     def test_frontmatter_presente(self):
         """El informe empieza con '---' (YAML frontmatter)."""
         content = self._call_generate()
-        assert content.startswith("---\n"), f"Falta frontmatter. Inicio: {content[:80]!r}"
+        assert content.startswith("---\n"), (
+            f"Falta frontmatter. Inicio: {content[:80]!r}"
+        )
 
     def test_frontmatter_tiene_session_id(self):
         content = self._call_generate()
@@ -182,10 +211,14 @@ class TestOB02Frontmatter:
         content = self._call_generate()
         lines = content.split("\n")
         # La primera línea es '---', debe haber otra '---' antes del heading '#'
-        closing_idx = next((i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), None)
+        closing_idx = next(
+            (i for i, l in enumerate(lines[1:], 1) if l.strip() == "---"), None
+        )
         assert closing_idx is not None, "Frontmatter no cerrado con '---'"
         heading_idx = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
-        assert heading_idx is not None and heading_idx > closing_idx, "El heading debe ir después del frontmatter"
+        assert heading_idx is not None and heading_idx > closing_idx, (
+            "El heading debe ir después del frontmatter"
+        )
 
     def test_cuerpo_intacto_tras_frontmatter(self):
         """El cuerpo del informe (heading '# Informe de Entrega') sigue presente."""
@@ -197,6 +230,7 @@ class TestOB02Frontmatter:
 # PP-01 — Budget enforcement por ciclo
 # ---------------------------------------------------------------------------
 
+
 class TestPP01Budget:
     """PP-01: agent_executor omite agentes cuando se supera el presupuesto de tokens."""
 
@@ -204,6 +238,7 @@ class TestPP01Budget:
     async def test_sin_budget_agente_no_se_omite(self, monkeypatch):
         """Con OVD_CYCLE_TOKEN_BUDGET=0 (default) nunca se omite ningún agente."""
         import graph as _graph
+
         monkeypatch.setattr(_graph, "_CYCLE_BUDGET_TOKENS", 0)
 
         state = make_state(
@@ -213,22 +248,30 @@ class TestPP01Budget:
         # No debe retornar skipped — comprobamos que el flag no está en el resultado
         # (el LLM fallará pero no por budget)
         from unittest.mock import AsyncMock, patch
+
         mock_llm = AsyncMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(
-            content="```python:src/app.py\npass\n```",
-            response_metadata={},
-            usage_metadata={},
-        ))
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=mock_llm)):
+        mock_llm.ainvoke = AsyncMock(
+            return_value=MagicMock(
+                content="```python:src/app.py\npass\n```",
+                response_metadata={},
+                usage_metadata={},
+            )
+        )
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=mock_llm)
+        ):
             result = await _graph.agent_executor(state)
 
         agent_res = result["agent_results"][0]
-        assert not agent_res.get("skipped", False), "Sin budget no debe omitirse el agente"
+        assert not agent_res.get("skipped", False), (
+            "Sin budget no debe omitirse el agente"
+        )
 
     @pytest.mark.asyncio
     async def test_con_budget_superado_agente_se_omite(self, monkeypatch):
         """Con presupuesto superado, agent_executor retorna resultado 'skipped'."""
         import graph as _graph
+
         monkeypatch.setattr(_graph, "_CYCLE_BUDGET_TOKENS", 1000)
 
         state = make_state(
@@ -247,6 +290,7 @@ class TestPP01Budget:
     async def test_con_budget_no_superado_agente_se_ejecuta(self, monkeypatch):
         """Con tokens < budget, el agente sí se ejecuta (no se omite)."""
         import graph as _graph
+
         monkeypatch.setattr(_graph, "_CYCLE_BUDGET_TOKENS", 10000)
 
         state = make_state(
@@ -254,13 +298,18 @@ class TestPP01Budget:
             token_usage={"frontend": {"input": 100, "output": 200}},
         )
         from unittest.mock import AsyncMock, patch
+
         mock_llm = AsyncMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(
-            content="```python:src/app.py\npass\n```",
-            response_metadata={},
-            usage_metadata={},
-        ))
-        with patch("model_router.get_llm_with_context", new=AsyncMock(return_value=mock_llm)):
+        mock_llm.ainvoke = AsyncMock(
+            return_value=MagicMock(
+                content="```python:src/app.py\npass\n```",
+                response_metadata={},
+                usage_metadata={},
+            )
+        )
+        with patch(
+            "model_router.get_llm_with_context", new=AsyncMock(return_value=mock_llm)
+        ):
             result = await _graph.agent_executor(state)
 
         agent_res = result["agent_results"][0]
@@ -269,20 +318,25 @@ class TestPP01Budget:
     def test_budget_exactamente_en_limite_se_omite(self, monkeypatch):
         """Cuando tokens_so_far == budget, el agente se omite (límite inclusivo)."""
         import graph as _graph
+
         monkeypatch.setattr(_graph, "_CYCLE_BUDGET_TOKENS", 500)
         # 300 + 200 = 500 == budget → debe omitirse
         import asyncio
+
         state = make_state(
             current_agent="database",
             token_usage={"backend": {"input": 300, "output": 200}},
         )
-        result = asyncio.get_event_loop().run_until_complete(_graph.agent_executor(state))
+        result = asyncio.get_event_loop().run_until_complete(
+            _graph.agent_executor(state)
+        )
         assert result["agent_results"][0].get("skipped") is True
 
 
 # ---------------------------------------------------------------------------
 # S29-A — Persistencia de ciclos desde deliver
 # ---------------------------------------------------------------------------
+
 
 class TestS29APersistCycle:
     """S29-A: el nodo deliver persiste el ciclo en ovd_cycles directamente,
@@ -295,12 +349,16 @@ class TestS29APersistCycle:
 
         conn_mock = AsyncMock()
         conn_mock.__aenter__ = AsyncMock(return_value=conn_mock)
-        conn_mock.__aexit__  = AsyncMock(return_value=False)
-        conn_mock.execute    = AsyncMock()
-        conn_mock.commit     = AsyncMock()
+        conn_mock.__aexit__ = AsyncMock(return_value=False)
+        conn_mock.execute = AsyncMock()
+        conn_mock.commit = AsyncMock()
 
-        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
-             patch("psycopg.AsyncConnection.connect", return_value=conn_mock):
+        with (
+            patch(
+                "model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)
+            ),
+            patch("psycopg.AsyncConnection.connect", return_value=conn_mock),
+        ):
             state = _make_deliver_state()
             await deliver(state)
 
@@ -312,8 +370,12 @@ class TestS29APersistCycle:
         """Si el INSERT falla, deliver no propaga la excepción — solo loguea."""
         monkeypatch.setenv("DATABASE_URL", "postgresql://mock")
 
-        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
-             patch("psycopg.AsyncConnection.connect", side_effect=Exception("db down")):
+        with (
+            patch(
+                "model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)
+            ),
+            patch("psycopg.AsyncConnection.connect", side_effect=Exception("db down")),
+        ):
             state = _make_deliver_state()
             result = await deliver(state)
 
@@ -324,8 +386,12 @@ class TestS29APersistCycle:
         """Sin DATABASE_URL, deliver no llama a psycopg."""
         monkeypatch.delenv("DATABASE_URL", raising=False)
 
-        with patch("model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)), \
-             patch("psycopg.AsyncConnection.connect") as mock_connect:
+        with (
+            patch(
+                "model_router.resolve", new=AsyncMock(return_value=_DEFAULT_RESOLVED)
+            ),
+            patch("psycopg.AsyncConnection.connect") as mock_connect,
+        ):
             state = _make_deliver_state()
             result = await deliver(state)
 

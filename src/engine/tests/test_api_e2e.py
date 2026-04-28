@@ -10,20 +10,24 @@ E-04: GET /session/{id}/delivery — verificar entrega de artefactos vía HTTP.
 Estrategia: lifespan mockeado (sin BD real), _graph y _checkpointer patcheados
 por test. Sin LLM real ni NATS.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Lifespan mock — evita conexión a BD, NATS y Ollama
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def _mock_lifespan(app):
@@ -31,8 +35,8 @@ async def _mock_lifespan(app):
 
 
 with patch("api.lifespan", _mock_lifespan):
-    from api import app
     import api as _api_module
+    from api import app
 
 
 # ---------------------------------------------------------------------------
@@ -40,10 +44,10 @@ with patch("api.lifespan", _mock_lifespan):
 # ---------------------------------------------------------------------------
 
 _OVD_SECRET = "test-secret"
-_ORG_ID     = "org-test-001"
+_ORG_ID = "org-test-001"
 _PROJECT_ID = "proj-test-001"
 _SESSION_ID = "tui-1234567890-abcd1234"
-_THREAD_ID  = "thread-abc-001"
+_THREAD_ID = "thread-abc-001"
 
 
 def _headers():
@@ -53,6 +57,7 @@ def _headers():
 def _make_agent_context():
     """AgentContext mínimo válido para ContextResolver.resolve_async."""
     from context_resolver import AgentContext, StackRegistry
+
     stack = StackRegistry(
         db_engine="postgresql",
         db_version="16",
@@ -80,7 +85,9 @@ def _make_graph_mock(state_values: dict | None = None):
     state_mock = MagicMock()
     state_mock.values = state_values or {}
     graph = MagicMock()
-    graph.aget_state = AsyncMock(return_value=state_mock if state_values is not None else None)
+    graph.aget_state = AsyncMock(
+        return_value=state_mock if state_values is not None else None
+    )
     graph.aupdate_state = AsyncMock(return_value=None)
     return graph
 
@@ -88,6 +95,7 @@ def _make_graph_mock(state_values: dict | None = None):
 # ---------------------------------------------------------------------------
 # E-01 — POST /session
 # ---------------------------------------------------------------------------
+
 
 class TestE01PostSession:
     """
@@ -106,11 +114,12 @@ class TestE01PostSession:
         self._patch_env(monkeypatch)
         ctx = _make_agent_context()
 
-        with patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)), \
-             patch("api.rag_seed.retrieve_context", return_value=""), \
-             patch("api.AuditLogger.session_created", new=AsyncMock()), \
-             patch("api.AuditLogger.secret_accessed", new=AsyncMock()):
-
+        with (
+            patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)),
+            patch("api.rag_seed.retrieve_context", return_value=""),
+            patch("api.AuditLogger.session_created", new=AsyncMock()),
+            patch("api.AuditLogger.secret_accessed", new=AsyncMock()),
+        ):
             client = TestClient(app)
             body = {
                 "session_id": _SESSION_ID,
@@ -124,18 +133,21 @@ class TestE01PostSession:
             }
             resp = client.post("/session", json=body, headers=_headers())
 
-        assert resp.status_code == 201, f"Esperado 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Esperado 201, got {resp.status_code}: {resp.text}"
+        )
 
     def test_post_session_retorna_thread_id(self, monkeypatch):
         """La respuesta de POST /session incluye thread_id y session_id."""
         self._patch_env(monkeypatch)
         ctx = _make_agent_context()
 
-        with patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)), \
-             patch("api.rag_seed.retrieve_context", return_value=""), \
-             patch("api.AuditLogger.session_created", new=AsyncMock()), \
-             patch("api.AuditLogger.secret_accessed", new=AsyncMock()):
-
+        with (
+            patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)),
+            patch("api.rag_seed.retrieve_context", return_value=""),
+            patch("api.AuditLogger.session_created", new=AsyncMock()),
+            patch("api.AuditLogger.secret_accessed", new=AsyncMock()),
+        ):
             client = TestClient(app)
             body = {
                 "session_id": _SESSION_ID,
@@ -159,11 +171,12 @@ class TestE01PostSession:
         self._patch_env(monkeypatch)
         ctx = _make_agent_context()
 
-        with patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)), \
-             patch("api.rag_seed.retrieve_context", return_value=""), \
-             patch("api.AuditLogger.session_created", new=AsyncMock()), \
-             patch("api.AuditLogger.secret_accessed", new=AsyncMock()):
-
+        with (
+            patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)),
+            patch("api.rag_seed.retrieve_context", return_value=""),
+            patch("api.AuditLogger.session_created", new=AsyncMock()),
+            patch("api.AuditLogger.secret_accessed", new=AsyncMock()),
+        ):
             client = TestClient(app)
             body = {
                 "session_id": _SESSION_ID,
@@ -178,7 +191,9 @@ class TestE01PostSession:
             resp = client.post("/session", json=body, headers=_headers())
             data = resp.json()
 
-        assert data.get("status") == "created", f"Status esperado 'created', got: {data}"
+        assert data.get("status") == "created", (
+            f"Status esperado 'created', got: {data}"
+        )
 
     def test_post_session_sin_secret_retorna_401(self, monkeypatch):
         """POST /session sin X-OVD-Secret retorna 401 cuando el engine tiene secret configurado."""
@@ -203,13 +218,16 @@ class TestE01PostSession:
         """POST /session con parent_thread_id existente retorna status='resumed'."""
         monkeypatch.setenv("OVD_SECRET", _OVD_SECRET)
         existing = MagicMock()  # simula checkpoint existente
-        monkeypatch.setattr(_api_module, "_checkpointer", _make_checkpointer_mock(existing))
+        monkeypatch.setattr(
+            _api_module, "_checkpointer", _make_checkpointer_mock(existing)
+        )
 
         ctx = _make_agent_context()
-        with patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)), \
-             patch("api.rag_seed.retrieve_context", return_value=""), \
-             patch("api._graph", MagicMock()):
-
+        with (
+            patch("api.ContextResolver.resolve_async", new=AsyncMock(return_value=ctx)),
+            patch("api.rag_seed.retrieve_context", return_value=""),
+            patch("api._graph", MagicMock()),
+        ):
             client = TestClient(app)
             body = {
                 "session_id": _SESSION_ID,
@@ -234,11 +252,12 @@ class TestE01PostSession:
         ctx = _make_agent_context()
         resolver_mock = AsyncMock(return_value=ctx)
 
-        with patch("api.ContextResolver.resolve_async", new=resolver_mock), \
-             patch("api.rag_seed.retrieve_context", return_value=""), \
-             patch("api.AuditLogger.session_created", new=AsyncMock()), \
-             patch("api.AuditLogger.secret_accessed", new=AsyncMock()):
-
+        with (
+            patch("api.ContextResolver.resolve_async", new=resolver_mock),
+            patch("api.rag_seed.retrieve_context", return_value=""),
+            patch("api.AuditLogger.session_created", new=AsyncMock()),
+            patch("api.AuditLogger.secret_accessed", new=AsyncMock()),
+        ):
             client = TestClient(app)
             body = {
                 "session_id": _SESSION_ID,
@@ -262,6 +281,7 @@ class TestE01PostSession:
 # E-04 — GET /session/{id}/delivery
 # ---------------------------------------------------------------------------
 
+
 class TestE04GetDelivery:
     """
     E-04: Verificar que GET /session/{id}/delivery retorna artefactos correctamente.
@@ -270,23 +290,27 @@ class TestE04GetDelivery:
 
     def _make_full_state(self, org_id: str = _ORG_ID) -> dict:
         return {
-            "org_id":    org_id,
-            "status":    "done",
+            "org_id": org_id,
+            "status": "done",
             "directory": "/tmp/test-repo",
             "deliverables": [
-                {"type": "sdd",            "agent": "architect", "content": "# SDD"},
-                {"type": "implementation", "agent": "backend",   "content": "def login(): pass"},
+                {"type": "sdd", "agent": "architect", "content": "# SDD"},
+                {
+                    "type": "implementation",
+                    "agent": "backend",
+                    "content": "def login(): pass",
+                },
             ],
             "security_result": {
-                "passed":   True,
-                "score":    90,
+                "passed": True,
+                "score": 90,
                 "severity": "none",
             },
             "qa_result": {
-                "passed":         True,
-                "score":          85,
+                "passed": True,
+                "score": 85,
                 "sdd_compliance": 92,
-                "issues":         [],
+                "issues": [],
             },
             "token_usage": {
                 "backend": {"input": 500, "output": 300},
@@ -306,7 +330,9 @@ class TestE04GetDelivery:
             params={"org_id": _ORG_ID},
             headers=_headers(),
         )
-        assert resp.status_code == 200, f"Esperado 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Esperado 200, got {resp.status_code}: {resp.text}"
+        )
 
     def test_delivery_incluye_entregables(self, monkeypatch):
         """La respuesta incluye la lista de deliverables del ciclo."""
@@ -428,7 +454,9 @@ class TestE04GetDelivery:
         """
         monkeypatch.setenv("OVD_SECRET", _OVD_SECRET)
         # Estado del thread sin org_id (ej: thread antiguo o mal inicializado)
-        state_sin_org = {k: v for k, v in self._make_full_state().items() if k != "org_id"}
+        state_sin_org = {
+            k: v for k, v in self._make_full_state().items() if k != "org_id"
+        }
         graph = _make_graph_mock(state_sin_org)
         monkeypatch.setattr(_api_module, "_graph", graph)
 

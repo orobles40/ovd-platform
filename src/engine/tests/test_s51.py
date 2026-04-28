@@ -5,22 +5,29 @@ S51-A: tarea de tests detectada en S39-D loop → instrucción [PRIORIDAD MÁXIM
 S51-B: system_backend.md tiene item 5 (tests/test_*.py obligatorio) + prohibición explícita
 S51-C: S39-D loop detecta ausencia de test_*.py y reintenta la tarea de tests
 """
-import sys, os, pathlib
+
+import os
+import pathlib
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from tests.factories import make_state
 
+import pytest
+
+from tests.factories import make_state
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _backend_template() -> str:
     # S58-pre: el contenido Python-specific fue movido a stack/backend_python.md
     import template_loader
+
     template_loader.invalidate()
     return template_loader.render_composed("system_backend", stack_language="python")
 
@@ -34,8 +41,8 @@ def _graph_src() -> str:
 # S51-B: template tiene item 5 + prohibición
 # ---------------------------------------------------------------------------
 
-class TestS51BTemplate:
 
+class TestS51BTemplate:
     def test_backend_template_has_item5_tests(self):
         """system_backend.md lista tests/test_<paquete>.py como ítem 5 obligatorio."""
         content = _backend_template()
@@ -57,8 +64,8 @@ class TestS51BTemplate:
 # S51-A: instrucción de prioridad máxima para tareas de tests
 # ---------------------------------------------------------------------------
 
-class TestS51ATaskPriority:
 
+class TestS51ATaskPriority:
     def test_graph_src_has_s51a_label(self):
         """graph.py contiene la etiqueta S51-A."""
         src = _graph_src()
@@ -77,13 +84,17 @@ class TestS51ATaskPriority:
 
         received_sdd_contents = []
 
-        async def capture_runner(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def capture_runner(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             received_sdd_contents.append(sdd)
             # Simular que genera el test file
             return {
                 "agent": "backend",
                 "output": "```python:tests/test_imc.py\ndef test_imc(): assert True\n```\n",
-                "artifacts": [{"path": "tests/test_imc.py", "size": 40, "lang": "python"}],
+                "artifacts": [
+                    {"path": "tests/test_imc.py", "size": 40, "lang": "python"}
+                ],
                 "uncertainties": [],
                 "tokens": {"input": 10, "output": 20},
             }
@@ -97,7 +108,11 @@ class TestS51ATaskPriority:
             "constraints": [],
             "design": {},
             "tasks": [
-                {"id": "TASK-001", "agent": "backend", "description": "Implementar tests pytest para IMC"},
+                {
+                    "id": "TASK-001",
+                    "agent": "backend",
+                    "description": "Implementar tests pytest para IMC",
+                },
             ],
         }
 
@@ -109,8 +124,13 @@ class TestS51ATaskPriority:
 
         with patch.dict(g._AGENT_RUNNERS, {"backend": capture_runner}):
             result = await g._run_agent_with_tools(
-                "backend", "SDD TASK-001: tests pytest", "comment",
-                mock_llm, "ctx", "", "es",
+                "backend",
+                "SDD TASK-001: tests pytest",
+                "comment",
+                mock_llm,
+                "ctx",
+                "",
+                "es",
                 [MagicMock()],
                 str(tmp_path),
                 stack_routing="ollama",
@@ -127,12 +147,16 @@ class TestS51ATaskPriority:
 
         received_sdd_contents = []
 
-        async def capture_runner(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def capture_runner(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             received_sdd_contents.append(sdd)
             return {
                 "agent": "backend",
                 "output": "```python:src/imc/service.py\ndef calc(): pass\n```\n",
-                "artifacts": [{"path": "src/imc/service.py", "size": 30, "lang": "python"}],
+                "artifacts": [
+                    {"path": "src/imc/service.py", "size": 30, "lang": "python"}
+                ],
                 "uncertainties": [],
                 "tokens": {"input": 5, "output": 15},
             }
@@ -142,8 +166,13 @@ class TestS51ATaskPriority:
 
         with patch.dict(g._AGENT_RUNNERS, {"backend": capture_runner}):
             await g._run_agent_with_tools(
-                "backend", "SDD TASK-001: implementar service.py", "comment",
-                mock_llm, "ctx", "", "es",
+                "backend",
+                "SDD TASK-001: implementar service.py",
+                "comment",
+                mock_llm,
+                "ctx",
+                "",
+                "es",
                 [MagicMock()],
                 str(tmp_path),
                 stack_routing="ollama",
@@ -158,8 +187,8 @@ class TestS51ATaskPriority:
 # S51-C: retry automático si no hay test_*.py
 # ---------------------------------------------------------------------------
 
-class TestS51CRetryMissingTests:
 
+class TestS51CRetryMissingTests:
     def test_graph_src_has_s51c_label(self):
         """graph.py contiene la etiqueta S51-C."""
         src = _graph_src()
@@ -178,14 +207,18 @@ class TestS51CRetryMissingTests:
 
         call_count = {"n": 0}
 
-        async def runner_no_tests(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def runner_no_tests(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 # Primera llamada (tarea de producción) — no genera tests
                 return {
                     "agent": "backend",
                     "output": "```python:src/imc/service.py\ndef calc(): pass\n```\n",
-                    "artifacts": [{"path": "src/imc/service.py", "size": 30, "lang": "python"}],
+                    "artifacts": [
+                        {"path": "src/imc/service.py", "size": 30, "lang": "python"}
+                    ],
                     "uncertainties": [],
                     "tokens": {"input": 10, "output": 20},
                 }
@@ -194,7 +227,9 @@ class TestS51CRetryMissingTests:
                 return {
                     "agent": "backend",
                     "output": "```python:tests/test_imc.py\ndef test_imc(): assert True\n```\n",
-                    "artifacts": [{"path": "tests/test_imc.py", "size": 45, "lang": "python"}],
+                    "artifacts": [
+                        {"path": "tests/test_imc.py", "size": 45, "lang": "python"}
+                    ],
                     "uncertainties": [],
                     "tokens": {"input": 10, "output": 25},
                 }
@@ -208,8 +243,16 @@ class TestS51CRetryMissingTests:
             "constraints": [],
             "design": {},
             "tasks": [
-                {"id": "TASK-001", "agent": "backend", "description": "Implementar service.py con calculate_imc"},
-                {"id": "TASK-002", "agent": "backend", "description": "Implementar tests pytest con 3 casos"},
+                {
+                    "id": "TASK-001",
+                    "agent": "backend",
+                    "description": "Implementar service.py con calculate_imc",
+                },
+                {
+                    "id": "TASK-002",
+                    "agent": "backend",
+                    "description": "Implementar tests pytest con 3 casos",
+                },
             ],
         }
 
@@ -218,10 +261,12 @@ class TestS51CRetryMissingTests:
         state["session_id"] = "test-s51c"
         state["org_id"] = "test-org"
 
-        with patch.dict(g._AGENT_RUNNERS, {"backend": runner_no_tests}), \
-             patch("graph.nats_client") as mock_nats, \
-             patch("graph.model_router") as mock_router, \
-             patch("graph.read_project_context", return_value=""):
+        with (
+            patch.dict(g._AGENT_RUNNERS, {"backend": runner_no_tests}),
+            patch("graph.nats_client") as mock_nats,
+            patch("graph.model_router") as mock_router,
+            patch("graph.read_project_context", return_value=""),
+        ):
             mock_nats.publish_agent_start = AsyncMock(return_value=None)
             mock_nats.publish_agent_end = AsyncMock(return_value=None)
             mock_router.resolve = AsyncMock(return_value=MagicMock(provider="ollama"))
@@ -230,7 +275,9 @@ class TestS51CRetryMissingTests:
             result = await g.agent_executor(state)
 
         # S51-C debe haber hecho el retry → call_count >= 3 (1 servicio + 1 tests + 1 retry S51-C)
-        assert call_count["n"] >= 2, f"S51-C debe haber invocado el runner al menos 2 veces, fue {call_count['n']}"
+        assert call_count["n"] >= 2, (
+            f"S51-C debe haber invocado el runner al menos 2 veces, fue {call_count['n']}"
+        )
 
         # El resultado final debe incluir tests/test_imc.py
         agent_results = result.get("agent_results", [])
@@ -238,7 +285,9 @@ class TestS51CRetryMissingTests:
         for ar in agent_results:
             for art in ar.get("artifacts", []):
                 all_paths.append(art.get("path", ""))
-        assert any("test_imc" in p for p in all_paths), f"Debe haber test_imc.py en artifacts. Paths: {all_paths}"
+        assert any("test_imc" in p for p in all_paths), (
+            f"Debe haber test_imc.py en artifacts. Paths: {all_paths}"
+        )
 
     @pytest.mark.asyncio
     async def test_s51c_no_retry_when_test_file_present(self, tmp_path):
@@ -247,7 +296,9 @@ class TestS51CRetryMissingTests:
 
         call_count = {"n": 0}
 
-        async def runner_with_tests(sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""):
+        async def runner_with_tests(
+            sdd, comment, llm, ctx, retry, lang, rag, *, stack_language=""
+        ):
             call_count["n"] += 1
             return {
                 "agent": "backend",
@@ -272,8 +323,16 @@ class TestS51CRetryMissingTests:
             "constraints": [],
             "design": {},
             "tasks": [
-                {"id": "TASK-001", "agent": "backend", "description": "Implementar todo con tests pytest"},
-                {"id": "TASK-002", "agent": "backend", "description": "Agregar más tests unitarios"},
+                {
+                    "id": "TASK-001",
+                    "agent": "backend",
+                    "description": "Implementar todo con tests pytest",
+                },
+                {
+                    "id": "TASK-002",
+                    "agent": "backend",
+                    "description": "Agregar más tests unitarios",
+                },
             ],
         }
 
@@ -282,10 +341,12 @@ class TestS51CRetryMissingTests:
         state["session_id"] = "test-s51c-skip"
         state["org_id"] = "test-org"
 
-        with patch.dict(g._AGENT_RUNNERS, {"backend": runner_with_tests}), \
-             patch("graph.nats_client") as mock_nats, \
-             patch("graph.model_router") as mock_router, \
-             patch("graph.read_project_context", return_value=""):
+        with (
+            patch.dict(g._AGENT_RUNNERS, {"backend": runner_with_tests}),
+            patch("graph.nats_client") as mock_nats,
+            patch("graph.model_router") as mock_router,
+            patch("graph.read_project_context", return_value=""),
+        ):
             mock_nats.publish_agent_start = AsyncMock(return_value=None)
             mock_nats.publish_agent_end = AsyncMock(return_value=None)
             mock_router.resolve = AsyncMock(return_value=MagicMock(provider="ollama"))
@@ -294,4 +355,6 @@ class TestS51CRetryMissingTests:
             await g.agent_executor(state)
 
         # No debe haber llamada extra de S51-C (solo 2 tareas normales)
-        assert call_count["n"] == 2, f"S51-C no debe reintentar si ya hay tests. Llamadas: {call_count['n']}"
+        assert call_count["n"] == 2, (
+            f"S51-C no debe reintentar si ya hay tests. Llamadas: {call_count['n']}"
+        )

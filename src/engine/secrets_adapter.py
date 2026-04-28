@@ -26,6 +26,7 @@ Uso desde context_resolver.py:
     secrets = await adapter.get_secrets("alemana-cas")
     # secrets = {"ORACLE_HOST": "...", "ORACLE_USER": "...", "ORACLE_PASS": "..."}
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Interfaz abstracta
 # ---------------------------------------------------------------------------
+
 
 class SecretsAdapter(ABC):
     """
@@ -76,7 +78,7 @@ class SecretsAdapter(ABC):
 
 # Infisical API v3 endpoints
 _INFISICAL_SECRETS_ENDPOINT = "/api/v3/secrets/raw"
-_INFISICAL_AUTH_ENDPOINT    = "/api/v1/auth/universal-auth/login"
+_INFISICAL_AUTH_ENDPOINT = "/api/v1/auth/universal-auth/login"
 
 # Cache de tokens de acceso por instancia (evita re-autenticar en cada request)
 _INFISICAL_ACCESS_TOKEN_CACHE: dict[str, str] = {}
@@ -106,10 +108,12 @@ class InfisicalAdapter(SecretsAdapter):
         token: str | None = None,
         project_id: str | None = None,
     ):
-        self._base_url   = (base_url   or os.environ.get("INFISICAL_URL",       "http://localhost:8080")).rstrip("/")
-        self._token      = token      or os.environ.get("INFISICAL_TOKEN",      "")
+        self._base_url = (
+            base_url or os.environ.get("INFISICAL_URL", "http://localhost:8080")
+        ).rstrip("/")
+        self._token = token or os.environ.get("INFISICAL_TOKEN", "")
         self._project_id = project_id or os.environ.get("INFISICAL_PROJECT_ID", "")
-        self._timeout    = float(os.environ.get("INFISICAL_TIMEOUT_SECS", "5"))
+        self._timeout = float(os.environ.get("INFISICAL_TIMEOUT_SECS", "5"))
 
     def is_available(self) -> bool:
         return bool(self._token and self._project_id)
@@ -147,11 +151,14 @@ class InfisicalAdapter(SecretsAdapter):
             else:
                 log.error(
                     "secrets_adapter: error HTTP %d al recuperar secrets de '%s'",
-                    e.response.status_code, secret_ref,
+                    e.response.status_code,
+                    secret_ref,
                 )
             return {}
         except Exception as e:
-            log.error("secrets_adapter: error inesperado recuperando '%s' — %s", secret_ref, e)
+            log.error(
+                "secrets_adapter: error inesperado recuperando '%s' — %s", secret_ref, e
+            )
             return {}
 
     async def _fetch_secrets(self, environment: str) -> dict[str, str]:
@@ -160,7 +167,7 @@ class InfisicalAdapter(SecretsAdapter):
         params = {
             "workspaceId": self._project_id,
             "environment": environment,
-            "secretPath": "/",        # raíz del environment
+            "secretPath": "/",  # raíz del environment
             "expandSecretReferences": "true",
         }
         headers = {
@@ -175,14 +182,15 @@ class InfisicalAdapter(SecretsAdapter):
 
         secrets: dict[str, str] = {}
         for item in data.get("secrets", []):
-            key   = item.get("secretKey", "")
+            key = item.get("secretKey", "")
             value = item.get("secretValue", "")
             if key:
                 secrets[key] = value
 
         log.info(
             "secrets_adapter.InfisicalAdapter: %d secrets recuperados para environment '%s'",
-            len(secrets), environment,
+            len(secrets),
+            environment,
         )
         return secrets
 
@@ -190,6 +198,7 @@ class InfisicalAdapter(SecretsAdapter):
 # ---------------------------------------------------------------------------
 # Implementación Env (fallback desarrollo local)
 # ---------------------------------------------------------------------------
+
 
 class EnvAdapter(SecretsAdapter):
     """
@@ -215,13 +224,14 @@ class EnvAdapter(SecretsAdapter):
         secrets: dict[str, str] = {}
         for key, value in os.environ.items():
             if key.startswith(prefix):
-                secret_name = key[len(prefix):]
+                secret_name = key[len(prefix) :]
                 secrets[secret_name] = value
 
         if secrets:
             log.info(
                 "secrets_adapter.EnvAdapter: %d secrets desde env para '%s' (solo para desarrollo)",
-                len(secrets), secret_ref,
+                len(secrets),
+                secret_ref,
             )
         else:
             log.debug(
@@ -256,7 +266,8 @@ def get_adapter() -> SecretsAdapter:
     if infisical.is_available():
         log.info(
             "secrets_adapter: usando InfisicalAdapter → %s (proyecto: %s)",
-            infisical._base_url, infisical._project_id,
+            infisical._base_url,
+            infisical._project_id,
         )
         _adapter_instance = infisical
     else:
