@@ -381,34 +381,57 @@ def _fix_oracle_init_in_postgres_db(content: str, rel_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _fix_declarative_base_import(content: str, file_path: str) -> str:
-    """S80-C: reemplaza 'Base = declarative_base()' con 'from src.database import Base'.
+    """S80-C: reemplaza patrones de Base local con 'from src.database import Base'.
 
-    El patrón anti-pattern crea un Base distinto al de src.database, por lo que
-    SQLAlchemy no reconoce los modelos como parte del mismo schema.
+    Cubre dos variantes del LLM:
+    - old style: Base = declarative_base()
+    - new style: from sqlalchemy.orm import DeclarativeBase (sin crear Base)
     Solo aplica a archivos que NO son src/database.py.
     """
     if "database.py" in file_path:
         return content
-    if "declarative_base" not in content or "Base = declarative_base()" not in content:
+
+    new = content
+    changed = False
+
+    # Variante 1 (vieja): Base = declarative_base()
+    if "Base = declarative_base()" in content:
+        new = re.sub(
+            r'from sqlalchemy\.orm import ([^#\n]*\bdeclarative_base\b[^#\n]*)\n',
+            lambda m: (
+                ""
+                if m.group(1).strip() == "declarative_base"
+                else f"from sqlalchemy.orm import {m.group(1).replace('declarative_base,', '').replace(', declarative_base', '').replace('declarative_base', '').strip().rstrip(',')}\n"
+            ),
+            new,
+        )
+        new = re.sub(r'^Base\s*=\s*declarative_base\(\)\s*\n', '', new, flags=re.MULTILINE)
+        changed = True
+
+    # Variante 2 (nueva): import DeclarativeBase sin definir Base como subclase
+    # El LLM importa DeclarativeBase pero usa UserORM(Base) sin crear Base
+    if "DeclarativeBase" in new and re.search(r'\bclass\s+\w+ORM\s*\(\s*Base\s*\)', new):
+        # Eliminar la línea de import DeclarativeBase si no se usa para definir Base
+        if not re.search(r'\bclass\s+Base\s*\(\s*DeclarativeBase\s*\)', new):
+            new = re.sub(
+                r'from sqlalchemy\.orm import ([^#\n]*\bDeclarativeBase\b[^#\n]*)\n',
+                lambda m: (
+                    ""
+                    if m.group(1).strip() == "DeclarativeBase"
+                    else f"from sqlalchemy.orm import {m.group(1).replace('DeclarativeBase,', '').replace(', DeclarativeBase', '').replace('DeclarativeBase', '').strip().rstrip(',')}\n"
+                ),
+                new,
+            )
+            changed = True
+
+    if not changed and "from src.database import Base" not in content:
         return content
 
-    # Eliminar imports de declarative_base
-    new = re.sub(
-        r'from sqlalchemy\.orm import ([^#\n]*\bdeclarative_base\b[^#\n]*)\n',
-        lambda m: (
-            ""
-            if m.group(1).strip() == "declarative_base"
-            else f"from sqlalchemy.orm import {m.group(1).replace('declarative_base,', '').replace(', declarative_base', '').replace('declarative_base', '').strip().rstrip(',')}\n"
-        ),
-        content,
-    )
-    # Eliminar la línea Base = declarative_base()
-    new = re.sub(r'^Base\s*=\s*declarative_base\(\)\s*\n', '', new, flags=re.MULTILINE)
     # Agregar import correcto si aún no está
     if "from src.database import Base" not in new:
         new = "from src.database import Base\n" + new
     if new != content:
-        log.warning("[S80-C] declarative_base() reemplazado con 'from src.database import Base' en %s", file_path)
+        log.warning("[S80-C] Base local reemplazado con 'from src.database import Base' en %s", file_path)
     return new
 
 
