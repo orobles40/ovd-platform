@@ -1502,6 +1502,31 @@ def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
             "'postgresql+psycopg://user:pass@localhost:5432/dbname')\n"
             "  engine = create_engine(DATABASE_URL)"
         )
+        # S84-A-v2: reescribir database.py en disco con URL PostgreSQL correcta
+        try:
+            import re as _re_db
+            _new_content = _content
+            # Eliminar líneas Oracle init
+            _new_content = _re_db.sub(r"^import oracledb\b[^\n]*\n?", "", _new_content, flags=_re_db.MULTILINE)
+            _new_content = _re_db.sub(r"^oracledb\.init_oracle_client\([^\)]*\)\n?", "", _new_content, flags=_re_db.MULTILINE)
+            # Reemplazar Oracle URL con PostgreSQL
+            _new_content = _re_db.sub(
+                r"oracle\+oracledb://[^\s'\"]+",
+                "postgresql+psycopg://ovd_dev:changeme@localhost:5432/app_db",
+                _new_content,
+            )
+            # Asegurar connect_args correcto (no Oracle-specific)
+            _new_content = _re_db.sub(
+                r",\s*connect_args\s*=\s*\{[^}]*(?:nencoding|encoding|mode)[^}]*\}",
+                "",
+                _new_content,
+            )
+            if _new_content != _content:
+                _db_file.write_text(_new_content, encoding="utf-8")
+                log.warning("[S84-A-v2] database.py reescrito: Oracle URL → PostgreSQL (FR exige PostgreSQL)")
+        except Exception as _e:
+            log.warning("[S84-A-v2] error al reescribir database.py: %s", _e)
+
     _feedback = (
         "[S79-C] ⚠️ DATABASE_URL INCONSISTENTE con el FR:\n"
         + "\n".join(f"  - {i}" for i in _issues)
