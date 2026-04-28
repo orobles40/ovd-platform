@@ -4142,6 +4142,9 @@ def _validate_artifacts_imports(
     if not broken:
         return True, ""
 
+    # S87-diag: log explícito de los imports rotos para diagnóstico
+    log.warning("[S65-A] imports rotos detectados (%d):\n%s", len(broken), "\n".join(broken[:10]))
+
     # S69-C: auto-generar src/main.py cuando el import roto es src.main y no existe en disco
     _main_py = base / "src" / "main.py"
     _broken_text = "\n".join(broken)

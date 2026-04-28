@@ -708,6 +708,19 @@ def _fix_conftest_mock_order(content: str) -> str:
     return "\n".join(lines)
 
 
+def _fix_orm_phantom_module_import(content: str) -> str:
+    """S88-A: reescribe imports desde módulos fantasma *.orm → *.models.
+
+    El LLM a veces genera 'from src.contracts.orm import ContractORM' en vez de
+    'from src.contracts.models import ContractORM'. El módulo *.orm nunca existe.
+    """
+    return re.sub(
+        r'\bfrom\s+(src\.\w+)\.orm\s+import\b',
+        r'from \1.models import',
+        content,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
@@ -764,6 +777,10 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S77-A: fix parámetros Oracle inválidos en create_engine
     content = _fix_sqlalchemy_oracle_params(content)
+
+    # S88-A: fix import desde módulo fantasma *.orm → *.models
+    if not is_conftest:
+        content = _fix_orm_phantom_module_import(content)
 
     # S81-A / S82-A: eliminar clases ORM duplicadas en service.py (solo si models.py existe en disco)
     if not is_conftest:
