@@ -39,6 +39,7 @@ import logging
 import operator
 import os
 import pathlib
+import re as _re_top
 import sys
 import time
 import uuid
@@ -5275,7 +5276,7 @@ def update_test_retry(state: OVDState) -> dict | Command:
 
         # S94-fix: si pytest recolectó ≥1 test, preservar src/ — solo borrar tests/ con error
         _last_err = state.get("last_test_error", "")
-        _collected_some = bool(re.search(r"collected \d+ items?", _last_err))
+        _collected_some = bool(_re_top.search(r"collected \d+ items?", _last_err))
         _deleted_s63b: list[str] = []
         for rel_path in _prev_artifacts:
             _abs = _base / rel_path
