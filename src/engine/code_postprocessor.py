@@ -4,6 +4,7 @@ S72-C: Fix orden mock oracledb en conftest.py.
 S73-A: SQLAlchemy v1 → v2 (declarative_base → DeclarativeBase).
 S74-A: Fix variable local que shadowea función del mismo módulo.
 S74-D: Detectar secretos hardcoded y SHA-256 para passwords (log only).
+S75-A: Elimina funciones de módulo que redefinen imports con wrapper trivial (RecursionError).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -13,6 +14,7 @@ Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Corrige orden de mock oracledb en conftest.py
 - Convierte declarative_base() → DeclarativeBase class (SQLAlchemy 2.x)
 - Renombra variable local que shadowea función del módulo (UnboundLocalError)
+- Elimina wrapper trivial que shadea import a nivel módulo (RecursionError)
 - Advierte sobre secretos hardcoded y SHA-256 para passwords
 """
 
@@ -266,6 +268,77 @@ def _fix_local_variable_shadowing(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S75-A — Elimina función de módulo que redefine import con wrapper trivial
+# ---------------------------------------------------------------------------
+
+def _fix_function_import_shadowing(code: str) -> str:
+    """S75-A: elimina FunctionDef que shadowea un import con wrapper trivial (RecursionError).
+
+    Detecta:
+        from src.utils.rut_validator import validate_rut   # import OK
+
+        def validate_rut(rut: str) -> bool:   # ← redefine el import
+            return validate_rut(rut)           # ← RecursionError en runtime
+
+    Fix: elimina la FunctionDef redundante. El import existente ya provee la función.
+    Solo elimina wrappers triviales: body = [Return(Call(func=Name(same_name)))].
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    # Recolectar nombres importados a nivel módulo
+    imported_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+
+    if not imported_names:
+        return code
+
+    # Detectar FunctionDef a nivel módulo que shadowean imports con wrapper trivial
+    to_remove: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in imported_names:
+            continue
+        # Solo elimina si el cuerpo es exactamente: return fn(args) — wrapper trivial
+        if (
+            len(node.body) == 1
+            and isinstance(node.body[0], ast.Return)
+            and isinstance(node.body[0].value, ast.Call)
+            and isinstance(node.body[0].value.func, ast.Name)
+            and node.body[0].value.func.id == node.name
+        ):
+            to_remove.add(node.name)
+            log.warning("[S75-A] wrapper trivial eliminado: def %s() → usa import directo", node.name)
+
+    if not to_remove:
+        return code
+
+    class _RemoveWrapper(ast.NodeTransformer):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST | None:
+            if node.name in to_remove:
+                return None
+            return self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST | None:
+            if node.name in to_remove:
+                return None
+            return self.generic_visit(node)
+
+    new_tree = _RemoveWrapper().visit(tree)
+    ast.fix_missing_locations(new_tree)
+    return ast.unparse(new_tree)
+
+
+# ---------------------------------------------------------------------------
 # S74-D — Detección de secretos hardcoded (log only)
 # ---------------------------------------------------------------------------
 
@@ -403,6 +476,10 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
     # S74-A: fix variable local que shadowea función del módulo
     if not is_conftest:
         content = _fix_local_variable_shadowing(content)
+
+    # S75-A: fix función de módulo que redefine import con wrapper trivial (RecursionError)
+    if not is_conftest:
+        content = _fix_function_import_shadowing(content)
 
     # S74-D: advertir secretos hardcoded (log only)
     _warn_hardcoded_secrets(content, rel_path)

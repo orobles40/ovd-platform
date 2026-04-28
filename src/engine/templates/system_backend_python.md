@@ -280,6 +280,30 @@ assert validate_rut('12345678-4') == False   # DV incorrecto ❌
 # NUNCA escribas: assert validate_rut('12.345.678-5') == False  ← INCORRECTO
 ```
 
+**S75-A — Anti-patrón crítico: función de módulo que redefine un import con mismo nombre (RecursionError):**
+
+```python
+# ❌ PROHIBIDO — RecursionError: validate_rut llama a sí misma indefinidamente
+from src.utils.rut_validator import validate_rut  # import OK
+
+def validate_rut(rut: str) -> bool:   # ← redefine el nombre importado
+    return validate_rut(rut)           # ← LLAMA A SÍ MISMA, no al import
+
+# ❌ PROHIBIDO — mismo patrón con is_prime
+from src.utils.prime_validator import is_prime
+
+def is_prime(n: int) -> bool:
+    return is_prime(n)   # ← RecursionError
+
+# ✅ CORRECTO — usa directamente el import, sin redefinir
+from src.utils.rut_validator import validate_rut
+
+# En service.py simplemente llama:
+is_valid = validate_rut(rut)   # ← llama al import directamente
+```
+
+**Regla:** Si importas `validate_rut` desde `src.utils.rut_validator`, NO definas otra función llamada `validate_rut` en el mismo archivo. Usa la función importada directamente.
+
 **S74-A — Anti-patrón: variable local con mismo nombre que función del módulo:**
 ```python
 # ❌ INCORRECTO — UnboundLocalError: Python trata clean_rut como variable local antes de asignar
@@ -496,6 +520,23 @@ def get_contrato(
 
 ---
 
+### Imports de submódulos — solo si el archivo existe en el SDD (S75-C)
+
+**REGLA CRÍTICA:** Solo puedes importar `from src.<paquete>.models import X` si el SDD incluye `src/<paquete>/models.py` como tarea explícita.
+
+```python
+# ❌ PROHIBIDO — si models.py NO está en el SDD
+from src.contracts.models import ContractCreate, BenefitCreate  # ← phantom module
+
+# ✅ CORRECTO — si src/contracts/__init__.py define ContractCreate
+from src.contracts import ContractCreate, BenefitCreate
+
+# ✅ CORRECTO — si el SDD sí incluye src/contracts/models.py como tarea
+from src.contracts.models import ContractCreate  # ← solo si models.py existe
+```
+
+**Comprueba siempre**: antes de escribir `from src.X.models import Y`, verifica que en el SDD existe una tarea con `file: src/X/models.py`. Si no existe → importa desde `src.X` directamente.
+
 ### Imports prohibidos — prevenir ciclos y auto-imports (S70-D)
 
 **REGLA CRÍTICA:** NUNCA importes desde el mismo módulo que estás escribiendo.
@@ -544,10 +585,24 @@ def verify_password(plain: str, hashed: str) -> bool:
 # hashlib.sha256(password.encode()).hexdigest()  ← PROHIBIDO para contraseñas
 ```
 
-En `requirements.txt`:
+### requirements.txt completo obligatorio (S75-B)
+
+**SIEMPRE incluye estas dependencias en `requirements.txt`:**
+
 ```
-passlib[bcrypt]>=1.7.4
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic[email]
+passlib[bcrypt]
+python-jose[cryptography]
+pytest
+httpx
+pytest-asyncio
+alembic
 ```
+
+**NUNCA omitas `passlib[bcrypt]` ni `python-jose[cryptography]`** si el proyecto tiene autenticación JWT. Sin estas librerías pytest falla con `ModuleNotFoundError`.
 
 ### JWT — librería única por proyecto (S70-E)
 
