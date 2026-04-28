@@ -1163,6 +1163,107 @@ def _ensure_contracts_models_task(sdd: dict) -> dict:
     return sdd
 
 
+def _topological_sort_tasks(tasks: list[dict]) -> list[dict]:
+    """S83-F: ordena tareas por dependencias (Kahn's algorithm) para que each task se ejecute
+    después de las tareas de las que depende según el campo depends_on.
+    Si hay ciclos o depends_on references tasks de otros agentes, devuelve el orden original."""
+    id_to_task = {t.get("id", ""): t for t in tasks if t.get("id")}
+    local_ids = set(id_to_task.keys())
+    # Construir grafo solo con dependencias locales (mismo agente)
+    in_degree: dict[str, int] = {t_id: 0 for t_id in local_ids}
+    dependents: dict[str, list[str]] = {t_id: [] for t_id in local_ids}
+    for t_id, task in id_to_task.items():
+        for dep in task.get("depends_on", []):
+            if dep in local_ids:
+                in_degree[t_id] += 1
+                dependents[dep].append(t_id)
+    queue = [t_id for t_id, deg in in_degree.items() if deg == 0]
+    sorted_ids: list[str] = []
+    while queue:
+        current = queue.pop(0)
+        sorted_ids.append(current)
+        for dep_id in dependents.get(current, []):
+            in_degree[dep_id] -= 1
+            if in_degree[dep_id] == 0:
+                queue.append(dep_id)
+    if len(sorted_ids) != len(local_ids):
+        # Ciclo detectado — devolver orden original sin modificar
+        return tasks
+    # Preservar tareas sin id en su posición original
+    result = [id_to_task[t_id] for t_id in sorted_ids]
+    no_id = [t for t in tasks if not t.get("id")]
+    return result + no_id
+
+
+def _build_dependency_context(task: dict, written_context: dict[str, str]) -> str:
+    """S83-F: construye un bloque de contexto con el contenido real de los archivos
+    que esta tarea necesita (según depends_on y el archivo destino de la tarea).
+    Esto reemplaza la suposición del LLM por código real ya generado."""
+    if not written_context:
+        return ""
+    # Determinar qué archivos son relevantes para esta tarea
+    task_file = task.get("file", "")
+    deps = task.get("depends_on", [])
+    relevant: list[tuple[str, str]] = []
+    for path, content in written_context.items():
+        # Incluir si el path contiene algún módulo mencionado en depends_on o es un models.py
+        # que probablemente necesita service.py
+        path_lower = path.lower()
+        is_models = "models.py" in path_lower
+        is_schema = "schema" in path_lower
+        is_dep_match = any(dep.lower() in path_lower or path_lower.endswith(dep.lower()) for dep in deps)
+        # Inyectar models.py para service.py/router.py (el patrón más común de fallo)
+        is_consumer = any(kw in task_file.lower() for kw in ("service", "router", "test_"))
+        if is_dep_match or (is_models and is_consumer) or (is_schema and is_consumer):
+            relevant.append((path, content))
+    if not relevant:
+        return ""
+    lines = ["[S83-F — CONTEXTO DE ARCHIVOS YA GENERADOS — úsalos como referencia exacta]\n"]
+    for path, content in relevant[:3]:  # máximo 3 archivos para no saturar el contexto
+        preview = content[:2000] + ("...[truncado]" if len(content) > 2000 else "")
+        lines.append(f"```python:{path}\n{preview}\n```\n")
+    lines.append("[FIN CONTEXTO S83-F — importa exactamente los nombres de clases/funciones que ves arriba]\n\n")
+    return "".join(lines)
+
+
+def _ensure_auth_login_task(sdd: dict, fr_analysis: dict) -> dict:
+    """S83-E: si el FR menciona autenticación/login y el SDD no tiene src/auth/router.py, inyectarla.
+
+    Sin auth/router.py, main.py no puede incluir auth_router → phantom import.
+    """
+    fr_lower = (fr_analysis.get("raw", "") + " " + fr_analysis.get("type", "")).lower()
+    if not any(kw in fr_lower for kw in ("login", "autenticaci", "jwt", "auth", "token")):
+        return sdd
+    has_auth_router = any(
+        "auth/router" in t.get("file", "") or t.get("file", "").endswith("auth_router.py")
+        for t in sdd.get("tasks", [])
+    )
+    if has_auth_router:
+        return sdd
+    # Buscar idx de database.py para insertar después
+    _db_idx = next(
+        (i for i, t in enumerate(sdd["tasks"]) if "database.py" in t.get("file", "")), -1
+    )
+    _insert_at = _db_idx + 1 if _db_idx >= 0 else 0
+    sdd["tasks"].insert(_insert_at, {
+        "id": "TASK-INFRA-AUTH-ROUTER",
+        "agent": "backend",
+        "title": "Crear src/auth/router.py con POST /auth/login JWT",
+        "description": (
+            "Crea src/auth/router.py con endpoint POST /auth/login.\n"
+            "Usa APIRouter(). Recibe LoginRequest(rut, password), valida RUT con validate_rut(),\n"
+            "consulta UserORM en BD (db.query(UserORM).filter(UserORM.rut==clean_rut(body.rut)).first()),\n"
+            "verifica password con CryptContext(bcrypt), retorna TokenResponse con JWT (python-jose).\n"
+            "Sigue el ejemplo de auth/router.py en system_backend_python.md sección login."
+        ),
+        "file": "src/auth/router.py",
+        "depends_on": [],
+        "estimated_complexity": "medium",
+    })
+    log.warning("generate_sdd: S83-E src/auth/router.py inyectado como TASK-INFRA-AUTH-ROUTER")
+    return sdd
+
+
 def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]:
     """S77-C: verifica que src/main.py incluya include_router() para CADA router.py en disco.
 
@@ -1551,6 +1652,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S82-B: inyectar src/contracts/models.py si el SDD tiene módulo contracts pero falta models.py
         sdd = _ensure_contracts_models_task(sdd)
+
+        # S83-E: inyectar src/auth/router.py si el FR menciona auth/login y no está en el SDD
+        sdd = _ensure_auth_login_task(sdd, state.get("fr_analysis", {}))
 
         # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
         sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
@@ -2341,6 +2445,16 @@ async def _agent_executor_impl(state: OVDState) -> dict:
     # Elimina timeouts estructuralmente: cada tarea ~800 tokens vs 10-15K tokens en total.
     agent_tasks = [t for t in sdd.get("tasks", []) if t.get("agent") == agent_name]
 
+    # S83-F: ordenar tareas por dependencias (topological sort) para que la tarea N+1
+    # se ejecute después de las tareas de las que depende. Esto garantiza que context injection
+    # (abajo) siempre tenga el archivo real disponible — no una suposición del LLM.
+    if len(agent_tasks) > 1:
+        agent_tasks = _topological_sort_tasks(agent_tasks)
+        log.info(
+            "agent_executor[%s]: S83-F orden topológico: %s",
+            agent_name, [t.get("id", "?") for t in agent_tasks],
+        )
+
     if len(agent_tasks) > 1:
         log.info(
             "agent_executor[%s]: S39-D — %d tareas, ejecutando una a la vez",
@@ -2350,6 +2464,8 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         all_output_parts: list[str] = []
         total_tokens_all: dict = {"input": 0, "output": 0}
         all_uncertainties: list[dict] = []
+        # S83-F: mapa path → contenido de archivos ya generados en este agente
+        _written_context: dict[str, str] = {}
 
         for i, task in enumerate(agent_tasks):
             # Refrescar contexto del proyecto — incluye archivos de tareas anteriores
@@ -2364,6 +2480,15 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             task_sdd_content = _truncate(
                 _build_single_task_sdd_content(sdd, agent_name, task, i, len(agent_tasks), written_files=_written_so_far)
             )
+
+            # S83-F: inyectar contenido real de archivos que esta tarea necesita (depends_on)
+            _dep_context = _build_dependency_context(task, _written_context)
+            if _dep_context:
+                task_sdd_content = _dep_context + task_sdd_content
+                log.warning(
+                    "agent_executor[%s]: S83-F contexto de dependencias inyectado para tarea %s (%d chars)",
+                    agent_name, task.get("id", "?"), len(_dep_context),
+                )
             # S68-B: inyectar correcciones de imports al INICIO del HumanMessage (alta atención)
             _correction_block = _extract_import_corrections(retry_feedback)
             if _correction_block:
@@ -2423,6 +2548,10 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             total_tokens_all["input"] += t.get("input", 0)
             total_tokens_all["output"] += t.get("output", 0)
             all_uncertainties.extend(task_result.get("uncertainties", []))
+            # S83-F: registrar contenido generado en _written_context para tareas dependientes
+            for _art in task_result.get("artifacts", []):
+                if isinstance(_art, dict) and _art.get("path") and _art.get("content"):
+                    _written_context[_art["path"]] = _art["content"]
 
         # S51-C: verificar que si el SDD tenía tarea de tests se generó al menos un test_*.py
         _s51_test_tasks = [

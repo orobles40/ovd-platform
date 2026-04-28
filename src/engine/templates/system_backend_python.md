@@ -104,15 +104,22 @@ Con `pythonpath = .` y `importmode = importlib`, los tests pueden importar direc
 Cuando el SDD define múltiples módulos (auth, contracts, users, etc.), **DEBES** generar `src/main.py` como punto de entrada unificado. Sin este archivo, `uvicorn src.main:app` y los imports en tests fallan.
 
 **PASO 1 — Entry point unificado (OBLIGATORIO, escríbelo PRIMERO):**
+
+> **S83-B — REGLA CRÍTICA:** `src/main.py` debe importar ÚNICAMENTE los routers que están
+> definidos como tareas en el SDD de este ciclo (archivos `*/router.py`).
+> **PROHIBIDO importar un router si no aparece en el SDD** — genera `ImportError` inmediato.
+> El SDD te indica exactamente cuáles router.py debes crear. Si no está en el SDD → NO lo importes.
+
 ```python:src/main.py
 from fastapi import FastAPI
-from src.auth.router import router as auth_router
+# IMPORTA SOLO LOS ROUTERS QUE TÚ GENERAS EN ESTE CICLO
+# Ejemplo si el SDD tiene src/contracts/router.py y src/auth/router.py:
 from src.contracts.router import router as contracts_router
-# Agrega aquí todos los routers definidos en el SDD
+from src.auth.router import router as auth_router  # solo si auth/router.py está en el SDD
 
 app = FastAPI(title="OVD API")
-app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(contracts_router, prefix="/contracts", tags=["contracts"])
+app.include_router(auth_router, prefix="/auth", tags=["auth"])  # solo si existe
 ```
 
 **PASO 2 — Cada módulo exporta `APIRouter`, NO `FastAPI()`:**
@@ -536,6 +543,34 @@ class Contrato(BaseModel):
 | `@root_validator` | `@model_validator(mode='before'\|'after')` |
 | `orm_mode = True` en Config | `model_config = ConfigDict(from_attributes=True)` |
 | `class Config: orm_mode = True` | `model_config = ConfigDict(from_attributes=True)` |
+
+---
+
+## FastAPI + SQLAlchemy ORM + PostgreSQL (S83-C) — PRIORITARIO
+
+> **S83-C — REGLA ABSOLUTA:** Si el Feature Request menciona "PostgreSQL", "postgres" o "psycopg",
+> usa **siempre** `postgresql+psycopg://` en `DATABASE_URL`.
+> **PROHIBIDO usar `import oracledb` si el FR pide PostgreSQL.**
+
+```python:src/database.py
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, DeclarativeBase
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+psycopg://ovd_dev:changeme@localhost:5432/app_db"
+)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+
+class Base(DeclarativeBase):
+    pass
+
+def get_db():
+    """FastAPI dependency — una sesión por request."""
+    with Session(engine) as session:
+        yield session
+```
 
 ---
 
