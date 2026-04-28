@@ -125,3 +125,63 @@ def test_s86c_non_init_empty_unchanged():
     from code_postprocessor import postprocess_python_file
     result = postprocess_python_file("", "src/contracts/service.py")
     assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# S86-B — _ensure_contracts_router_task
+# ---------------------------------------------------------------------------
+
+def test_s86b_injects_router_when_missing():
+    """S86-B: inyecta contracts/router.py cuando contracts/service.py existe pero no router.py."""
+    from graph import _ensure_contracts_router_task
+    sdd = _make_sdd("src/contracts/service.py", "src/main.py")
+    result = _ensure_contracts_router_task(sdd)
+    files = [t["file"] for t in result["tasks"]]
+    assert "src/contracts/router.py" in files
+
+
+def test_s86b_no_inject_if_router_exists():
+    """S86-B: no inyecta si contracts/router.py ya existe."""
+    from graph import _ensure_contracts_router_task
+    sdd = _make_sdd("src/contracts/service.py", "src/contracts/router.py")
+    result = _ensure_contracts_router_task(sdd)
+    router_count = sum(1 for t in result["tasks"] if "contracts/router" in t["file"])
+    assert router_count == 1
+
+
+def test_s86b_no_inject_without_contracts_service():
+    """S86-B: no inyecta si no hay contracts/service.py en el SDD."""
+    from graph import _ensure_contracts_router_task
+    sdd = _make_sdd("src/auth/service.py", "src/main.py")
+    result = _ensure_contracts_router_task(sdd)
+    files = [t["file"] for t in result["tasks"]]
+    assert "src/contracts/router.py" not in files
+
+
+def test_s86b_injected_after_service():
+    """S86-B: contracts/router.py se inserta después de contracts/service.py."""
+    from graph import _ensure_contracts_router_task
+    sdd = _make_sdd("src/contracts/models.py", "src/contracts/service.py", "src/main.py")
+    result = _ensure_contracts_router_task(sdd)
+    files = [t["file"] for t in result["tasks"]]
+    service_idx = files.index("src/contracts/service.py")
+    router_idx = files.index("src/contracts/router.py")
+    assert router_idx == service_idx + 1
+
+
+def test_s86b_description_mentions_crud_endpoints():
+    """S86-B: la descripción incluye los endpoints CRUD principales."""
+    from graph import _ensure_contracts_router_task
+    sdd = _make_sdd("src/contracts/service.py")
+    result = _ensure_contracts_router_task(sdd)
+    task = next(t for t in result["tasks"] if "contracts/router" in t.get("file", ""))
+    assert "create_contract" in task["description"]
+    assert "list_benefits" in task["description"]
+
+
+def test_s86b_wired_in_generate_sdd():
+    """S86-B: _ensure_contracts_router_task está referenciada en graph.py."""
+    import pathlib
+    graph_path = pathlib.Path(_ENGINE_DIR) / "graph.py"
+    src = graph_path.read_text()
+    assert "_ensure_contracts_router_task" in src

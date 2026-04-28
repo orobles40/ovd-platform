@@ -1208,6 +1208,49 @@ def _ensure_contracts_service_task(sdd: dict) -> dict:
     return sdd
 
 
+def _ensure_contracts_router_task(sdd: dict) -> dict:
+    """S86-B: si el SDD tiene contracts/service.py pero no contracts/router.py, inyectar router.
+
+    main.py suele importar contracts_router — sin router.py S65-A bloquea pytest.
+    """
+    has_contracts_service = any(
+        "contracts/service" in t.get("file", "") for t in sdd.get("tasks", [])
+    )
+    if not has_contracts_service:
+        return sdd
+    has_contracts_router = any(
+        "contracts/router" in t.get("file", "") or t.get("file", "").endswith("contracts_router.py")
+        for t in sdd.get("tasks", [])
+    )
+    if has_contracts_router:
+        return sdd
+    _service_idx = next(
+        (i for i, t in enumerate(sdd["tasks"]) if "contracts/service" in t.get("file", "")),
+        -1,
+    )
+    _insert_at = _service_idx + 1 if _service_idx >= 0 else 0
+    sdd["tasks"].insert(_insert_at, {
+        "id": "TASK-INFRA-CONTRACTS-ROUTER",
+        "agent": "backend",
+        "title": "Crear src/contracts/router.py con endpoints CRUD contratos",
+        "description": (
+            "Crea src/contracts/router.py con APIRouter() y endpoints:\n"
+            "- POST /contratos (create_contract)\n"
+            "- GET /contratos/rut/{rut} (get_contract_by_rut)\n"
+            "- PUT /contratos/{id} (update_contract)\n"
+            "- DELETE /contratos/{id} (delete_contract)\n"
+            "- GET /contratos/{id}/beneficios (list_benefits)\n"
+            "- POST /contratos/{id}/beneficios (create_benefit)\n"
+            "Importa desde src.contracts.service. Usa Depends(get_db) y Depends(get_current_user)."
+        ),
+        "file": "src/contracts/router.py",
+        "depends_on": [],
+        "estimated_complexity": "medium",
+    })
+    log.warning("generate_sdd: S86-B src/contracts/router.py inyectado como TASK-INFRA-CONTRACTS-ROUTER")
+    return sdd
+
+
 def _topological_sort_tasks(tasks: list[dict]) -> list[dict]:
     """S83-F: ordena tareas por dependencias (Kahn's algorithm) para que each task se ejecute
     después de las tareas de las que depende según el campo depends_on.
@@ -1767,6 +1810,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S86-A: inyectar src/contracts/service.py si hay contracts/models.py pero no service.py
         sdd = _ensure_contracts_service_task(sdd)
+
+        # S86-B: inyectar src/contracts/router.py si hay contracts/service.py pero no router.py
+        sdd = _ensure_contracts_router_task(sdd)
 
         # S83-E: inyectar src/auth/router.py si el FR menciona auth/login y no está en el SDD
         sdd = _ensure_auth_login_task(sdd, state.get("fr_analysis", {}))
