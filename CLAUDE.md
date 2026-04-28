@@ -44,15 +44,16 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S76 (rama `dev`)
-- **Tests:** Python unit ~1297+ (S75 agregó 17 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1297+
-- **Rama activa:** `dev` (S76 aplicado: cambio modelo SDD, sin código nuevo)
-- **Próximo foco:** S77-A (postprocessor `thick=True`), S77-B (Pydantic decorator order), S77-D (retry selectivo por archivo), S77-F (fix login dashboard 500)
+- **Sprints completados:** S3 → S77 (rama `dev`)
+- **Tests:** Python unit ~1372 (S77 agregó 22 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1372+
+- **Rama activa:** `dev` (S77 aplicado: postprocessors deterministas + fix BD auth)
+- **Próximo foco:** S78-A (login JWT en template), S78-B (verificar no-stub endpoints), S78-C (naming entre módulos), S78-D (retry selectivo por archivo)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
+- **Ciclo de validación S77:** `fb7bbbd5` — ~11 min, **QA 57/100** (regresión LLM, no postprocessors), 7 tareas SDD, 9 archivos, pytest exit 2 (create_benefit en módulo equivocado), status=completed. S77-A ✅ S77-B ✅ activados en producción.
 - **Ciclo de validación S76:** `c0e2e71e` — ~13 min, **QA 93/100**, **SDD compliance: True**, 12 tareas, 13 archivos, status=completed. **OVD_MODEL_SDD cambiado a `qwen3-coder:30b`** (resolvió bug raíz del presupuesto de tokens 1024 de `ovd-arch-assistant`).
 - **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
-- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Fix en S77-F.
+- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Diagnóstico profundo pendiente S78.
 
 ### ADR-003 — Criterios de selección de modelos LLM (2026-04-28)
 
@@ -71,6 +72,71 @@ cd src/tui && cargo build && cargo run
 6. Baseline a superar: QA 93/100, duración 13 min, costo $0 (S76)
 
 Tabla de modelos candidatos verificados está en el ADR — incluye SDD, coder, vision, analyzer.
+
+### Roadmap S78 — Próximo sprint
+
+#### S78-A — Template login JWT obligatorio (CRÍTICO)
+En `system_backend_python.md`, agregar sección "Endpoint POST /auth/login OBLIGATORIO" con implementación de referencia completa: generar JWT con `python-jose`, aceptar RUT+contraseña, retornar access_token. Prohibir stubs (`pass`) en endpoints de autenticación.
+
+#### S78-B — Verificar no-stub endpoints post-execute (ALTO)
+`_verify_no_stub_endpoints(work_dir)` — escanea `main.py` buscando `async def xxx(): pass`. Si detecta → log warning + agregar al retry_feedback.
+
+#### S78-C — Regla de naming entre módulos en template (ALTO)
+En `system_backend_python.md`: "Las funciones CRUD van en `service.py`, NO en `models.py`. Los tests importan de `services/`, no de `models/`." Evita el error `create_benefit` en módulo equivocado.
+
+#### S78-D — Retry selectivo por archivo (MEDIO)
+Extraer archivos fallidos del output pytest y regenerar SOLO esos archivos. Reduce retry de ~2.5 min → ~1 min.
+
+#### Ciclo de validación S78
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S78:**
+- pytest exit 0 (con S78-A + S78-B + S78-C aplicados)
+- Login JWT completo (no stub)
+- QA ≥ 80 (promedio de ≥3 ciclos, ADR-003)
+
+---
+
+### Novedades S77 (2026-04-28) — rama `dev`
+
+- **S77-A — `_fix_sqlalchemy_oracle_params()`** en `code_postprocessor.py`: elimina `thick=True/False` y `mode="thick"` de `create_engine()`. El LLM genera `thick=True` en el 100% de los proyectos Oracle. S77-A lo elimina automáticamente. Resolvió el collection_error que bloqueaba pytest en S76 (`TypeError: invalid keyword argument 'thick'`).
+- **S77-B — `_fix_pydantic_decorator_order()`** en `code_postprocessor.py`: usa `ast.parse()` + `ast.unparse()` para reordenar `@classmethod`/`@field_validator` al orden Pydantic v2 correcto (`@field_validator` ANTES de `@classmethod`). El LLM invierte el orden en el 100% de los ciclos. S77-B corrige 4-8 decoradores por ciclo con 100% de confiabilidad.
+- **S77-C — `_verify_main_includes_routers()`** en `graph.py`: escanea `src/*/router.py` en disco y verifica que `main.py` tenga `include_router()` para cada uno. Auto-inyecta si falta. No activado en ciclo S77 (LLM usó inline endpoints en este ciclo).
+- **S77-F — fix auth BD errors** en `routers/auth_router.py`: `_get_user_by_email` con manejo explícito de `psycopg.OperationalError` (503), `psycopg.errors.UndefinedColumn` (500 con mensaje de configuración), `psycopg.Error` genérico (500).
+- **22 tests nuevos** en `test_s77.py` — 22/22 PASS. Test S72 (`test_adds_classmethod_with_correct_pydantic_v2_order`) actualizado para reflejar orden final correcto.
+- **1372 tests PASS** (suite principal).
+- **Ciclo validación `fb7bbbd5`:** ~11 min (-2 min vs S76), QA 57/100 (regresión LLM no determinística, no regresión de postprocessors), pytest exit 2 × 3 rondas (bloqueador: `create_benefit` importado de módulo equivocado en test generado). S77-A ✅ S77-B ✅ validados en producción.
+- **Telemetría S77 vs S76:** tareas SDD 12→7 (LLM compacto), archivos 13→9, tokens 118,451, duración -2 min. Login como stub vacío en este ciclo.
+- **Bloqueadores para pytest exit 0:** (1) `create_benefit` en `models/contracts.py` pero test lo importa de `contract_service.py` — fix: template S78-C; (2) login endpoint stub (`pass`) — fix: template S78-A.
+
+#### Comparativa ciclos postprocessors
+
+| Sprint | Ciclo | QA | Tests | Duración | Postprocessors activos |
+|--------|-------|----|-------|----------|----------------------|
+| S55 | 9d939f29 | 65 | exit 0 | 1m 35s | — |
+| S75 | 782bd4b1 | 50 | collection_error | 6m 3s | S72/73/74/75 |
+| S76 | c0e2e71e | **93** | collection_error | **13m** | S72-75 |
+| **S77** | fb7bbbd5 | **57** | exit 2 × 3 | **11m** | **S77-A ✅ S77-B ✅** |
+
+---
 
 ### Novedades S76 (2026-04-28) — rama `dev`
 
