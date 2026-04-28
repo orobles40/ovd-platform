@@ -42,16 +42,80 @@ cd src/tui && cargo build && cargo run
 - DB: `postgresql://ovd_dev:changeme@localhost:5432/ovd_dev`
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 
-## Estado actual (2026-04-27)
+## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S70 (rama `dev`)
-- **Tests:** Python unit ~1240+ (suite principal, S70 agregó 14 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1280+
-- **Rama activa:** `dev` (S70 implementado, sin mergear a `main`)
-- **Próximo foco:** S71-A (nombres canónicos en inglés para utils), S71-B (verificar cobertura SDD post-execute)
+- **Sprints completados:** S3 → S76 (rama `dev`)
+- **Tests:** Python unit ~1297+ (S75 agregó 17 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1297+
+- **Rama activa:** `dev` (S76 aplicado: cambio modelo SDD, sin código nuevo)
+- **Próximo foco:** S77-A (postprocessor `thick=True`), S77-B (Pydantic decorator order), S77-D (retry selectivo por archivo), S77-F (fix login dashboard 500)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
-- **Ciclo de validación S69:** `e3888513` — 6m 54s, QA 95/100, status=completed. S69-A/B validados. src/main.py generado por primera vez. Tests FAIL: `ModuleNotFoundError: oracledb` (diferente al bloqueador S68).
+- **Ciclo de validación S76:** `c0e2e71e` — ~13 min, **QA 93/100**, **SDD compliance: True**, 12 tareas, 13 archivos, status=completed. **OVD_MODEL_SDD cambiado a `qwen3-coder:30b`** (resolvió bug raíz del presupuesto de tokens 1024 de `ovd-arch-assistant`).
 - **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
+- **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Fix en S77-F.
+
+### Novedades S76 (2026-04-28) — rama `dev`
+
+- **S76 — cambio de modelo SDD (cero código nuevo):** `OVD_MODEL_SDD` cambiado de `ovd-arch-assistant` (Qwen2.5 7B wrapper con `num_predict=1024` baked-in) a `qwen3-coder:30b` (MoE 30B con presupuesto sin restricción).
+- **Causa raíz S75 confirmada matemáticamente:** un SDD completo necesita ~3,700 tokens. `num_predict=1024` lo hacía físicamente imposible. Por eso S75 colapsó a 6 tareas y S74 fue suerte estadística.
+- **Modelfile inspeccionado (Fase 0):** confirmado que `ovd-arch-assistant` NO es fine-tuned — es un Modelfile wrapper con system prompt contaminado de dominio HHMM/Clínica Alemana, irrelevante para FRs generales. Cero riesgo de regresión.
+- **Resultado ciclo `c0e2e71e`:** QA 93/100 (vs 50 en S75), SDD compliance: True, 12 tareas SDD (vs 6), 13 archivos generados (vs 5), duración ~13 min, costo $0 (Ollama).
+- **S76 plan original NO implementado:** `_validate_sdd_completeness`, `_enforce_file_targets`, `_ensure_module_tasks`, `Pydantic min_length=1`, logging — innecesarios. El cambio de modelo resolvió el 90% del problema.
+- **Bugs residuales para S77:** `thick=True` inválido en SQLAlchemy `create_engine`, Pydantic `@classmethod`/`@field_validator` en orden invertido, `main.py` no incluye `auth_router`, `ContractORM` sin columna `org_id`.
+
+### Roadmap S77 — Próximo sprint
+
+#### S77-A — Postprocessor `thick=True` SQLAlchemy (CRÍTICO)
+En `code_postprocessor.py`, agregar `_fix_oracle_thick_param()` que elimina el parámetro inválido `thick=True` de `create_engine()`. El thick mode ya se activa con `oracledb.init_oracle_client()`. Sin este fix, `pytest` falla con collection error.
+
+#### S77-B — Postprocessor Pydantic decorator order (ALTO)
+`@classmethod` debe ir DESPUÉS de `@field_validator`, no antes. Modelo qwen3-coder:30b a veces los invierte → `PydanticUserError`. Fix con regex en `code_postprocessor.py`.
+
+#### S77-C — Verificar `main.py` incluye todos los routers (MEDIO)
+`_verify_main_includes_all_routers(work_dir)` — escanea `src/*/router.py` y verifica que `main.py` tenga `include_router` para cada uno. Si falta, auto-inyectar (similar a S69-C).
+
+#### S77-D — Retry selectivo a nivel de archivo (MEDIO — alta optimización)
+Actualmente `test_retry` regenera todo el módulo (~3 min/ronda). Extraer del error pytest los archivos específicos (`re.findall(r'(src/[\w/]+\.py)', error)`) y regenerar SOLO esos. Impacto esperado: 13 min → 9 min.
+
+#### S77-E — Crear `ovd-arch-assistant-v2` basado en qwen3-coder:30b (BAJO)
+Modelfile con `FROM qwen3-coder:30b` + system prompt limpio + `num_ctx 16384` + `num_predict 8192`. Permite reaplicar contexto OVD sin las restricciones del modelo viejo.
+
+#### S77-F — Fix login dashboard 500 (PRE-EXISTENTE)
+`POST /auth/login` del engine retorna `Internal Server Error`. Bloquea uso del dashboard. Workaround actual: monitoreo SSE + curl con OVD_SECRET. Investigar handler en `api.py` y posible regresión por columna `revoked_reason` agregada manualmente en `ovd_refresh_tokens`.
+
+#### Ciclo de validación S77
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S77:**
+- pytest exit 0 (con S77-A + S77-B + S77-C aplicados)
+- Duración < 10 min (con S77-D)
+- QA ≥ 93 (mantener nivel S76)
+
+### Novedades S75 (2026-04-27) — rama `dev`
+
+- **S75-A:** `_fix_function_import_shadowing()` en `code_postprocessor.py` — detecta `FunctionDef` a nivel módulo que redefine import con wrapper trivial (`def fn(): return fn()` → RecursionError). Usa `ast.NodeTransformer` + `ast.unparse`. Solo elimina si el cuerpo es `return imported_fn(args)` puro.
+- **S75-B:** template `system_backend_python.md` — sección "requirements.txt completo obligatorio" con passlib, python-jose, httpx, pytest-asyncio.
+- **S75-C:** template — regla "Imports de submódulos `.models`" — solo si el archivo existe en el SDD. Previene `from src.contracts.models import X` phantom.
+- **17 tests nuevos** en `test_s75.py` — todos pasan.
+- **Ciclo validación S75 (`782bd4b1`):** 6m 3s, **QA 50/100**, SDD colapsó a 6 tareas / 1 agente — regresión expuso problema de fondo: modelo `ovd-arch-assistant` con `num_predict=1024` no puede generar SDDs completos. S75 funcionó (cero recursive wrappers, cero phantom imports) pero no era el bug raíz.
 
 ### Novedades S66 (2026-04-27) — rama `dev`
 
