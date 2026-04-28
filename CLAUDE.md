@@ -54,6 +54,24 @@ cd src/tui && cargo build && cargo run
 - **Fallos pre-existentes (no regresar):** `test_s31::test_cycle_start_ts_reciente` (flaky), `test_s63b_cleanup_not_in_run_tests` (RuntimeError), `test_alembic_migrations::test_revision_actual_es_head` (timestamp), `test_s39::test_usa_cap_800_en_truncate` (obsoleto por S61-B)
 - **Issue abierto:** Login dashboard `POST /auth/login` retorna 500 — bloquea uso del dashboard. Workaround: monitoreo vía SSE + curl con OVD_SECRET. Fix en S77-F.
 
+### ADR-003 — Criterios de selección de modelos LLM (2026-04-28)
+
+`docs/adr/ADR-003-model-selection-criteria.md` — referencia obligatoria antes de:
+- Cambiar `OVD_MODEL_*` en `.env`
+- Migrar proyectos cliente a otro stack (Oracle→Postgres, Java→Python)
+- Generar frontend complejo con análisis visual (mockups, Figma → JSX)
+- Soportar issues en producción de sistemas legados (Java Struts, COBOL, Oracle 12c)
+
+**Reglas clave del ADR:**
+1. Verificar existencia del modelo en `ollama.com/library` antes de cualquier propuesta — propuestas externas suelen alucinar nombres (ej: `Qwen3.6-72B`, `Qwen3.6-27B-Vision` no existen)
+2. Apple Silicon serializa GPU — cargar 2 modelos pinned NO da paralelismo real
+3. Q4_K_M es default — Q6/Q8 sobredimensionado para casos típicos
+4. NO migrar de LangGraph a Autogen/CrewAI — regresión arquitectural
+5. A/B test cuantitativo (mínimo 3 ciclos) antes de cambiar modelo en producción
+6. Baseline a superar: QA 93/100, duración 13 min, costo $0 (S76)
+
+Tabla de modelos candidatos verificados está en el ADR — incluye SDD, coder, vision, analyzer.
+
 ### Novedades S76 (2026-04-28) — rama `dev`
 
 - **S76 — cambio de modelo SDD (cero código nuevo):** `OVD_MODEL_SDD` cambiado de `ovd-arch-assistant` (Qwen2.5 7B wrapper con `num_predict=1024` baked-in) a `qwen3-coder:30b` (MoE 30B con presupuesto sin restricción).
