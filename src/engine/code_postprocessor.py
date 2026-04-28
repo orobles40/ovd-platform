@@ -5,14 +5,18 @@ S73-A: SQLAlchemy v1 → v2 (declarative_base → DeclarativeBase).
 S74-A: Fix variable local que shadowea función del mismo módulo.
 S74-D: Detectar secretos hardcoded y SHA-256 para passwords (log only).
 S75-A: Elimina funciones de módulo que redefinen imports con wrapper trivial (RecursionError).
+S77-A: Elimina/corrige parámetros Oracle inválidos en create_engine (thick=True → eliminar).
+S77-B: Reordena @field_validator/@model_validator ANTES de @classmethod (Pydantic v2).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
 - Convierte @validator (Pydantic v1) → @field_validator + @classmethod (v2)
 - Convierte @root_validator → @model_validator
 - Convierte orm_mode/allow_population_by_field_name → ConfigDict
+- Reordena decoradores Pydantic: @field_validator ANTES de @classmethod (S77-B)
 - Corrige orden de mock oracledb en conftest.py
 - Convierte declarative_base() → DeclarativeBase class (SQLAlchemy 2.x)
+- Elimina parámetros Oracle inválidos en create_engine (S77-A)
 - Renombra variable local que shadowea función del módulo (UnboundLocalError)
 - Elimina wrapper trivial que shadea import a nivel módulo (RecursionError)
 - Advierte sobre secretos hardcoded y SHA-256 para passwords
@@ -181,6 +185,71 @@ def _fix_pydantic_v1(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S77-B — Fix orden decoradores Pydantic v2
+# ---------------------------------------------------------------------------
+
+def _fix_pydantic_decorator_order(code: str) -> str:
+    """S77-B: reordena decoradores — @field_validator/@model_validator
+    DEBE preceder a @classmethod (Pydantic v2). Si está al revés, el validator
+    no se registra silenciosamente — bug invisible hasta que tests fallan.
+    """
+    if "@field_validator" not in code and "@model_validator" not in code:
+        return code  # fast path
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    fixed_count = 0
+
+    def _deco_name(deco_node: ast.expr) -> str | None:
+        if isinstance(deco_node, ast.Name):
+            return deco_node.id
+        if isinstance(deco_node, ast.Call) and isinstance(deco_node.func, ast.Name):
+            return deco_node.func.id
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if len(node.decorator_list) < 2:
+            continue
+
+        deco_names = [_deco_name(d) for d in node.decorator_list]
+        try:
+            classmethod_idx = deco_names.index("classmethod")
+        except ValueError:
+            continue
+
+        # Buscar field_validator/model_validator DESPUÉS de classmethod (orden inválido)
+        validator_idx = -1
+        for i in range(classmethod_idx + 1, len(deco_names)):
+            if deco_names[i] in ("field_validator", "model_validator", "validator"):
+                validator_idx = i
+                break
+
+        if validator_idx == -1:
+            continue  # orden ya correcto o no aplica
+
+        # Reordenar: mover @classmethod justo después del validator
+        classmethod_deco = node.decorator_list.pop(classmethod_idx)
+        # validator_idx ahora está en classmethod_idx (tras el pop)
+        node.decorator_list.insert(classmethod_idx + 1, classmethod_deco)
+        fixed_count += 1
+        log.warning(
+            "[S77-B] reordenado decoradores en %s: @%s ahora antes de @classmethod",
+            node.name, deco_names[validator_idx],
+        )
+
+    if fixed_count == 0:
+        return code
+
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
+# ---------------------------------------------------------------------------
 # S73-A — SQLAlchemy v1 → v2
 # ---------------------------------------------------------------------------
 
@@ -211,6 +280,66 @@ def _fix_sqlalchemy_v1(code: str) -> str:
 
     if changed:
         log.warning("[S73-A] SQLAlchemy v1→v2: declarative_base() → DeclarativeBase class")
+
+    return code
+
+
+# ---------------------------------------------------------------------------
+# S77-A — Fix parámetros Oracle inválidos en create_engine
+# ---------------------------------------------------------------------------
+
+def _fix_sqlalchemy_oracle_params(code: str) -> str:
+    """S77-A: elimina/corrige parámetros inválidos de Oracle en create_engine.
+
+    Patrones detectados:
+    - thick=True / thick=False  → parámetro inexistente, eliminar
+    - mode="thick"              → parámetro inexistente, eliminar
+    - thick_mode="True"         → string en lugar de bool, corregir a thick_mode=True
+    """
+    if "create_engine" not in code:
+        return code
+
+    changed = False
+
+    # Eliminar thick=True/False dentro de create_engine()
+    if re.search(r'\bthick\s*=\s*(True|False)', code):
+        new = re.sub(
+            r',\s*thick\s*=\s*(?:True|False)\s*(?=,|\))',
+            '',
+            code,
+        )
+        # también cuando thick= es el primer kwarg justo después de url
+        new = re.sub(
+            r'(create_engine\s*\([^,)]+),\s*thick\s*=\s*(?:True|False)',
+            r'\1',
+            new,
+        )
+        new = re.sub(r',\s*\)', ')', new)   # cleanup trailing comma
+        new = re.sub(r',\s*,', ',', new)    # cleanup double comma
+        if new != code:
+            changed = True
+            code = new
+            log.warning("[S77-A] thick=True/False eliminado de create_engine()")
+
+    # Eliminar mode="thick" / mode='thick'
+    if re.search(r"mode\s*=\s*[\"']thick[\"']", code):
+        new = re.sub(r',?\s*mode\s*=\s*["\']thick["\']\s*(?=,|\))', '', code)
+        new = re.sub(r',\s*\)', ')', new)
+        if new != code:
+            changed = True
+            code = new
+            log.warning("[S77-A] mode='thick' eliminado de create_engine()")
+
+    # Corregir thick_mode="True" string → True bool
+    if re.search(r"thick_mode\s*=\s*[\"']True[\"']", code):
+        new = re.sub(r"thick_mode\s*=\s*[\"']True[\"']", 'thick_mode=True', code)
+        if new != code:
+            changed = True
+            code = new
+            log.warning("[S77-A] thick_mode='True' (string) → thick_mode=True (bool)")
+
+    if changed:
+        log.warning("[S77-A] Oracle params normalizados en create_engine()")
 
     return code
 
@@ -470,8 +599,15 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
 
     content = _fix_pydantic_v1(content)
 
+    # S77-B: reordenar decoradores Pydantic (field_validator ANTES de classmethod)
+    if not is_conftest:
+        content = _fix_pydantic_decorator_order(content)
+
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)
+
+    # S77-A: fix parámetros Oracle inválidos en create_engine
+    content = _fix_sqlalchemy_oracle_params(content)
 
     # S74-A: fix variable local que shadowea función del módulo
     if not is_conftest:

@@ -1085,6 +1085,56 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
     return sdd
 
 
+def _verify_main_includes_routers(work_dir: str) -> tuple[list[str], str | None]:
+    """S77-C: verifica que src/main.py incluya include_router() para CADA router.py en disco.
+
+    Retorna (missing_routers, fix_content_to_append).
+    """
+    import re as _re
+    _wdir = pathlib.Path(work_dir)
+    routers = list(_wdir.glob("src/*/router.py"))
+    main_py = _wdir / "src" / "main.py"
+    if not main_py.exists() or not routers:
+        return [], None
+
+    main_content = main_py.read_text(encoding="utf-8", errors="replace")
+    missing: list[str] = []
+    for router_file in routers:
+        module_name = router_file.parent.name
+        has_import = _re.search(
+            rf'from\s+src\.{_re.escape(module_name)}\.router\s+import',
+            main_content,
+        )
+        has_include = _re.search(
+            rf'include_router\s*\(\s*\w*{_re.escape(module_name)}',
+            main_content,
+        )
+        if not (has_import and has_include):
+            missing.append(module_name)
+
+    if not missing:
+        return [], None
+
+    # Intentar auto-inyectar los routers faltantes en main.py
+    fix_lines: list[str] = []
+    for m in missing:
+        fix_lines.append(f"from src.{m}.router import router as {m}_router")
+        fix_lines.append(f"app.include_router({m}_router, prefix='/{m}')")
+    fix_snippet = "\n".join(fix_lines)
+
+    try:
+        new_content = main_content.rstrip() + "\n\n# S77-C: routers auto-inyectados\n" + fix_snippet + "\n"
+        main_py.write_text(new_content, encoding="utf-8")
+        log.warning(
+            "[S77-C] main.py auto-inyectado con routers faltantes: %s",
+            ", ".join(missing),
+        )
+    except OSError as e:
+        log.warning("[S77-C] no se pudo auto-inyectar main.py: %s", e)
+
+    return missing, fix_snippet
+
+
 def _ensure_test_task(sdd: dict, fr_analysis: dict) -> dict:
     """S74-B: inyecta TASK-INFRA-TESTS si el SDD no tiene ninguna tarea de tests."""
     has_test_task = any(
@@ -3779,6 +3829,12 @@ async def run_tests(state: OVDState) -> dict:
                     "content": f"S65-A: imports rotos detectados — {_import_feedback[:200]}",
                 }],
             }
+
+    # S77-C: verificar y auto-inyectar routers faltantes en main.py (post-execute)
+    if runner == "pytest" and work_dir and retry_round == 0:
+        _missing_routers, _ = _verify_main_includes_routers(work_dir)
+        if _missing_routers:
+            log.warning("run_tests: S77-C routers faltantes detectados y auto-inyectados: %s", _missing_routers)
 
     # Ejecutar runner
     passed = False

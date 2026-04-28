@@ -134,7 +134,9 @@ class TestS72B_Pydantic:
         assert "@field_validator('x')" in result
         assert "@validator" not in result
 
-    def test_adds_classmethod_after_field_validator(self):
+    def test_adds_classmethod_with_correct_pydantic_v2_order(self):
+        # S72-B inyecta @classmethod; S77-B garantiza orden correcto Pydantic v2:
+        # @field_validator PRIMERO, @classmethod SEGUNDO.
         from code_postprocessor import postprocess_python_file
         code = (
             "class Foo:\n"
@@ -143,9 +145,11 @@ class TestS72B_Pydantic:
             "        return v\n"
         )
         result = postprocess_python_file(code, "src/models.py")
+        assert "@classmethod" in result
         lines = result.split("\n")
         fv_idx = next(i for i, l in enumerate(lines) if "@field_validator" in l)
-        assert "@classmethod" in lines[fv_idx - 1]
+        cm_idx = next(i for i, l in enumerate(lines) if "@classmethod" in l)
+        assert fv_idx < cm_idx, "Pydantic v2: @field_validator debe preceder a @classmethod"
 
     def test_root_validator_to_model_validator(self):
         from code_postprocessor import postprocess_python_file

@@ -71,21 +71,40 @@ class MeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 async def _get_user_by_email(email: str, org_id: str | None = None) -> dict | None:
-    """Retorna la fila de ovd_users o None si no existe."""
-    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
-        if org_id:
-            row = await conn.execute(
-                "SELECT id, org_id, email, password_hash, role, active "
-                "FROM ovd_users WHERE email = %s AND org_id = %s",
-                (email, org_id),
-            )
-        else:
-            row = await conn.execute(
-                "SELECT id, org_id, email, password_hash, role, active "
-                "FROM ovd_users WHERE email = %s LIMIT 1",
-                (email,),
-            )
-        record = await row.fetchone()
+    """S77-F: retorna la fila de ovd_users o None si no existe. Manejo explícito de errores BD."""
+    try:
+        async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+            if org_id:
+                row = await conn.execute(
+                    "SELECT id, org_id, email, password_hash, role, active "
+                    "FROM ovd_users WHERE email = %s AND org_id = %s",
+                    (email, org_id),
+                )
+            else:
+                row = await conn.execute(
+                    "SELECT id, org_id, email, password_hash, role, active "
+                    "FROM ovd_users WHERE email = %s LIMIT 1",
+                    (email,),
+                )
+            record = await row.fetchone()
+    except psycopg.OperationalError as e:
+        log.error("[S77-F] BD no disponible en /auth/login: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Servicio de autenticación temporalmente no disponible",
+        )
+    except psycopg.errors.UndefinedColumn as e:
+        log.error("[S77-F] columna faltante en ovd_users: %s — verificar migración", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error de configuración de BD — contactar admin",
+        )
+    except psycopg.Error as e:
+        log.error("[S77-F] error psycopg inesperado en /auth/login: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno de autenticación",
+        )
 
     if not record:
         return None
