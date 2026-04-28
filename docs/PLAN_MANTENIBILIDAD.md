@@ -507,6 +507,39 @@ Estado futuro:  cliente SSE → Redis pub/sub o NATS JetStream (externo al proce
 
 ---
 
+### pgcrypto (cifrado columnas PostgreSQL) — decisión: NO implementar (2026-04-28)
+
+**Contexto:** Se evaluó usar la extensión pgcrypto de PostgreSQL para cifrar columnas sensibles en disco, motivado por requerimientos de seguridad y auditoría.
+
+**Decisión:** no implementar en el estado actual del proyecto.
+
+**Postura de seguridad actual (ya implementada):**
+- `password_hash` con argon2/bcrypt vía passlib — passwords nunca en texto plano
+- `token_hash` SHA-256 en `ovd_refresh_tokens` — tokens nunca almacenados directamente
+- Row-Level Security (RLS) activo en 6 tablas — aislamiento entre organizaciones a nivel BD
+- `ovd_audit_log` — registro de todas las acciones con org_id, user_id, ip_address
+- Docker Secrets — credenciales no hardcodeadas en imagen ni variables de entorno directas
+
+**Por qué pgcrypto no agrega valor real hoy:**
+
+1. **Los datos no son regulados.** El contenido almacenado son feature requests técnicos, SDDs y código generado. No hay datos financieros, médicos, documentos de identidad ni información sujeta a GDPR, HIPAA o PCI-DSS.
+
+2. **El vector de riesgo real ya está cubierto.** pgcrypto protege ante acceso físico al disco o backup del volumen. El riesgo más probable es acceso lógico a la BD, que cubre RLS + roles PostgreSQL + secrets.
+
+3. **Requiere un KMS para tener sentido real.** La clave de cifrado debe venir de un Key Management Service externo (AWS KMS, HashiCorp Vault). Si la clave vive en una variable de entorno, un atacante que compromete el servidor accede a ambas cosas. Sin KMS, pgcrypto da falsa sensación de seguridad.
+
+4. **Rompe índices y búsquedas.** Las columnas cifradas no se pueden indexar. El índice HNSW de `ovd_rag_embeddings` dejaría de funcionar si se cifra el contenido.
+
+**Cuándo reevaluar:**
+- Si clientes almacenan IP sensible (algoritmos propietarios) en los feature requests
+- Si un cliente exige certificación ISO 27001 o SOC 2
+- Si se incorporan **API keys o credenciales de sistemas externos** de clientes — ahí cifrado a nivel columna es obligatorio
+
+**Alternativa recomendada si se necesita cifrado en el futuro:**
+Cifrado a nivel de aplicación con la librería `cryptography` de Python + Infisical como KMS (ya está en el stack como `infisical-python`). Más flexible que pgcrypto y sin las limitaciones de índices.
+
+---
+
 ## Notas de implementación
 
 - La Fase 1 (división de `graph.py`) debe hacerse en una rama separada (`refactor/graph-split`) con los ~1,507 tests actuales como red de seguridad
