@@ -345,6 +345,42 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S80-C — Fix declarative_base() anti-pattern en archivos que no son database.py
+# ---------------------------------------------------------------------------
+
+def _fix_declarative_base_import(content: str, file_path: str) -> str:
+    """S80-C: reemplaza 'Base = declarative_base()' con 'from src.database import Base'.
+
+    El patrón anti-pattern crea un Base distinto al de src.database, por lo que
+    SQLAlchemy no reconoce los modelos como parte del mismo schema.
+    Solo aplica a archivos que NO son src/database.py.
+    """
+    if "database.py" in file_path:
+        return content
+    if "declarative_base" not in content or "Base = declarative_base()" not in content:
+        return content
+
+    # Eliminar imports de declarative_base
+    new = re.sub(
+        r'from sqlalchemy\.orm import ([^#\n]*\bdeclarative_base\b[^#\n]*)\n',
+        lambda m: (
+            ""
+            if m.group(1).strip() == "declarative_base"
+            else f"from sqlalchemy.orm import {m.group(1).replace('declarative_base,', '').replace(', declarative_base', '').replace('declarative_base', '').strip().rstrip(',')}\n"
+        ),
+        content,
+    )
+    # Eliminar la línea Base = declarative_base()
+    new = re.sub(r'^Base\s*=\s*declarative_base\(\)\s*\n', '', new, flags=re.MULTILINE)
+    # Agregar import correcto si aún no está
+    if "from src.database import Base" not in new:
+        new = "from src.database import Base\n" + new
+    if new != content:
+        log.warning("[S80-C] declarative_base() reemplazado con 'from src.database import Base' en %s", file_path)
+    return new
+
+
+# ---------------------------------------------------------------------------
 # S74-A — Fix variable local que shadowea función del mismo módulo
 # ---------------------------------------------------------------------------
 
@@ -602,6 +638,11 @@ def postprocess_python_file(content: str, rel_path: str) -> str:
     # S77-B: reordenar decoradores Pydantic (field_validator ANTES de classmethod)
     if not is_conftest:
         content = _fix_pydantic_decorator_order(content)
+
+    # S80-C: fix declarative_base() anti-pattern en modelos que no son database.py
+    # DEBE correr ANTES de S73-A para interceptar el patrón crudo antes de que se transforme
+    if not is_conftest:
+        content = _fix_declarative_base_import(content, rel_path)
 
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)

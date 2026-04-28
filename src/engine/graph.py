@@ -1059,6 +1059,17 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             if _f.endswith("router.py") or "/router" in _f:
                 _mod = _f.replace("/", ".").removesuffix(".py")
                 _router_hints.append(f"from {_mod} import router as {_f.split('/')[-2]}_router")
+        # S80-D: incluir auth_router SOLO si el SDD ya tiene src/auth/router.py en sus tareas.
+        # (Si no hay tarea de auth router, no lo inventamos — evita routers fantasma)
+        _has_auth_router_in_sdd = any(
+            "auth" in _t.get("file", "") and "router" in _t.get("file", "")
+            for _t in sdd.get("tasks", [])
+        )
+        if _has_auth_router_in_sdd:
+            _auth_hint = "from src.auth.router import router as auth_router"
+            if _auth_hint not in _router_hints:
+                _router_hints.insert(0, _auth_hint)
+                log.warning("generate_sdd: S80-D auth_router inyectado en TASK-INFRA-MAIN hints")
         # S70-B: solo incluir include_router() si hay router.py explícito en el SDD.
         if _router_hints:
             _main_desc = (
@@ -1082,6 +1093,24 @@ def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
             "estimated_complexity": "low",
         })
         log.warning("generate_sdd: S69-A src/main.py inyectado como TASK-INFRA-MAIN (no estaba en SDD del LLM)")
+    else:
+        # S80-D: si main.py ya existe en SDD y el SDD tiene src/auth/router.py, garantizar que
+        # la descripción de main.py mencione auth_router
+        _has_auth_router_in_sdd_else = any(
+            "auth" in _t2.get("file", "") and "router" in _t2.get("file", "")
+            for _t2 in sdd.get("tasks", [])
+        )
+        if _has_auth_router_in_sdd_else:
+            for _t in sdd.get("tasks", []):
+                if "main.py" in _t.get("file", "").lower() or "main.py" in _t.get("title", "").lower():
+                    if "auth_router" not in _t.get("description", ""):
+                        _t["description"] = (
+                            _t.get("description", "") +
+                            " OBLIGATORIO: incluir 'from src.auth.router import router as auth_router'"
+                            " y app.include_router(auth_router, prefix='/auth') en main.py."
+                        )
+                        log.warning("generate_sdd: S80-D auth_router hint agregado a tarea main.py existente")
+                    break
     return sdd
 
 
@@ -1166,6 +1195,36 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
                     break
 
     if not _orm_manifest:
+        # S80-A: manifest vacío → verificar si service.py importa nombres que terminan en ORM
+        _orm_imports_in_services: list[str] = []
+        for _svc_file in list(_wdir.glob("src/**/service.py")) + list(_wdir.glob("src/**/router.py")):
+            try:
+                _tree = _ast.parse(_svc_file.read_text(encoding="utf-8", errors="replace"))
+            except SyntaxError:
+                continue
+            for _node in _ast.walk(_tree):
+                if not isinstance(_node, _ast.ImportFrom):
+                    continue
+                if not (_node.module and "model" in _node.module):
+                    continue
+                for _alias in _node.names:
+                    _name = _alias.asname or _alias.name
+                    if _name.endswith("ORM"):
+                        _orm_imports_in_services.append(
+                            f"  - {_svc_file.relative_to(_wdir)}: importa `{_name}`"
+                        )
+        if _orm_imports_in_services:
+            return False, (
+                "[S80-A] ⚠️ service.py importa clases ORM pero models.py no tiene ninguna.\n"
+                + "\n".join(_orm_imports_in_services)
+                + "\nCORRECCIÓN: en models.py, agregar las clases ORM con herencia de Base:\n"
+                + "  from src.database import Base\n"
+                + "  from sqlalchemy.orm import Mapped, mapped_column\n"
+                + "  class ContractORM(Base):\n"
+                + "      __tablename__ = 'contracts'\n"
+                + "      id: Mapped[int] = mapped_column(primary_key=True)\n"
+                + "  NUNCA uses Base = declarative_base() — importa Base desde src.database.\n"
+            )
         return True, ""
 
     _issues: list[str] = []
@@ -1448,10 +1507,10 @@ async def generate_sdd(state: OVDState) -> dict:
         sdd = _normalize_task_signatures(sdd)
 
         # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
-        # low→5, medium→8, high→10 — evita perder features en FRs complejos.
+        # S80-E: reducido high:10→8, critical:12→10 — más tareas = más superficie de error sin coordinación.
         # S68-C: tareas de infraestructura (database.py, main.py, __init__.py) NO cuentan contra el cap.
         _complexity = state.get("fr_analysis", {}).get("complexity", "medium")
-        _TASK_CAPS = {"low": 5, "medium": 8, "high": 10, "critical": 12}
+        _TASK_CAPS = {"low": 5, "medium": 8, "high": 8, "critical": 10}
         _MAX_TASKS_PER_AGENT = _TASK_CAPS.get(_complexity, 8)
         _tasks_by_agent: dict[str, list] = {}
         for _t in sdd["tasks"]:
@@ -4012,16 +4071,17 @@ async def run_tests(state: OVDState) -> dict:
         if not _stubs_ok:
             log.warning("run_tests: S78-B stubs detectados — se agregarán al retry_feedback")
 
-    # S79-A: verificar consistencia de nombres ORM antes de pytest
+    # S79-A: verificar consistencia de nombres ORM antes de pytest (S80-A: incluye manifest vacío)
     _orm_feedback_s79a = ""
     if runner == "pytest" and work_dir and retry_round == 0:
         _orm_ok, _orm_feedback_s79a = _verify_orm_class_names(work_dir)
         if not _orm_ok:
-            log.warning("run_tests: S79-A ORM naming inconsistencies detectadas — agregando al retry_feedback")
+            log.warning("run_tests: S79-A/S80-A ORM naming inconsistencies detectadas — agregando al retry_feedback")
 
     # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR
+    # S80-B: sin restricción retry_round==0 — correr en todas las rondas
     _db_url_feedback_s79c = ""
-    if runner == "pytest" and work_dir and retry_round == 0:
+    if runner == "pytest" and work_dir:
         _fr_text = state.get("feature_request", "") or ""
         _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(work_dir, _fr_text)
         if not _db_ok:
