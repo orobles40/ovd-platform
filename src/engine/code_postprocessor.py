@@ -723,7 +723,15 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     Retorna el contenido transformado (o el original si no hay cambios).
     """
-    if not rel_path.endswith(".py") or not content.strip():
+    if not rel_path.endswith(".py"):
+        return content
+
+    # S86-C: __init__.py vacío recibe comentario mínimo antes de cualquier otro procesamiento
+    if not content.strip() and rel_path.endswith("__init__.py"):
+        _pkg = rel_path.replace("/__init__.py", "").replace("\\__init__.py", "").replace("\\", "/")
+        return f"# {_pkg} package\n"
+
+    if not content.strip():
         return content
 
     original = content

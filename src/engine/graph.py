@@ -1163,6 +1163,51 @@ def _ensure_contracts_models_task(sdd: dict) -> dict:
     return sdd
 
 
+def _ensure_contracts_service_task(sdd: dict) -> dict:
+    """S86-A: si el SDD tiene contracts/models.py pero no contracts/service.py, inyectar service.
+
+    test_contracts.py siempre importa de src.contracts.service → sin este archivo, S65-A
+    bloquea pytest en todos los rounds.
+    """
+    has_contracts_models = any(
+        t.get("file", "").rstrip("/").endswith("contracts/models.py")
+        for t in sdd.get("tasks", [])
+    )
+    if not has_contracts_models:
+        return sdd
+    has_contracts_service = any(
+        "contracts/service" in t.get("file", "") or t.get("file", "").endswith("contracts_service.py")
+        for t in sdd.get("tasks", [])
+    )
+    if has_contracts_service:
+        return sdd
+    _models_idx = next(
+        (i for i, t in enumerate(sdd["tasks"]) if t.get("file", "").rstrip("/").endswith("contracts/models.py")),
+        -1,
+    )
+    _insert_at = _models_idx + 1 if _models_idx >= 0 else 0
+    sdd["tasks"].insert(_insert_at, {
+        "id": "TASK-INFRA-CONTRACTS-SERVICE",
+        "agent": "backend",
+        "title": "Crear src/contracts/service.py con CRUD completo",
+        "description": (
+            "Crea src/contracts/service.py con estas funciones (importa ContractORM, BenefitORM de src.contracts.models):\n"
+            "- create_contract(data: ContractCreate, db: Session) -> ContractORM\n"
+            "- get_contract_by_rut(rut: str, org_id: int, db: Session) -> list[ContractORM]\n"
+            "- update_contract(contract_id: int, data: ContractUpdate, db: Session) -> ContractORM\n"
+            "- delete_contract(contract_id: int, db: Session) -> bool\n"
+            "- list_benefits(contract_id: int, db: Session) -> list[BenefitORM]\n"
+            "- create_benefit(contract_id: int, data: BenefitCreate, db: Session) -> BenefitORM\n"
+            "NUNCA definas ContractORM ni BenefitORM aquí — solo en contracts/models.py."
+        ),
+        "file": "src/contracts/service.py",
+        "depends_on": [],
+        "estimated_complexity": "medium",
+    })
+    log.warning("generate_sdd: S86-A src/contracts/service.py inyectado como TASK-INFRA-CONTRACTS-SERVICE")
+    return sdd
+
+
 def _topological_sort_tasks(tasks: list[dict]) -> list[dict]:
     """S83-F: ordena tareas por dependencias (Kahn's algorithm) para que each task se ejecute
     después de las tareas de las que depende según el campo depends_on.
@@ -1719,6 +1764,9 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S82-B: inyectar src/contracts/models.py si el SDD tiene módulo contracts pero falta models.py
         sdd = _ensure_contracts_models_task(sdd)
+
+        # S86-A: inyectar src/contracts/service.py si hay contracts/models.py pero no service.py
+        sdd = _ensure_contracts_service_task(sdd)
 
         # S83-E: inyectar src/auth/router.py si el FR menciona auth/login y no está en el SDD
         sdd = _ensure_auth_login_task(sdd, state.get("fr_analysis", {}))
