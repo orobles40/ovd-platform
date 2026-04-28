@@ -44,10 +44,10 @@ cd src/tui && cargo build && cargo run
 
 ## Estado actual (2026-04-28)
 
-- **Sprints completados:** S3 → S79 (rama `dev`)
-- **Tests:** Python unit ~1409 (S79 agregó 19 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1409+
-- **Rama activa:** `dev` (S79 aplicado: ORM naming verifier + CRUD template + DB URL verifier + login BD note)
-- **Próximo foco:** Ciclo de validación S79 (pytest exit 0 target)
+- **Sprints completados:** S3 → S80 (rama `dev`)
+- **Tests:** Python unit ~1429 (S80 agregó 20 tests) + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26 | Total ~1429+
+- **Rama activa:** `dev` (S80 aplicado: ORM manifest vacío + declarative_base postprocessor + auth_router + caps reducidos)
+- **Próximo foco:** Ciclo de validación S80 (pytest exit 0 target)
 - **Seguridad:** todos los hallazgos corregidos (ver docs/security/SEC-2026-03-28.md)
 - **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
 - **Ciclo de validación S78:** `88d06e0f` — **13 min 18 s**, **QA 67/100** (+10 vs S77), 11 tareas SDD, 12 archivos, pytest exit 2 (naming mismatch ContratoORM vs ContractORM entre tareas), 175k tokens, status=completed. S78-A ✅ (JWT no-stub), S78-B ✅ (no disparó — stub ya no existe), S78-C ⚠️ (parcial — naming inconsistente entre archivos), Fix S70-C ✅ (oracledb.version="8.3.0").
@@ -137,6 +137,42 @@ curl -s -X POST http://localhost:8001/session \
 | **S78** | 88d06e0f | **67** | exit 2 × 2 | **13m 18s** | **175k** |
 
 ---
+
+### Novedades S80 (2026-04-28) — rama `dev`
+
+- **S80-A — `_verify_orm_class_names()` manifest vacío:** Cuando `models.py` no tiene clases ORM (solo Pydantic) pero `service.py` importa nombres que terminan en `ORM` → `[S80-A] ⚠️ service.py importa clases ORM pero models.py no tiene ninguna.` Resuelve el caso que S79-A dejaba pasar silenciosamente.
+- **S80-B — S79-C sin restricción `retry_round==0`:** `_verify_db_url_matches_fr()` ahora corre en todos los rounds. Garantiza que Oracle URL con FR PostgreSQL se detecte independientemente de si S65-A interceptó el output previo.
+- **S80-C — Postprocessor `_fix_declarative_base_import()`** en `code_postprocessor.py`: detecta `Base = declarative_base()` en archivos que no son `src/database.py` y reemplaza con `from src.database import Base`. Corre ANTES de S73-A para interceptar el patrón crudo. Resuelve `NameError: name 'Base' is not defined` en BenefitORM.
+- **S80-D — `auth_router` en `_ensure_fastapi_main_task()`:** Cuando el SDD tiene `src/auth/router.py`, el hint de main.py incluye `auth_router`. También actualiza descripción de tareas main.py existentes. Solo activa cuando SDD tiene la tarea (no inventa routers fantasma).
+- **S80-E — Caps reducidos:** `_TASK_CAPS = {"high": 8, "critical": 10}` (era 10/12). Reduce superficie de error sin coordinación entre tareas.
+- **20 tests nuevos** en `test_s80.py` — 20/20 PASS. **1429 tests PASS** (suite total).
+
+#### Ciclo de validación S80
+
+```bash
+rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/pytest.ini \
+       /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/requirements.txt
+
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST http://localhost:8001/session \
+  -H "Content-Type: application/json" \
+  -H "X-OVD-Secret: $SECRET" \
+  -d '{
+    "org_id": "ORG_OMAR_ROBLES",
+    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
+    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
+    "auto_approve": true
+  }'
+```
+
+**Métricas objetivo S80:**
+- pytest exit 0 (S80-A + S80-C resuelven ORM/Base issues)
+- DATABASE_URL PostgreSQL (S80-B garantiza S79-C feedback)
+- auth_router en main.py (S80-D)
+- QA ≥ 70 (caps reducidos → menos tareas → menos errores)
 
 ### Novedades S79 (2026-04-28) — rama `dev`
 
