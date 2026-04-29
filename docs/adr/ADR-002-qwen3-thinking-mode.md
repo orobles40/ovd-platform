@@ -100,3 +100,49 @@ No bloquea el ciclo principal pero rompe la auditoría. Requiere ejecutar migrac
 - Todos los modelos `ollama` en `build_llm()` usan `ChatOllama` con `think=False` — no afecta a modelos sin thinking mode (el parámetro es ignorado por modelos como `ovd-arch-assistant` y `deepseek-r1`)
 - Provider `custom` sigue usando `ChatOpenAI` — sin cambios para integraciones externas
 - Si un modelo Ollama futuro tiene comportamiento distinto con `think=False`, revisar este parámetro
+
+---
+
+## Addendum S97-F (2026-04-29) — `think=False` era ignorado silenciosamente
+
+**Estado:** Corregido — `reasoning=False` implementado en model_router.py
+
+### Síntoma observado
+
+Durante la validación del ciclo S97, el nodo `qa_review` estuvo bloqueado **68 minutos** en lugar de los ~5-7 min esperados. El nodo `security_audit` y los agentes del fan-out presentaron el mismo problema (~60 min cada uno).
+
+### Causa raíz
+
+`ChatOllama` (langchain-ollama) **no tiene `think` como campo válido** en su modelo Pydantic. Al pasar `think=False` al constructor, el parámetro era silenciosamente descartado (Python acepta kwargs extras sin error). El modelo qwen3-coder:30b operaba en thinking mode ON por defecto, generando bloques `<think>` de 50,000–100,000 tokens antes de cada respuesta.
+
+```python
+# Verificación
+from langchain_ollama import ChatOllama
+"think" in ChatOllama.model_fields  # → False
+"reasoning" in ChatOllama.model_fields  # → True
+```
+
+El campo correcto documentado en langchain-ollama es `reasoning` (tipo `bool | str | None`):
+
+```python
+# model_router.py — ANTES (S22, ignorado)
+return ChatOllama(..., think=False)
+
+# model_router.py — DESPUÉS (S97-F, correcto)
+return ChatOllama(..., reasoning=False)
+```
+
+### Impacto antes del fix
+
+| Nodo | Duración observada | Duración esperada |
+|---|---|---|
+| `qa_review` | ~68 min | ~5-7 min |
+| `security_audit` | ~60 min | ~5-10 min |
+| Agentes fan-out (×8) | ~7 min c/u → ~56 min total | ~5 min c/u → ~40 min total |
+| Ciclo completo | >2h (nunca completó) | ~60-90 min |
+
+### Lección
+
+El parámetro `think=False` funcionaba aparentemente en S22 porque el modelo usado era `qwen3-coder-next` (diferente variante) o el contexto era suficientemente pequeño para que el thinking completara dentro del timeout. Con `qwen3-coder:30b` y contextos grandes (20k+ tokens de código), el thinking supera ampliamente los timeouts configurados.
+
+**Regla:** Antes de usar un parámetro de constructor en un modelo Pydantic de LangChain, verificar con `ModelClass.model_fields`. Parámetros no reconocidos se descartan sin error ni warning.

@@ -341,7 +341,7 @@ def test_s97b_devops_cannot_write_tests_dir(tmp_path):
 
 def test_s97b_devops_can_write_dockerfile(tmp_path):
     """_write_artifacts con agent='devops' escribe Dockerfile correctamente."""
-    output = "```dockerfile:.docker/Dockerfile.api\nFROM python:3.11\nCMD [\"python\", \"app.py\"]\n```"
+    output = '```dockerfile:.docker/Dockerfile.api\nFROM python:3.11\nCMD ["python", "app.py"]\n```'
     result = _write_artifacts(output, str(tmp_path), "devops")
     assert len(result) == 1
     assert result[0]["path"] == ".docker/Dockerfile.api"

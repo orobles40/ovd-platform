@@ -387,7 +387,7 @@ def build_llm(config: ResolvedConfig) -> Any:
             num_predict=8192,
             num_ctx=32768,  # S52-A: ventana explícita — sin esto Ollama puede usar default 2048 y truncar tareas tardías
             temperature=config.temperature,
-            think=False,  # Deshabilita thinking mode Qwen3+ via API nativa (ver ADR-002)
+            reasoning=False,  # S97-F: param correcto en langchain-ollama (think= era ignorado silenciosamente)
         )
 
     if config.provider == "custom":

@@ -2622,9 +2622,9 @@ _CLIENT_SIDE_AGENTS: frozenset[str] = frozenset({"frontend"})
 # La lógica: si la ruta TERMINA en alguna extensión prohibida O CONTIENE algún prefijo
 # de path prohibido, el archivo se omite con un warning.
 _DEVOPS_WRITE_EXCLUSIONS: tuple[str, ...] = (
-    ".py",         # nunca archivos Python (territorio de backend/database)
-    "tests/",      # nunca directorio de tests (lo escribe backend)
-    "conftest.py", # fixture pytest — exclusivo de backend
+    ".py",  # nunca archivos Python (territorio de backend/database)
+    "tests/",  # nunca directorio de tests (lo escribe backend)
+    "conftest.py",  # fixture pytest — exclusivo de backend
 )
 
 
