@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -40,17 +39,20 @@ import psycopg
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+from settings import get_settings
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuración
 # ---------------------------------------------------------------------------
 
-_JWT_SECRET = os.environ.get("JWT_SECRET", "")
+_s = get_settings()
+_JWT_SECRET = _s.jwt_secret
 _JWT_ALGORITHM = "HS256"
-_ACCESS_TOKEN_TTL_HOURS = int(os.environ.get("OVD_ACCESS_TOKEN_TTL_HOURS", "1"))
-_REFRESH_TOKEN_TTL_DAYS = int(os.environ.get("OVD_REFRESH_TOKEN_TTL_DAYS", "7"))
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_ACCESS_TOKEN_TTL_HOURS = _s.ovd_access_token_ttl_hours
+_REFRESH_TOKEN_TTL_DAYS = _s.ovd_refresh_token_ttl_days
+_DATABASE_URL = _s.database_url
 
 
 def _require_jwt_secret() -> str:

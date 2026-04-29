@@ -64,9 +64,10 @@ from routers.api_v1 import router as api_v1_router
 
 # S12 — API Web pública
 from routers.auth_router import router as auth_router
-from startup_check import assert_env, check_ollama_model
 
 # PP-03 + PP-02 + S20-GAP-R3 — Atomic Task Checkout + Heartbeat Watcher + Stale Cancel
+from settings import get_settings
+from startup_check import assert_env, check_ollama_model
 from task_checkout import (
     AlreadyRunningError,
     SessionLock,
@@ -81,12 +82,14 @@ from task_checkout import (
 
 log = logging.getLogger("ovd.api")
 
+_cfg = get_settings()
+
 _graph = None
 _checkpointer = None
 
 # S20 — GAP-R1: timeout global del stream SSE. Si el grafo no termina en este tiempo,
 # el stream se cierra con un evento de error. Configurable via OVD_SSE_STREAM_TIMEOUT_SECS.
-_SSE_STREAM_TIMEOUT: float = float(os.environ.get("OVD_SSE_STREAM_TIMEOUT_SECS", "900"))
+_SSE_STREAM_TIMEOUT: float = _cfg.ovd_sse_stream_timeout_secs
 
 # S47-A: Background graph execution — el grafo corre en tasks separadas del SSE
 # Al desconectarse el cliente, la ejecución del grafo NO se cancela.
@@ -173,10 +176,7 @@ app = FastAPI(
 # CORS — orígenes permitidos configurables por variable de entorno.
 # En dev: http://localhost:5173 (Vite). En prod: dominio del dashboard.
 # OVD_CORS_ORIGINS puede ser una lista separada por comas.
-_cors_raw = os.environ.get(
-    "OVD_CORS_ORIGINS",
-    "http://localhost:5173,http://localhost:3000,http://localhost:80",
-)
+_cors_raw = _cfg.ovd_cors_origins or "http://localhost:5173,http://localhost:3000,http://localhost:80"
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
 app.add_middleware(
@@ -199,7 +199,7 @@ app.include_router(api_v1_router)
 # Auth: verifica X-OVD-Secret en cada request
 # ---------------------------------------------------------------------------
 
-OVD_SECRET = os.environ.get("OVD_ENGINE_SECRET", "")
+OVD_SECRET = _cfg.ovd_engine_secret
 
 
 def verify_secret(x_ovd_secret: str | None = Header(default=None)) -> None:
@@ -1051,7 +1051,7 @@ async def _stale_session_watcher():
     PP-02 — Heartbeat watcher: detecta sesiones colgadas cada 60s.
     Corre como tarea background durante el lifespan del engine.
     """
-    _WATCHER_INTERVAL = int(os.environ.get("OVD_WATCHER_INTERVAL_SECS", "60"))
+    _WATCHER_INTERVAL = get_settings().ovd_watcher_interval_secs
     import logging
 
     log = logging.getLogger("ovd.heartbeat")
