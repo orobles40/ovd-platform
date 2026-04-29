@@ -153,23 +153,52 @@ Por cada archivo modificado → llamar al endpoint `/orgs/{org_id}/knowledge/ind
 
 Clonar repos seleccionados en `src/knowledge/external/` para consulta directa durante sesiones de desarrollo. **No se indexan en pgvector.**
 
-**Propósito:** antes de diseñar una solución a un problema en OVD, buscar si ya fue resuelto en alguno de estos repos y cómo lo implementaron.
+**Propósito:** antes de diseñar una solución a un problema en OVD, buscar si ya fue resuelto en alguno de estos repos y cómo lo implementaron. Claude Code hace `grep` o lectura directa cuando enfrenta un issue.
 
-**Repos a incluir:**
+**Mantenimiento:** `git pull` manual cuando se detecte contenido nuevo relevante. Sin fecha fija. Se puede eliminar cualquier repo con `rm -rf` sin impacto en el engine.
 
-| Repo | Directorio local | Qué aporta |
+---
+
+#### Categoría 1 — Metodología y skills
+
+| Repo | GitHub | Qué aporta |
 |---|---|---|
-| `obra/superpowers` | `superpowers-upstream/` | ya existe — sincronizar con upstream |
-| `NousResearch/hermes-agent` | `hermes-agent/` | FastMCP/FastAPI templates, web design systems, GitHub workflows, MLOps |
+| `superpowers` | `obra/superpowers` | ya existe en `superpowers-upstream/` — sincronizar |
+| `hermes-agent` | `NousResearch/hermes-agent` | ~500 skills, FastMCP/FastAPI templates, web design systems |
 
-**Directorios a clonar de hermes-agent (no el repo completo):**
-- `optional-skills/mcp/fastmcp/` — templates FastAPI/MCP
-- `skills/creative/popular-web-designs/` — design systems frontend
-- `skills/github/` — workflows DevOps
-- `skills/software-development/` — TDD, planning, debugging
-- `optional-skills/mlops/` — RAG, vector DBs
+Directorios útiles de hermes-agent: `optional-skills/mcp/fastmcp/`, `skills/creative/popular-web-designs/`, `skills/github/`, `skills/software-development/`, `optional-skills/mlops/`
 
-**Uso durante sesiones:** cuando se enfrente un issue en OVD, antes de diseñar la solución Claude Code hace `grep` o lectura directa en `src/knowledge/external/` para verificar si ya existe una implementación de referencia.
+---
+
+#### Categoría 2 — AI Coding Agents (referencia arquitectural)
+
+| Repo | GitHub | Lenguaje | Qué aporta |
+|---|---|---|---|
+| `opencode` | `anomalyco/opencode` | TypeScript | CLI agent más cercano a Claude Code — tool use, session mgmt, MCP, TUI |
+| `aider` | `Aider-AI/aider` | Python | repo-map con tree-sitter, edit formats (diff/whole), git workflow profundo |
+| `OpenHands` | `OpenHands/OpenHands` | Python | multi-agent con sandbox Docker, browser automation, SWE-bench eval |
+| `SWE-agent` | `SWE-agent/SWE-agent` | Python | AgentComputer Interface (ACI), fix automático de issues GitHub |
+| `cline` | `cline/cline` | TypeScript | VSCode extension, tool use step-by-step con aprobación usuario |
+| `codex` | `openai/codex` | Rust | coding agent minimalista en Rust, sandbox, referencia de diseño ligero |
+
+---
+
+#### Categoría 3 — Frameworks multi-agente
+
+| Repo | GitHub | Lenguaje | Qué aporta |
+|---|---|---|---|
+| `langgraph` | `langchain-ai/langgraph` | Python | el framework que usa OVD — ejemplos oficiales, patterns de estado |
+| `autogen` | `microsoft/autogen` | Python | orquestación multi-agente conversacional, human-in-the-loop |
+
+---
+
+#### Categoría 4 — Stack técnico del engine
+
+| Repo | GitHub | Lenguaje | Qué aporta |
+|---|---|---|---|
+| `litellm` | `BerriAI/litellm` | Python | router multi-LLM con fallbacks — comparable a `model_router.py` |
+| `pydantic-ai` | `pydantic/pydantic-ai` | Python | agentes con validación de tipos estricta — mejoras a OVDState |
+| `full-stack-fastapi-template` | `tiangolo/full-stack-fastapi-template` | Python/TS | template oficial FastAPI + PostgreSQL + React — referencia directa para código generado |
 
 ---
 
