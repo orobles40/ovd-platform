@@ -177,7 +177,7 @@ class TestS78C:
         """S78-C: template debe indicar que tests importan desde services/, no models/."""
         content = _BACKEND_PY.read_text(encoding="utf-8")
         # Buscar la regla de import correcto en tests
-        assert "from src.services" in content or "services/" in content
+        assert "from src.services" in content or "services/" in content or "src.contracts.services" in content
 
 
 # ---------------------------------------------------------------------------

@@ -85,8 +85,8 @@ class OVDSettings(BaseSettings):
     ovd_max_retries: int = 3
     ovd_max_context_tokens: int = 28000
     # S98-A: filtrado de runners y cap de subtareas por agente
-    ovd_agent_filter_enabled: bool = True   # omite frontend si FR no lo menciona
-    ovd_max_tasks_per_agent: int = 0        # 0 = sin límite (comportamiento actual)
+    ovd_agent_filter_enabled: bool = True  # omite frontend si FR no lo menciona
+    ovd_max_tasks_per_agent: int = 0  # 0 = sin límite (comportamiento actual)
     ovd_cycle_token_budget: int = 0
     ovd_qa_min_score: int = 70
     ovd_security_min_score: int = 0

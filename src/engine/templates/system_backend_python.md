@@ -135,7 +135,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
+from jose import JWTError, jwt   # S100-C: python-jose — NUNCA uses "import jwt" (PyJWT)
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -302,35 +302,40 @@ El nombre de la función que defines DEBE coincidir exactamente con el nombre en
 | Formatear RUT | `format_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
 | Validar + retornar limpio | `require_valid_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
 | Es número primo | `is_prime(n: int) -> bool` | `src/utils/prime_validator.py` |
-| Crear contrato | `create_contract(data, user)` | `src/contracts/service.py` |
-| Obtener contrato | `get_contract_by_id(id, user)` | `src/contracts/service.py` |
-| Actualizar contrato | `update_contract(id, data, user)` | `src/contracts/service.py` |
-| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/<módulo>/service.py` |
-| Crear beneficio | `create_benefit(data, contract_id, db)` | `src/services/contract_service.py` |
-| Listar beneficios | `list_benefits(contract_id, db)` | `src/services/contract_service.py` |
-| Eliminar beneficio | `delete_benefit(benefit_id, db)` | `src/services/contract_service.py` |
+| Crear contrato | `create_contract(data, user)` | `src/contracts/services.py` |
+| Obtener contrato | `get_contract_by_id(id, user)` | `src/contracts/services.py` |
+| Actualizar contrato | `update_contract(id, data, user)` | `src/contracts/services.py` |
+| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/<módulo>/services.py` |
+| Crear beneficio | `create_benefit(data, db)` | `src/contracts/services.py` |
+| Listar beneficios | `list_benefits(contract_id, db)` | `src/contracts/services.py` |
+| Eliminar beneficio | `delete_benefit(benefit_id, db)` | `src/contracts/services.py` |
 
 ❌ `validar_rut`, `calcular_imc`, `es_primo`, `crear_contrato` — **PROHIBIDOS**
 ✅ `validate_rut`, `calculate_bmi`, `is_prime`, `create_contract` — **OBLIGATORIOS**
 
 ## Regla de módulos CRUD — sub-entidades (S78-C)
 
-**CRÍTICO:** Las funciones CRUD de entidades secundarias (beneficios, detalles, items) van en el **mismo `service.py`** de la entidad principal — NUNCA en `models.py`.
+**CRÍTICO:** Las funciones CRUD de entidades secundarias (beneficios, detalles, items) van en el **mismo `services.py`** de la entidad principal — NUNCA en `models.py`.
+
+> **S100-I — REGLA DE NOMBRE: siempre `services.py` (plural), NUNCA `service.py` (singular).**
+> `from src.contracts.services import create_benefit` ✅
+> `from src.contracts.service import create_benefit` ❌ — causa ImportError
 
 | Función | Módulo CORRECTO ✅ | Módulo INCORRECTO ❌ |
 |---------|-------------------|---------------------|
-| `create_benefit(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
-| `list_benefits(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
-| `delete_benefit(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
-| `create_contract(...)` | `src/services/contract_service.py` | `src/models/contracts.py` |
+| `create_benefit(...)` | `src/contracts/services.py` | `src/models/contracts.py` |
+| `list_benefits(...)` | `src/contracts/services.py` | `src/models/contracts.py` |
+| `delete_benefit(...)` | `src/contracts/services.py` | `src/models/contracts.py` |
+| `create_contract(...)` | `src/contracts/services.py` | `src/models/contracts.py` |
 
-**Regla de imports en tests (S78-C) — SIEMPRE desde `services/`, NUNCA desde `models/`:**
+**Regla de imports en tests (S78-C / S100-I) — SIEMPRE desde `services.py` (plural):**
 ```python
 # ✅ CORRECTO:
-from src.services.contract_service import create_benefit, list_benefits, create_contract
+from src.contracts.services import create_benefit, list_benefits, create_contract
 
 # ❌ PROHIBIDO — causa ImportError en tests:
-from src.models.contracts import create_benefit  # ← funciones CRUD no van en models
+from src.contracts.service import create_benefit      # ← singular, no existe
+from src.models.contracts import create_benefit       # ← funciones CRUD no van en models
 ```
 
 **Razón:** `models.py` contiene SOLO clases ORM (SQLAlchemy). La lógica CRUD va en `service.py`. Los tests importan desde el módulo de servicio, no desde el modelo.
@@ -358,6 +363,8 @@ def format_rut(rut: str) -> str:
 def validate_rut(rut: str) -> bool:
     """Valida RUT chileno usando módulo 11. Acepta '12.345.678-5', '12345678-5', '123456785'."""
     cleaned = clean_rut(rut)
+    # S100-M: regex valida 7-8 dígitos + DV (puede ser K). SIEMPRE usar cleaned[:-1] y cleaned[-1].
+    # PROHIBIDO: if len==8: rut_num=rut (incluye DV en cuerpo → int() falla con 'K')
     if not re.match(r"^\d{7,8}[0-9K]$", cleaned):
         return False
     body, dv = cleaned[:-1], cleaned[-1]
@@ -583,6 +590,17 @@ class Contrato(BaseModel):
 > usa **siempre** `postgresql+psycopg://` en `DATABASE_URL`.
 > **PROHIBIDO usar `import oracledb` si el FR pide PostgreSQL.**
 
+> **S100-D — PROHIBIDO hardcodear credenciales en `database.py`:**
+> ```python
+> # ❌ NUNCA:
+> engine = create_engine("postgresql://user:pass@host/db")  # credenciales hardcodeadas
+> encoded_url = quote_plus(DATABASE_URL)  # calcular y no usar
+> engine = create_engine("oracle+oracledb://user:pass@...")  # ignorar variable
+> # ✅ SIEMPRE: leer de os.environ.get y pasar directamente al engine
+> DATABASE_URL = os.environ.get("DATABASE_URL", "<url-default>")
+> engine = create_engine(DATABASE_URL, ...)
+> ```
+
 ```python:src/database.py
 import os
 from sqlalchemy import create_engine
@@ -702,14 +720,14 @@ from src.contracts.models import ContractCreate  # ← solo si models.py existe
 
 ```python
 # ❌ PROHIBIDO — auto-import circular (service.py importando desde service.py)
-# En src/contracts/service.py:
+# En src/contracts/services.py:
 from src.contracts.service import ContractORM, BenefitORM  # ← ERROR: es el mismo archivo
 
 # ✅ CORRECTO — modelos ORM van en models.py, service.py los importa desde ahí
 # En src/contracts/models.py:
 class ContractORM(Base): ...
 
-# En src/contracts/service.py:
+# En src/contracts/services.py:
 from src.contracts.models import ContractORM, BenefitORM  # ← archivo diferente
 ```
 
@@ -725,7 +743,7 @@ Cada archivo importa SOLO desde archivos de nivel inferior. Nunca de sí mismo n
 
 **REGLA ABSOLUTA:** `models.py` contiene SOLO clases ORM y Pydantic schemas. NINGUNA función de negocio.
 
-```python:src/contracts/service.py
+```python:src/contracts/services.py
 from sqlalchemy.orm import Session
 from src.contracts.models import ContractORM, BenefitORM
 from src.contracts.schemas import BenefitCreate
@@ -853,6 +871,35 @@ En `requirements.txt` incluye SOLO una de las dos:
 python-jose[cryptography]>=3.3.0   ← usa esta
 # NO incluir: PyJWT, jwt
 ```
+
+### Control de acceso por rol (S100-H)
+
+Si el FR menciona roles (`contratista`, `administrador`, `auditor`, etc.), implementa la verificación con un dependency de FastAPI:
+
+```python:src/auth/dependencies.py
+from fastapi import Depends, HTTPException, status
+
+def require_role(*allowed: str):
+    def _check(current_user: dict = Depends(get_current_user)):
+        if current_user.get("role") not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso denegado — rol requerido: {', '.join(allowed)}"
+            )
+        return current_user
+    return _check
+
+# Uso en endpoints:
+@router.post("/contratos")
+async def crear_contrato(
+    body: ContratoCreate,
+    user: dict = Depends(require_role("administrador", "contratista")),
+    db: Session = Depends(get_db),
+):
+    ...
+```
+
+**Regla:** nunca comparar rol en lógica de negocio. Centralizar la verificación en el Depends del endpoint.
 
 ### Conexión a base de datos externa (S45-E)
 

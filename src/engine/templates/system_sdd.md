@@ -267,6 +267,25 @@ y NO cuentan contra el cap de 5 tareas/agente. SIEMPRE incluirlas cuando aplique
 
 **Estas tareas van PRIMERO antes de cualquier tarea de negocio. Sin ellas, pytest no puede importar nada del proyecto.**
 
+## Alineación ORM ↔ SQL — OBLIGATORIO (S100-E)
+
+Los nombres de columnas en los modelos SQLAlchemy DEBEN coincidir exactamente con el DDL SQL.
+Un modelo desalineado causa `OperationalError: column does not exist` en runtime.
+
+**Regla:** Al definir la tarea para `src/<módulo>/models.py`, incluir la tabla de correspondencias:
+
+| Columna SQL (DDL) | Campo ORM (mapped_column) | Notas |
+|-------------------|--------------------------|-------|
+| `rut_contratista` | `rut_contratista: Mapped[str]` | NO `rut_empleado` |
+| `codigo_tipo` | `codigo_tipo: Mapped[int]` | NO `tipo_contrato` |
+| `clave` | `clave: Mapped[int]` | NO `codigo` |
+| `fecha_inicio` | `fecha_inicio: Mapped[date]` | columna requerida |
+| `fecha_fin` | `fecha_fin: Mapped[Optional[date]]` | nullable |
+| `estado` | `estado: Mapped[str]` | CHECK 'activo'/'inactivo' |
+
+> Toda tarea de `models.py` en el SDD DEBE listar la correspondencia exacta SQL→ORM.
+> Sin esta tabla, el agente backend puede inventar nombres que no existen en el DDL.
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto

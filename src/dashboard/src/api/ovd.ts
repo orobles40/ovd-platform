@@ -172,4 +172,10 @@ export const ovdApi = {
     api.get<{ thread_id: string; org_id: string; started_at: string; fr_text?: string }[]>(
       `/api/v1/orgs/${orgId}/sessions/active`
     ).then((r) => r.data),
+
+  // S100-L: estado actual del checkpoint (para restaurar nodos al reconectar)
+  getSessionState: (threadId: string) =>
+    api.get<{ status: string; sdd: unknown; fr_analysis: unknown; feature_request: string }>(
+      `/session/${threadId}/state`
+    ).then((r) => r.data),
 }

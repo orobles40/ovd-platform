@@ -195,9 +195,44 @@ export default function FrLauncher() {
     ))
   }
 
+  // S100-L: restaurar estados de nodos desde el checkpoint del grafo al reconectar
+  async function restoreNodesFromState(sid: string) {
+    try {
+      const state = await ovdApi.getSessionState(sid)
+      const status: string = state?.status ?? ''
+      // Mapa status → índice máximo de nodo completado (0-based en GRAPH_NODES)
+      const STATUS_DONE_UP_TO: Record<string, number> = {
+        analyzed:             0,  // analyze_fr done
+        sdd_generated:        1,  // generate_sdd done
+        approved:             2,  // request_approval done
+        rejected:             2,
+        routing:              3,  // route_agents done
+        security_reviewed:    5,  // agents + security done
+        qa_done:              6,  // qa_review done
+        tests_done:           7,  // run_tests done
+        tests_failed:         7,
+        tests_skipped:        7,
+        docs_done:            8,  // generate_docs done
+        docs_skipped:         8,
+        done:                 9,  // todo done
+      }
+      const doneUpTo = STATUS_DONE_UP_TO[status] ?? -1
+      if (doneUpTo >= 0) {
+        setNodes(GRAPH_NODES.map((n, i) => ({
+          ...n,
+          status: i < doneUpTo ? 'done' : i === doneUpTo ? 'running' : 'waiting',
+        })))
+        pushLog(`↩ Reconectado — estado restaurado desde checkpoint (${status})`)
+      }
+    } catch {
+      // sin estado disponible — dejar nodos en waiting
+    }
+  }
+
   // Abre (o reabre) el stream SSE para una sesión activa
-  function openStream(sid: string) {
+  function openStream(sid: string, isReconnect = false) {
     esRef.current?.close()
+    if (isReconnect) restoreNodesFromState(sid)
     const token = localStorage.getItem('ovd_access_token') ?? ''
     const es = new EventSource(`/session/${sid}/stream?token=${encodeURIComponent(token)}`)
     esRef.current = es
@@ -474,7 +509,7 @@ export default function FrLauncher() {
     setSddExpanded(false)
     setPhase('streaming')
     setActiveSessions([])
-    openStream(threadId)
+    openStream(threadId, true)  // S100-L: isReconnect=true → restaura nodos desde checkpoint
   }
 
   // Fase 2 — handleApproval unificado para approve / revise / reject

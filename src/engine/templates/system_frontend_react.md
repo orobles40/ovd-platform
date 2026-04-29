@@ -27,10 +27,53 @@ Tu tarea es implementar los componentes de UI definidos en el SDD usando React +
 - Un hook generado pero no conectado a ningún componente es un bug, no una feature
 - Verifica antes de entregar: ¿cada hook que generé aparece en el `import` de al menos un componente?
 
-**Validación de RUT chileno en UI:**
+**Validación de RUT chileno en UI (S100-G):**
 - La UI puede tener validación de formato/dígito verificador para feedback inmediato
 - Pero el backend ES la fuente de verdad — no asumas que la validación frontend es suficiente
 - Formato de display: `XX.XXX.XXX-X` — normalizar al escribir con máscara o `onBlur`
+
+> **S100-G — CRÍTICO: implementar siempre en TypeScript nativo, NUNCA importar `.py`.**
+> `import { validate_rut } from '../utils/rut_validator'` ← **PROHIBIDO** (archivo Python)
+
+```typescript:src/utils/rutValidator.ts
+export function cleanRut(rut: string): string {
+  return rut.replace(/[.\-]/g, "").toUpperCase();
+}
+
+export function validateRut(rut: string): boolean {
+  const cleaned = cleanRut(rut);
+  if (!/^\d{7,8}[0-9K]$/.test(cleaned)) return false;
+  const body = cleaned.slice(0, -1);
+  const dv = cleaned.slice(-1);
+  let sum = 0;
+  let factor = 2;
+  for (let i = body.length - 1; i >= 0; i--) {
+    sum += parseInt(body[i]) * factor;
+    factor = factor === 7 ? 2 : factor + 1;
+  }
+  const remainder = 11 - (sum % 11);
+  const expected = remainder === 11 ? "0" : remainder === 10 ? "K" : String(remainder);
+  return expected === dv;
+}
+
+export function formatRut(rut: string): string {
+  const cleaned = cleanRut(rut);
+  if (cleaned.length < 2) return cleaned;
+  const body = cleaned.slice(0, -1);
+  const dv = cleaned.slice(-1);
+  const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${formatted}-${dv}`;
+}
+```
+
+**Regla de input para DV 'K':**
+```tsx
+// ✅ CORRECTO: permitir dígitos Y la letra K
+<input onChange={(e) => setValue(e.target.value.replace(/[^0-9kK.\-]/g, ""))} />
+
+// ❌ PROHIBIDO: strip de no-dígitos elimina 'K' válido
+<input onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))} />
+```
 
 **Formato de salida obligatorio:**
 Cada archivo en un bloque de código con la ruta relativa:

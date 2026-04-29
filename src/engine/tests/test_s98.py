@@ -64,7 +64,10 @@ def test_filter_omits_frontend_for_backend_fr(monkeypatch):
     fr_type = "feature"
     selected = ["backend", "database", "frontend"]
 
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         if fr_type not in {"fullstack", "frontend_only"} and not any(
             kw in fr_raw.lower() for kw in _FRONTEND_KEYWORDS
         ):
@@ -83,7 +86,10 @@ def test_filter_keeps_frontend_for_fullstack_fr(monkeypatch):
     fr_type = "fullstack"
     selected = ["backend", "database", "frontend"]
 
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         if fr_type not in {"fullstack", "frontend_only"} and not any(
             kw in fr_raw.lower() for kw in _FRONTEND_KEYWORDS
         ):
@@ -100,7 +106,10 @@ def test_filter_keeps_frontend_when_ui_keyword_in_fr(monkeypatch):
     fr_type = "feature"
     selected = ["backend", "database", "frontend"]
 
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         if fr_type not in {"fullstack", "frontend_only"} and not any(
             kw in fr_raw.lower() for kw in _FRONTEND_KEYWORDS
         ):
@@ -117,7 +126,10 @@ def test_filter_disabled_keeps_frontend(monkeypatch):
     fr_type = "feature"
     selected = ["backend", "database", "frontend"]
 
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         if fr_type not in {"fullstack", "frontend_only"} and not any(
             kw in fr_raw.lower() for kw in _FRONTEND_KEYWORDS
         ):
@@ -134,7 +146,10 @@ def test_filter_keeps_frontend_only_type(monkeypatch):
     fr_type = "frontend_only"
     selected = ["frontend"]
 
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         if fr_type not in {"fullstack", "frontend_only"} and not any(
             kw in fr_raw.lower() for kw in _FRONTEND_KEYWORDS
         ):

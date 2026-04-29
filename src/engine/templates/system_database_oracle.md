@@ -117,6 +117,78 @@ END pkg_contratos;
 /
 ```
 
+## Anti-patrones PL/SQL — PROHIBIDOS (S100-F)
+
+### Bug 1 — CHECK constraint: validación de número primo (INCORRECTO)
+
+Oracle CHECK constraints solo pueden usar expresiones escalares sobre las columnas de la fila.
+**PROHIBIDO** usar subqueries, ROWNUM, tablas auxiliares, ni funciones PL/SQL en CHECK.
+
+```sql
+-- ❌ PROHIBIDO — ORA-02436: date or system variable wrongly specified in CHECK constraint
+CONSTRAINT chk_primo CHECK (
+    clave IN (SELECT p FROM primes_table WHERE ...)  -- subquery INVÁLIDA en CHECK
+)
+
+-- ✅ CORRECTO: validar con trigger BEFORE INSERT/UPDATE
+CREATE OR REPLACE TRIGGER trg_validate_clave_primo
+    BEFORE INSERT OR UPDATE ON beneficios
+    FOR EACH ROW
+DECLARE
+    v_n   PLS_INTEGER := :NEW.clave;
+    v_i   PLS_INTEGER := 2;
+    v_ok  BOOLEAN := (v_n >= 2);
+BEGIN
+    WHILE v_ok AND v_i * v_i <= v_n LOOP
+        IF MOD(v_n, v_i) = 0 THEN v_ok := FALSE; END IF;
+        v_i := v_i + 1;
+    END LOOP;
+    IF NOT v_ok THEN
+        RAISE_APPLICATION_ERROR(-20001, 'clave debe ser un número primo');
+    END IF;
+END;
+/
+```
+
+### Bug 2 — Tipo NUMBER para dígito verificador 'K' (INCORRECTO)
+
+El dígito verificador puede ser 'K'. Declarar `v_dv NUMBER` y luego asignar `'K'` lanza ORA-06502.
+
+```sql
+-- ❌ PROHIBIDO — ORA-06502: PL/SQL: numeric or value error
+DECLARE
+    v_dv NUMBER;
+BEGIN
+    v_dv := 'K';  -- error de tipo
+
+-- ✅ CORRECTO: declarar como VARCHAR2(1)
+DECLARE
+    v_dv     VARCHAR2(1);
+    v_dv_num NUMBER;
+BEGIN
+    v_dv_num := 11 - MOD(v_suma, 11);
+    v_dv := CASE WHEN v_dv_num = 11 THEN '0'
+                 WHEN v_dv_num = 10 THEN 'K'
+                 ELSE TO_CHAR(v_dv_num)
+            END;
+```
+
+### Bug 3 — LENGTH check para RUT limpio (INCORRECTO)
+
+Un RUT chileno limpio (sin puntos ni guión) tiene 8 o 9 caracteres (7-8 dígitos + DV).
+
+```sql
+-- ❌ PROHIBIDO — rechaza RUTs válidos de 8 y 9 caracteres
+IF LENGTH(v_rut_clean) != 10 THEN ...   -- el número 10 es incorrecto
+
+-- ✅ CORRECTO: validar rango 8–9
+IF LENGTH(v_rut_clean) NOT BETWEEN 8 AND 9 THEN
+    RAISE_APPLICATION_ERROR(-20002, 'RUT inválido: longitud incorrecta');
+END IF;
+```
+
+---
+
 ## Metodología obligatoria
 
 ### Verification Before Completion

@@ -326,7 +326,9 @@ class TestRoleModelOverrides:
         """El dict solo puede contener roles del fan-out de agentes."""
         valid_roles = {"backend", "database", "devops", "frontend"}
         for role in _ROLE_MODEL_OVERRIDES:
-            assert role in valid_roles, f"Rol inesperado en _ROLE_MODEL_OVERRIDES: {role}"
+            assert role in valid_roles, (
+                f"Rol inesperado en _ROLE_MODEL_OVERRIDES: {role}"
+            )
 
     def test_role_overrides_values_are_non_empty_strings(self):
         """Los valores del dict deben ser strings no vacíos (los vacíos se excluyen al construir)."""
@@ -381,7 +383,9 @@ class TestRoleModelOverrides:
 
             assert devops_model == "qwen2.5-coder:7b"
             assert backend_model == mr._AGENT_MODEL
-            assert devops_model != backend_model or mr._AGENT_MODEL == "qwen2.5-coder:7b"
+            assert (
+                devops_model != backend_model or mr._AGENT_MODEL == "qwen2.5-coder:7b"
+            )
         finally:
             mr._ROLE_MODEL_OVERRIDES.clear()
             mr._ROLE_MODEL_OVERRIDES.update(original)
@@ -389,6 +393,7 @@ class TestRoleModelOverrides:
     def test_settings_fields_exist_for_all_overrideable_roles(self):
         """OVDSettings debe tener campos para los 4 roles overrideables."""
         from settings import OVDSettings
+
         s = OVDSettings()
         assert hasattr(s, "ovd_model_backend")
         assert hasattr(s, "ovd_model_database")

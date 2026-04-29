@@ -2276,7 +2276,9 @@ async def generate_sdd(state: OVDState) -> dict:
         ]
 
     round_label = f" (revisión #{revision_count + 1})" if revision_count > 0 else ""
-    log.info("NODE_TIMING: node=generate_sdd elapsed=%.1fs", time.monotonic() - _t0_node)
+    log.info(
+        "NODE_TIMING: node=generate_sdd elapsed=%.1fs", time.monotonic() - _t0_node
+    )
     return {
         "sdd": sdd,
         "status": "sdd_generated",
@@ -2626,11 +2628,28 @@ _CLIENT_SIDE_AGENTS: frozenset[str] = frozenset({"frontend"})
 # S98-A: palabras clave que indican que el FR requiere un runner frontend explícito.
 # Si ninguna aparece en el FR raw y fr_type no es fullstack/frontend_only,
 # el runner frontend se omite para reducir llamadas LLM innecesarias.
-_FRONTEND_KEYWORDS: frozenset[str] = frozenset({
-    "frontend", "ui", "react", "vue", "angular", "html", "css",
-    "dashboard", "formulario", "interfaz", "componente", "vista",
-    "página", "pagina", "pantalla", "botón", "boton", "navbar",
-})
+_FRONTEND_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "frontend",
+        "ui",
+        "react",
+        "vue",
+        "angular",
+        "html",
+        "css",
+        "dashboard",
+        "formulario",
+        "interfaz",
+        "componente",
+        "vista",
+        "página",
+        "pagina",
+        "pantalla",
+        "botón",
+        "boton",
+        "navbar",
+    }
+)
 
 # S97-B: rutas que el agente devops NO debe escribir.
 # Evita que devops sobrescriba código Python del backend (issue S96: test_contracts.py).
@@ -3020,7 +3039,10 @@ async def route_agents(state: OVDState) -> dict:
 
     # S98-A: filtrado de runners — omitir frontend si el FR no lo menciona explícitamente.
     # Evita llamadas LLM innecesarias en FRs de backend puro (API REST, microservicio, etc.).
-    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+    if (
+        os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false"
+        and "frontend" in selected
+    ):
         fr_raw = analysis.get("raw", "").lower()
         fr_type = analysis.get("type", "feature").lower()
         if fr_type not in {"fullstack", "frontend_only"} and not any(
@@ -4640,7 +4662,9 @@ async def security_audit(state: OVDState) -> dict:
 
         _lesson_task.add_done_callback(_on_lesson_done)
 
-    log.info("NODE_TIMING: node=security_audit elapsed=%.1fs", time.monotonic() - _t0_node)
+    log.info(
+        "NODE_TIMING: node=security_audit elapsed=%.1fs", time.monotonic() - _t0_node
+    )
     return {
         "security_result": security,
         "security_scan_results": scan_results,
@@ -4980,6 +5004,31 @@ async def qa_review(state: OVDState) -> dict:
             )
             qa["issues"] = list(qa.get("issues", [])) + [
                 f"[S65-C] {iss}" for iss in _route_issues
+            ]
+
+    # S100-J: verificar que el agente frontend generó los componentes referenciados en el SDD.
+    # Si el SDD menciona componentes .tsx que no están en disco, agregar issue al QA.
+    if qa_directory:
+        _sdd = state.get("sdd", {})
+        _tasks = _sdd.get("tasks", []) if isinstance(_sdd, dict) else []
+        _missing_frontend: list[str] = []
+        for _task in _tasks:
+            if not isinstance(_task, dict):
+                continue
+            _agent = _task.get("agent", "")
+            _output = _task.get("output_file", "") or _task.get("file", "")
+            if _agent == "frontend" and _output and _output.endswith((".tsx", ".ts")):
+                _expected = pathlib.Path(qa_directory) / _output.lstrip("/")
+                if not _expected.exists():
+                    _missing_frontend.append(_output)
+        if _missing_frontend:
+            log.warning(
+                "qa_review: S100-J — %d componente(s) frontend del SDD no encontrados en disco: %s",
+                len(_missing_frontend),
+                _missing_frontend[:5],
+            )
+            qa["issues"] = list(qa.get("issues", [])) + [
+                f"[S100-J] Componente frontend faltante: {f}" for f in _missing_frontend
             ]
 
     # S41.A2: indexar issues de QA como lecciones (fire-and-forget)
@@ -5711,6 +5760,29 @@ async def run_tests(state: OVDState) -> dict:
             retry_round,
         )
 
+    # S100-A: eliminar stubs residuales de ciclos anteriores (S96-A) antes de ronda 0.
+    # Los stubs sobreviven entre ciclos porque S96-A solo los crea si no existen. Si el
+    # ciclo anterior los dejó en disco, enmascaran ImportError reales en el ciclo nuevo.
+    if retry_round == 0 and runner == "pytest" and work_dir:
+        _stub_marker = "# stub auto-generado por S96-A"
+        _stubs_removed: list[str] = []
+        for _py_file in pathlib.Path(work_dir).rglob("*.py"):
+            try:
+                _first_line = _py_file.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).split("\n", 1)[0]
+                if _first_line.startswith(_stub_marker):
+                    _py_file.unlink()
+                    _stubs_removed.append(_py_file.name)
+            except OSError:
+                pass
+        if _stubs_removed:
+            log.warning(
+                "run_tests: S100-A — %d stub(s) residuales eliminados: %s",
+                len(_stubs_removed),
+                _stubs_removed,
+            )
+
     # S65-E: garantizar infraestructura mínima Python en el workspace
     if runner == "pytest" and work_dir:
         _infra_created = _ensure_python_infrastructure(work_dir)
@@ -6037,6 +6109,34 @@ async def run_tests(state: OVDState) -> dict:
             cmd = ["cargo", "test", "--manifest-path", f"{work_dir}/Cargo.toml"]
         else:
             cmd = []
+
+        # S100-B: py_compile pre-check — detectar SyntaxError antes de gastar pytest.
+        # Retorna feedback inmediato sin ejecutar pytest si hay errores de sintaxis.
+        if cmd and runner == "pytest" and work_dir:
+            _syntax_errors: list[str] = []
+            for _pyf in pathlib.Path(work_dir).rglob("*.py"):
+                if ".venv" in _pyf.parts or "__pycache__" in _pyf.parts:
+                    continue
+                try:
+                    compile(
+                        _pyf.read_text(encoding="utf-8", errors="ignore"),
+                        str(_pyf),
+                        "exec",
+                    )
+                except SyntaxError as _se:
+                    _rel = str(_pyf.relative_to(work_dir))
+                    _syntax_errors.append(f"  {_rel}:{_se.lineno}: {_se.msg}")
+            if _syntax_errors:
+                _syn_feedback = (
+                    "[S100-B] SYNTAX ERROR — corregir antes de ejecutar tests:\n"
+                    + "\n".join(_syntax_errors[:10])
+                )
+                log.warning(
+                    "run_tests: S100-B syntax error(s) detectados — omitiendo pytest"
+                )
+                passed = False
+                output = _syn_feedback
+                cmd = []  # cancelar pytest
 
         if cmd:
             proc = await asyncio.create_subprocess_exec(
