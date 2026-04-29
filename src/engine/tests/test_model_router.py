@@ -21,8 +21,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from model_router import (
-    ResolvedConfig,
     _ROLE_MODEL_OVERRIDES,
+    ResolvedConfig,
     _apply_stack_routing,
     _cache,
     _cache_key,

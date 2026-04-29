@@ -893,6 +893,14 @@ async def analyze_fr(state: OVDState) -> dict:
 
     _final_oracle_involved = False if _oracle_override else result.oracle_involved
 
+    # S101-D: si la FR menciona Oracle explícitamente, forzar oracle_involved=True
+    # aunque el LLM retorne False. Contrapartida de S97-D (que fuerza False para BDs no-Oracle).
+    if not _final_oracle_involved and "oracle" in fr_text.lower():
+        _final_oracle_involved = True
+        log.info(
+            "analyze_fr: S101-D — oracle_involved forzado a True (FR menciona 'oracle' explícitamente)"
+        )
+
     analysis = {
         "raw": result.summary,
         "type": result.fr_type,
@@ -1278,6 +1286,83 @@ def _normalize_task_signatures(sdd: dict) -> dict:
                 task.get("description", "") + "\n\n" + " | ".join(injections)
             )
     return sdd
+
+
+def _fix_sdd_agent_assignments(tasks: list[dict]) -> list[dict]:
+    """S101-B: inferir agente correcto desde output_file cuando el LLM asigna todo a backend.
+
+    El LLM a veces genera tareas bien descritas (Dockerfile, migrations/*.sql, componentes .tsx)
+    pero les asigna agent='backend'. Este postprocesador corrige la asignación determinísticamente
+    basándose en la extensión y el path del output_file.
+    """
+    _ext_map = {
+        ".tsx": "frontend",
+        ".jsx": "frontend",
+        ".css": "frontend",
+        ".html": "frontend",
+        ".vue": "frontend",
+        ".sql": "database",
+    }
+    _path_map = [
+        ("migrations/", "database"),
+        ("migration/", "database"),
+        (".github/", "devops"),
+        (".docker/", "devops"),
+        ("k8s/", "devops"),
+        ("src/components/", "frontend"),
+        ("src/pages/", "frontend"),
+        ("src/hooks/", "frontend"),
+        ("src/views/", "frontend"),
+        ("src/stores/", "frontend"),
+    ]
+    _name_map = {
+        "Dockerfile": "devops",
+        "docker-compose.yml": "devops",
+        "docker-compose.yaml": "devops",
+        "nginx.conf": "devops",
+        ".dockerignore": "devops",
+        "docker-compose.override.yml": "devops",
+    }
+    corrected = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        output_file = task.get("output_file", "") or task.get("file", "") or ""
+        if not output_file:
+            continue
+        current_agent = task.get("agent", "backend")
+        inferred: str | None = None
+        # Por nombre de archivo exacto
+        fname = pathlib.Path(output_file).name
+        if fname in _name_map:
+            inferred = _name_map[fname]
+        # Por extensión
+        if inferred is None:
+            for ext, agent in _ext_map.items():
+                if output_file.endswith(ext):
+                    inferred = agent
+                    break
+        # Por prefijo de path
+        if inferred is None:
+            for path_prefix, agent in _path_map:
+                if path_prefix in output_file:
+                    inferred = agent
+                    break
+        if inferred and inferred != current_agent:
+            log.warning(
+                "S101-B: tarea %s reasignada '%s'→'%s' (output_file=%s)",
+                task.get("id", "?"),
+                current_agent,
+                inferred,
+                output_file,
+            )
+            task["agent"] = inferred
+            corrected += 1
+    if corrected:
+        log.warning(
+            "S101-B: %d tarea(s) reasignadas por inferencia de output_file", corrected
+        )
+    return tasks
 
 
 def _ensure_fastapi_main_task(sdd: dict, fr_analysis: dict) -> dict:
@@ -2200,6 +2285,12 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
         sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
+
+        # S101-B: corregir asignación de agentes basada en output_file del SDD.
+        # El LLM asigna a veces todas las tareas a 'backend' aunque la descripción y el
+        # output_file indiquen claramente frontend (.tsx), database (.sql/migrations/) o devops
+        # (Dockerfile, docker-compose.yml). Postprocesador determinístico — no requiere LLM.
+        sdd["tasks"] = _fix_sdd_agent_assignments(sdd["tasks"])
 
         # S72-A: inyectar firmas canónicas en task descriptions para evitar naming en español
         sdd = _normalize_task_signatures(sdd)
@@ -5781,6 +5872,53 @@ async def run_tests(state: OVDState) -> dict:
                 "run_tests: S100-A — %d stub(s) residuales eliminados: %s",
                 len(_stubs_removed),
                 _stubs_removed,
+            )
+
+    # S101-A: renombrar service.py → services.py en directorios de dominio + actualizar imports.
+    # El LLM genera service.py (singular) pese a las instrucciones del template. Este postprocesador
+    # lo corrige determinísticamente antes de ejecutar pytest — evita ModuleNotFoundError al importar
+    # desde src.X.services cuando el archivo se llama service.py.
+    if runner == "pytest" and work_dir:
+        _renamed_services: list[str] = []
+        for _svc_file in pathlib.Path(work_dir).rglob("service.py"):
+            if any(
+                p in {".venv", "__pycache__", "node_modules", ".git"}
+                for p in _svc_file.parts
+            ):
+                continue
+            _new_svc_path = _svc_file.parent / "services.py"
+            try:
+                _svc_file.rename(_new_svc_path)
+                _module_dir = _svc_file.parent.name  # ej: "contracts", "auth"
+                _renamed_services.append(
+                    str(_svc_file.relative_to(pathlib.Path(work_dir)))
+                )
+                # Actualizar imports en todos los .py del workspace
+                for _imp_file in pathlib.Path(work_dir).rglob("*.py"):
+                    if any(p in {".venv", "__pycache__"} for p in _imp_file.parts):
+                        continue
+                    try:
+                        _imp_content = _imp_file.read_text(
+                            encoding="utf-8", errors="ignore"
+                        )
+                        _imp_updated = _imp_content.replace(
+                            f"from src.{_module_dir}.service import",
+                            f"from src.{_module_dir}.services import",
+                        ).replace(
+                            "from .service import",
+                            "from .services import",
+                        )
+                        if _imp_updated != _imp_content:
+                            _imp_file.write_text(_imp_updated, encoding="utf-8")
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+        if _renamed_services:
+            log.warning(
+                "run_tests: S101-A — %d service.py renombrado(s) a services.py: %s",
+                len(_renamed_services),
+                _renamed_services,
             )
 
     # S65-E: garantizar infraestructura mínima Python en el workspace

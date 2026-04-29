@@ -13,9 +13,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from graph import _FRONTEND_KEYWORDS, _AGENT_RUNNERS
+from graph import _AGENT_RUNNERS, _FRONTEND_KEYWORDS
 from settings import OVDSettings
-
 
 # ---------------------------------------------------------------------------
 # S98-A: filtrado de runner 'frontend'

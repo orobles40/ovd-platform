@@ -363,6 +363,56 @@ def _fix_sqlalchemy_oracle_params(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S101-C — Reemplazar DATABASE_URL hardcodeada por os.environ.get()
+# ---------------------------------------------------------------------------
+
+
+def _fix_database_url_hardcoded(content: str, rel_path: str) -> str:
+    """S101-C: reemplaza DATABASE_URL = '...' por os.environ.get() en database.py.
+
+    El LLM hardcodea credenciales pese a la prohibición en el template. Postprocesador
+    determinístico: detecta el patrón de asignación directa y lo convierte a env var,
+    preservando el valor original como default para facilitar el desarrollo local.
+    """
+    if not (rel_path.endswith("database.py") or rel_path.endswith("/database.py")):
+        return content
+    # Solo actúa si hay una asignación directa (no os.environ, no f-string con variable)
+    _pattern = re.compile(
+        r'^(DATABASE_URL\s*=\s*)["\']([a-zA-Z][a-zA-Z0-9+._-]*://[^"\']+)["\']',
+        re.MULTILINE,
+    )
+    match = _pattern.search(content)
+    if not match:
+        return content
+    hardcoded_url = match.group(2)
+    new_content = _pattern.sub(
+        r'\g<1>os.environ.get("DATABASE_URL", "' + hardcoded_url + '")',
+        content,
+    )
+    if "import os" not in new_content and "import os\n" not in new_content:
+        # Insertar import os antes de la primera línea no-comentario, no-docstring
+        lines = new_content.splitlines(keepends=True)
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if (
+                stripped
+                and not stripped.startswith("#")
+                and not stripped.startswith('"""')
+                and not stripped.startswith("'''")
+            ):
+                insert_idx = i
+                break
+        lines.insert(insert_idx, "import os\n")
+        new_content = "".join(lines)
+    if new_content != content:
+        log.warning(
+            "[S101-C] DATABASE_URL hardcodeada reemplazada por os.environ.get() en %s",
+            rel_path,
+        )
+    return new_content
+
+
 # S84-A — Fix Oracle init en database.py con URL PostgreSQL
 # ---------------------------------------------------------------------------
 
@@ -975,6 +1025,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)
+
+    # S101-C: reemplazar DATABASE_URL hardcodeada por os.environ.get()
+    content = _fix_database_url_hardcoded(content, rel_path)
 
     # S84-A: eliminar Oracle init cuando DATABASE_URL es PostgreSQL
     content = _fix_oracle_init_in_postgres_db(content, rel_path)
