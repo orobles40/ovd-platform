@@ -96,6 +96,59 @@ Después de auto-generar archivos (S89-A/S90-A/S91-A), re-ejecutar `_validate_ar
 
 ---
 
+### S96-H — RAG actualizado: re-indexación incremental + post-ciclo (ALTO)
+
+**Contexto:** El RAG de `ovd-platform` tiene una foto congelada del código (bootstrap puntual, fecha desconocida). Cada sesión de desarrollo modifica `graph.py`, `api.py`, etc. sin que el RAG se actualice. Esto bloquea el escenario futuro donde OVD se desarrolla a sí mismo vía ciclos.
+
+#### H1 — Re-bootstrap inicial (una sola vez)
+
+Ejecutar bootstrap completo para poner el RAG al día con el código actual:
+
+```python
+# Vía endpoint existente POST /orgs/{org_id}/knowledge/index
+# o directamente via script:
+await bootstrap.run(
+    org_id="01KMK160F1TJ807Z0BDSJD504D",
+    project_id="ovd-platform",
+    source_path="src/engine/",
+    doc_type="codebase",
+)
+await bootstrap.run(
+    org_id="01KMK160F1TJ807Z0BDSJD504D",
+    project_id="ovd-platform",
+    source_path="docs/",
+    doc_type="doc",
+)
+```
+
+Antes de re-indexar: limpiar chunks obsoletos de la colección `ovd_project_ovd-platform`.
+
+#### H2 — Post-ciclo: indexar SDD, código generado, errores y métricas
+
+Extender `_index_delivery_report()` en `graph.py` para indexar 4 tipos adicionales al finalizar cada ciclo:
+
+| doc_type | Contenido | Condición |
+|---|---|---|
+| `sdd` | SDD generado por `generate_sdd` | Siempre |
+| `lesson_backend` / `lesson_frontend` / `lesson_database` / `lesson_devops` | Artefactos de código aprobados por agente | Solo si `qa_score >= 70` |
+| `lesson_general` | Errores de pytest + fix aplicado en reintentos | Si hubo ≥1 reintento |
+| `cycle_metrics` | JSON: qa_score, duración, stack, fr_type, complejidad, agentes fallidos | Siempre |
+
+#### H3 — Re-indexación incremental en session-close
+
+Agregar **Paso 9** al skill `session-close`: re-indexar solo los archivos de `src/engine/` y `docs/` modificados en la sesión actual.
+
+```bash
+# Obtener archivos .py y .md modificados desde el último commit
+git diff --name-only HEAD | grep -E "^src/engine/.*\.py$|^docs/.*\.md$"
+```
+
+Por cada archivo modificado → llamar al endpoint `/orgs/{org_id}/knowledge/index` con ese archivo específico (no re-bootstrap completo).
+
+**Impacto:** el RAG refleja el estado real del proyecto después de cada sesión, sin costo de re-indexación total.
+
+---
+
 ## Ciclo de validación S96
 
 ```bash

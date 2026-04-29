@@ -207,3 +207,56 @@ Agregar al final de `.claude/skills-log.md` (después de la última entrada):
 ```bash
 rm -f .claude/session-active.md
 ```
+
+## Paso 9 — Re-indexar RAG (archivos modificados)
+
+> Aplica a partir de S96-H. Si el engine no está corriendo, omitir con advertencia.
+
+### 9a. Identificar archivos modificados en la sesión
+
+```bash
+git diff --name-only HEAD | grep -E "^src/engine/.*\.py$|^docs/.*\.md$"
+```
+
+Si no hay archivos modificados → omitir el paso.
+
+### 9b. Verificar que el engine está activo
+
+```bash
+curl -s --max-time 3 http://localhost:8001/health 2>/dev/null | grep -q "ok" && echo "UP" || echo "DOWN"
+```
+
+Si está DOWN → advertir: "RAG no actualizado — engine no disponible. Re-indexar manualmente cuando el engine esté activo." y omitir 9c.
+
+### 9c. Re-indexar cada archivo modificado
+
+Por cada archivo `.py` de `src/engine/` (excluyendo `tests/` y `.venv/`):
+
+```bash
+SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
+curl -s -X POST "http://localhost:8001/orgs/01KMK160F1TJ807Z0BDSJD504D/knowledge/index" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "project_id": "ovd-platform",
+    "source_path": "<ruta-absoluta-del-archivo>",
+    "doc_type": "codebase"
+  }'
+```
+
+Por cada archivo `.md` de `docs/`:
+
+```bash
+curl -s -X POST "http://localhost:8001/orgs/01KMK160F1TJ807Z0BDSJD504D/knowledge/index" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "project_id": "ovd-platform",
+    "source_path": "<ruta-absoluta-del-archivo>",
+    "doc_type": "doc"
+  }'
+```
+
+Reportar: `RAG actualizado — N archivos re-indexados (M codebase + K docs)`
+
+> **Nota:** Este paso usa re-indexación incremental (archivo a archivo), no re-bootstrap completo. El bootstrap completo solo se ejecuta manualmente en H1.
