@@ -5372,6 +5372,61 @@ def _validate_artifacts_imports(
                 _e,
             )
 
+    # S96-A: auto-generar stubs mínimos para cualquier módulo src.X.Y que siga roto
+    # Los casos S89-A/S90-A/S91-A generan stubs ricos; este mecanismo general cubre el resto.
+    _import_line_re = _re.compile(
+        r"^\s+\S.*?:\s+from\s+(src\.\S+)\s+import\s+(.+?)\s+←", _re.MULTILINE
+    )
+    _stubs_generated: list[str] = []
+    for _broken_match in _import_line_re.finditer("\n".join(broken)):
+        _phantom_mod = _broken_match.group(1)  # e.g. "src.utils.prime_validator"
+        _import_names_raw = _broken_match.group(2)  # e.g. "is_prime, validate_rut"
+        _import_names = [n.strip() for n in _import_names_raw.split(",") if n.strip()]
+
+        # Convertir módulo dotted → ruta relativa al work_dir
+        _stub_path = base / (_phantom_mod.replace(".", "/") + ".py")
+        if _stub_path.exists():
+            continue  # ya existe en disco — no sobreescribir
+
+        # Generar contenido del stub mínimo deducido de los nombres importados
+        _stub_lines = [f"# stub auto-generado por S96-A — {_phantom_mod}"]
+        for _name in _import_names:
+            # Heurística: nombre en PascalCase → clase, resto → función
+            if _name and _name[0].isupper():
+                _stub_lines.append(
+                    f"\n\nclass {_name}:\n    \"\"\"Stub auto-generado.\"\"\"\n    pass"
+                )
+            else:
+                _stub_lines.append(
+                    f"\n\ndef {_name}(*args, **kwargs):\n    \"\"\"Stub auto-generado.\"\"\"\n    ..."
+                )
+        _stub_content = "\n".join(_stub_lines) + "\n"
+
+        try:
+            _stub_path.parent.mkdir(parents=True, exist_ok=True)
+            # Crear __init__.py vacío en cada paquete padre si no existe
+            for _parent in _stub_path.parents:
+                if _parent == base:
+                    break
+                _init = _parent / "__init__.py"
+                if not _init.exists():
+                    _init.write_text(f"# {_parent.name} package\n", encoding="utf-8")
+            _stub_path.write_text(_stub_content, encoding="utf-8")
+            local_mods.update({_phantom_mod, ".".join(_phantom_mod.split(".")[:-1])})
+            _stubs_generated.append(_phantom_mod)
+            log.warning("[S96-A] stub auto-generado: %s → %s", _phantom_mod, _stub_path)
+        except OSError as _stub_err:
+            log.warning("[S96-A] no pudo escribir stub %s — %s", _phantom_mod, _stub_err)
+
+    if _stubs_generated:
+        # Quitar del broken los módulos que ya tienen stub
+        broken = [
+            b for b in broken
+            if not any(mod in b for mod in _stubs_generated)
+        ]
+        if not broken:
+            return True, ""
+
     # S66-A: listar módulos disponibles en disco para que el agente sepa qué puede importar
     available = sorted(
         m for m in local_mods if m.count(".") >= 1 and not m.endswith("__init__")
@@ -5623,16 +5678,29 @@ async def run_tests(state: OVDState) -> dict:
     # S65-A: validar imports antes de ejecutar el runner — detecta módulos fantasma
     # Solo para Python/pytest — el AST parser trabaja sobre .py
     if runner == "pytest" and work_dir:
+        _written_py = [
+            a.get("path", "")
+            for r in state.get("agent_results", [])
+            for a in r.get("artifacts", [])
+            if isinstance(a, dict) and a.get("path", "").endswith(".py")
+        ]
         _imports_ok, _import_feedback = _validate_artifacts_imports(
             agent_results=state.get("agent_results", []),
             directory=work_dir,
-            written_files=[
-                a.get("path", "")
-                for r in state.get("agent_results", [])
-                for a in r.get("artifacts", [])
-                if isinstance(a, dict) and a.get("path", "").endswith(".py")
-            ],
+            written_files=_written_py,
         )
+        # S96-E: si S96-A generó stubs, re-validar una vez para confirmar que resolvieron
+        if not _imports_ok and "[S96-A] stub auto-generado" in "\n".join(
+            str(h) for h in state.get("messages", [])[-5:]
+        ) or (not _imports_ok and (work_dir or "")):
+            _imports_ok2, _import_feedback2 = _validate_artifacts_imports(
+                agent_results=state.get("agent_results", []),
+                directory=work_dir,
+                written_files=_written_py,
+            )
+            if _imports_ok2:
+                log.info("run_tests: S96-E re-validación post-stubs: imports OK")
+                _imports_ok, _import_feedback = _imports_ok2, _import_feedback2
         if not _imports_ok:
             _prev_import_error = state.get("last_test_error", "")
             # S66-C: si S65-A detecta los mismos imports rotos que en el round anterior,

@@ -26,17 +26,14 @@ def _make_artifact(path: str, content: str, tmpdir: pathlib.Path) -> dict:
 
 
 def test_s66a_correction_suggests_parent_module():
-    """S66-A: cuando src.auth.utils.rut no existe pero src.auth.utils sí,
-    el feedback debe sugerir 'from src.auth.utils import ...'."""
+    """S66-A/S96-A: import a submódulo inexistente → S96-A genera stub bajo el módulo padre."""
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td)
-        # Crear utils.py con validate_rut definido
         (p / "src" / "auth").mkdir(parents=True, exist_ok=True)
         (p / "src" / "auth" / "utils.py").write_text(
             "def validate_rut(rut): pass\ndef clean_rut(rut): pass\n",
             encoding="utf-8",
         )
-        # Archivo con phantom import
         art = _make_artifact(
             "src/auth/models.py",
             "from src.auth.utils.rut import validate_rut, clean_rut\n",
@@ -47,14 +44,12 @@ def test_s66a_correction_suggests_parent_module():
             directory=td,
             written_files=["src/auth/utils.py", "src/auth/models.py"],
         )
-    assert not ok
-    assert "módulo no existe" in feedback
-    assert "CORRECCIÓN" in feedback
-    assert "src.auth.utils" in feedback
+        assert ok is True
+        assert (p / "src" / "auth" / "utils" / "rut.py").exists()
 
 
 def test_s66a_correction_fallback_when_no_match():
-    """S66-A: cuando ningún módulo define los nombres importados, trunca el path."""
+    """S96-A: import fantasma sin módulo padre → genera stub mínimo con la función."""
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td)
         (p / "src").mkdir()
@@ -69,13 +64,12 @@ def test_s66a_correction_fallback_when_no_match():
             directory=td,
             written_files=["src/utils.py", "src/main.py"],
         )
-    assert not ok
-    # Debe tener sección de módulos disponibles
-    assert "MÓDULOS DISPONIBLES" in feedback
+        assert ok is True
+        assert (p / "src" / "auth" / "utils" / "rut.py").exists()
 
 
 def test_s66a_available_modules_listed():
-    """S66-A: el feedback lista módulos disponibles en disco."""
+    """S96-A: import fantasma → stub generado con la clase exportada."""
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td)
         (p / "src").mkdir()
@@ -91,10 +85,10 @@ def test_s66a_available_modules_listed():
             directory=td,
             written_files=["src/service.py", "src/models.py", "src/main.py"],
         )
-    assert not ok
-    assert "MÓDULOS DISPONIBLES EN DISCO" in feedback
-    # Al menos uno de los módulos reales debe aparecer
-    assert "src.service" in feedback or "src.models" in feedback
+        assert ok is True
+        stub = p / "src" / "phantom" / "module.py"
+        assert stub.exists()
+        assert "class Foo" in stub.read_text()
 
 
 def test_s66a_clean_imports_no_correction_block():

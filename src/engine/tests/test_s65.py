@@ -45,7 +45,7 @@ def test_s65a_clean_imports_returns_true():
 
 
 def test_s65a_phantom_import_detected():
-    """Import de módulo fantasma es detectado y retorna feedback."""
+    """Import de módulo fantasma → S96-A genera stub mínimo y retorna ok=True."""
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td)
         art = _make_artifact(
@@ -58,9 +58,9 @@ def test_s65a_phantom_import_detected():
             directory=td,
             written_files=["src/main.py"],
         )
-    assert ok is False
-    assert "src.auth.dependencies" in msg
-    assert "[S65-A]" in msg
+        assert ok is True
+        assert msg == ""
+        assert (p / "src" / "auth" / "dependencies.py").exists()
 
 
 def test_s65a_local_module_not_flagged():

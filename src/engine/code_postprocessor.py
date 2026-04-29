@@ -856,6 +856,68 @@ def _fix_benefits_module_import(content: str) -> str:
     )
 
 
+# Módulos que pertenecen a proyectos anteriores y nunca deben aparecer en código nuevo.
+# El LLM los inyecta cuando su contexto se contamina con sesiones previas.
+_SPURIOUS_IMPORT_PATTERNS: list[str] = [
+    r"^(?:from|import)\s+src\.utils\.prime_validator\b[^\n]*\n?",
+    r"^(?:from|import)\s+src\.utils\.imc_validator\b[^\n]*\n?",
+    r"^(?:from|import)\s+src\.calculadora\b[^\n]*\n?",
+    r"^(?:from|import)\s+src\.utils\.calculadora\b[^\n]*\n?",
+]
+_SPURIOUS_IMPORT_RE = re.compile(
+    "|".join(_SPURIOUS_IMPORT_PATTERNS),
+    flags=re.MULTILINE,
+)
+
+
+def _fix_spurious_utility_imports(content: str) -> str:
+    """S96-B: elimina imports de módulos de proyectos anteriores inyectados por el LLM.
+
+    Causa raíz: el LLM contamina el contexto con proyectos previos (calculadora IMC,
+    validador de primos) y genera imports que no pertenecen al dominio actual.
+    Eliminación determinística vía regex.
+    """
+    cleaned, count = _SPURIOUS_IMPORT_RE.subn("", content)
+    if count:
+        log.warning("[S96-B] eliminados %d imports espurios de proyectos anteriores", count)
+    return cleaned
+
+
+# Mapa determinístico de clases ORM en español → inglés.
+# El template system_backend.md prohíbe los nombres en español, pero el LLM
+# los genera igualmente. Este postprocessor corrige el código generado.
+_ORM_CLASS_RENAME: dict[str, str] = {
+    "ContratoORM": "ContractORM",
+    "BeneficioORM": "BenefitORM",
+    "UsuarioORM": "UserORM",
+    "EmpleadoORM": "EmployeeORM",
+    "ProductoORM": "ProductORM",
+    "PedidoORM": "OrderORM",
+    "FacturaORM": "InvoiceORM",
+    "ClienteORM": "CustomerORM",
+    "PagoORM": "PaymentORM",
+    "CategoriaORM": "CategoryORM",
+}
+
+_ORM_RENAME_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in _ORM_CLASS_RENAME) + r")\b"
+)
+
+
+def _fix_orm_class_names_es_to_en(content: str) -> str:
+    """S96-C: renombra clases ORM generadas en español al equivalente en inglés.
+
+    El LLM sigue generando ContratoORM/BeneficioORM/UsuarioORM pese a las
+    restricciones en el template. Corrección determinística vía re.sub().
+    """
+    result, count = _ORM_RENAME_RE.subn(
+        lambda m: _ORM_CLASS_RENAME[m.group(0)], content
+    )
+    if count:
+        log.warning("[S96-C] renombradas %d clases ORM español→inglés", count)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file
 # ---------------------------------------------------------------------------
@@ -929,6 +991,14 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S90-B: redirigir imports src.benefits.* → src.contracts.*
     if not is_conftest:
         content = _fix_benefits_module_import(content)
+
+    # S96-B: eliminar imports espurios de proyectos anteriores (prime_validator, imc, calculadora)
+    if not is_conftest:
+        content = _fix_spurious_utility_imports(content)
+
+    # S96-C: renombrar clases ORM español→inglés (ContratoORM→ContractORM, etc.)
+    if not is_conftest:
+        content = _fix_orm_class_names_es_to_en(content)
 
     # S81-A / S82-A: eliminar clases ORM duplicadas en service.py (solo si models.py existe en disco)
     if not is_conftest:

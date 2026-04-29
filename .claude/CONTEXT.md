@@ -11,36 +11,39 @@
 - **Sprint activo:** S96
 - **Rama de trabajo:** `dev`
 - **Sprints completados:** S3 → S95
-- **Tests:** 1542 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline
+- **Tests:** 1542 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+  *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-04-28 — sesión 2)
+## Última sesión (2026-04-29 — sesión 3)
 
 **Completado:**
-- Análisis completo del RAG: colecciones activas, contenido indexado, gaps identificados
-- S96-H: propuesta re-indexación incremental post-sesión + post-ciclo (4 nuevos doc_types)
-- S96-I: base de conocimiento externa — 13 repos en 4 categorías, .gitignore + setup-knowledge.sh
-- Fix slash commands: migrado `.claude/skills/` → `.claude/commands/` (formato correcto Claude Code)
-- Logging automático de sesiones: session-active.md + skills-log.md operativos
-- ruff auto-fix: 2 errores corregidos, 3 archivos reformateados
+- Fix 4 tests (test_s65a_phantom_import_detected, test_s66a × 3) — assertions movidas dentro del `with tempfile` block
+- S96-A validado en ciclo real: auto-generó stub `src/contracts/schemas.py`, ciclo continuó sin abort
+- Ciclo prueba S96 ejecutado: thread `124f0b66`, 19m 42s, QA 50/100, 21 archivos, 347k tokens
+- INFORME_PRUEBA_S96.md generado con análisis completo + 5 gaps identificados
+- S96-F validado: /auth/login funcional, dashboard web operativo
 
-**Decisiones tomadas:**
-- RAG escenario 1 (OVD se desarrolla a sí mismo) → re-indexación incremental en session-close
-- RAG escenario 2 (Claude Code + usuario) → NO usa pgvector, lee archivos directamente
-- Repos externos NO se indexan en pgvector — solo grep/lectura directa
-- kyrolabs/awesome-agents descartado (solo links, sin valor semántico)
+**Resultado del ciclo prueba S96:**
+- Security: 100/100 (bypass S48-A), QA: 50/100 (3 rondas sin mejoría)
+- GAP-S96-1: Conflicto perfil proyecto (Oracle) vs FR explícita (PostgreSQL) → QA penaliza
+- GAP-S96-2: devops sobrescribió tests/test_contracts.py del backend
+- GAP-S96-3: QA feedback no produce correcciones concretas en el agente
+- GAP-S96-4: SSE log no actualiza tras reconexión (GAP-S47-A pendiente)
+- GAP-S96-5: Frontend no asignado con FR que menciona validación frontend
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea:** S96-F — Fix POST /auth/login retorna 500
-- Causa probable: error en `_get_user_by_email()` o en emisión de tokens
-- Workaround actual: curl + OVD_SECRET
-- Bloquea: dashboard web completo
-- Validar con: `/session-start` (ahora en .claude/commands/ — debería funcionar)
+**Primera tarea:** S97 — Correcciones para QA > 80
+- S97-A: FR explícita BD > perfil proyecto en analyze_fr
+- S97-B: Protección write_artifacts entre agentes (no sobrescribir)
+- S97-C: Feedback QA con snippets prescriptivos de corrección
+- S97-D: Detección keyword "frontend" en FR → asignar agente frontend
+- S47: Background task + event queue (SSE log no actualiza)
 
 ---
 
@@ -65,6 +68,8 @@
 |---|---|---|---|
 | `POST /auth/login` → 500 | Bloquea dashboard web | ✅ RESUELTO | S96-F |
 | `test_s63b_cleanup_in_retry_round_zero` | Suite no limpia | Pendiente | S96-D |
+| QA score ≤ 50 en ciclos con 2 agentes | Conflicto BD perfil/FR | Pendiente | S97-A |
+| devops sobrescribe tests del backend | write_artifacts sin protección | Pendiente | S97-B |
 
 ---
 
@@ -76,6 +81,7 @@
 | S84 | e98bf96e | — | exit 2 | 5m 38s |
 | S94 | 5a17c6a2 | — | **9 items / 1 error** | — |
 | S95 | 65ab6e7b | — | bloquea S65-A | — |
+| S96 | 124f0b66 | **50** | import_err × 3 | 19m 42s |
 
 ---
 
