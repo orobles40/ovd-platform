@@ -51,33 +51,16 @@ docker start postgres_db
 - PostgreSQL en Docker: contenedor `postgres_db` (pgvector/pgvector:pg16, puerto 5432)
 - OVD_SECRET: ver `src/engine/.env`
 
-## Estado actual (2026-04-28)
+## Estado actual
 
-- **Sprints completados:** S3 → S95 (rama `dev`)
-- **Tests:** Python unit ~1477 + integration 14 + docker 5 | Frontend (Vitest) 34 | Rust inline 26
-- **Próximo foco:** S96 — ver `docs/sprints/CURRENT.md`
-- **Directorio de entregas dev:** `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/`
+Ver `.claude/CONTEXT.md` para estado dinámico del proyecto:
+- Sprint activo, tareas pendientes y completadas
+- Fallos pre-existentes a corregir
+- Issues abiertos
+- Ciclos de referencia
+- Skills activos
 
-### Ciclos de referencia
-
-| Sprint | Hash | QA | pytest | Duración |
-|--------|------|----|--------|----------|
-| S76 | c0e2e71e | **93** | collection_error | 13 min |
-| S84 | e98bf96e | — | exit 2 | 5m 38s |
-| S94 | 5a17c6a2 | — | **9 items / 1 error** | — |
-| S95 | 65ab6e7b | — | bloquea S65-A | — |
-
-### Fallos pre-existentes (no regresar)
-
-- `test_s31::test_cycle_start_ts_reciente` — flaky por timing
-- `test_s63b_cleanup_not_in_run_tests` — RuntimeError
-- `test_alembic_migrations::test_revision_actual_es_head` — timestamp
-- `test_s39::test_usa_cap_800_en_truncate` — obsoleto por S61-B
-- `test_s63b_cleanup_in_retry_round_zero` — roto por S94-fix (pendiente S96-D)
-
-### Issue abierto
-
-`POST /auth/login` retorna 500 — bloquea el dashboard. Workaround: curl + OVD_SECRET.
+`CONTEXT.md` se actualiza con `/session-close` al final de cada sesión.
 
 ## ADR-003 — Selección de modelos LLM
 
