@@ -39,10 +39,12 @@
 ## Próxima sesión
 
 **Primera tarea:** S97 — Correcciones para QA > 80
-- S97-A: FR explícita BD > perfil proyecto en analyze_fr
-- S97-B: Protección write_artifacts entre agentes (no sobrescribir)
-- S97-C: Feedback QA con snippets prescriptivos de corrección
-- S97-D: Detección keyword "frontend" en FR → asignar agente frontend
+- Plan detallado: `/mis-entregas/contratos-beneficios/PLAN_S97.md`
+- S97-A: `qa_score_history` reducer + early stopping si delta < 5 puntos
+- S97-B: File locking `agent_file_claims` + orden secuencial database→backend→devops
+- S97-C: `_build_qa_feedback` prescriptivo con [ISSUE-N], [ACCIÓN], ubicaciones
+- S97-D: FR explícita BD > perfil proyecto en `analyze_fr`
+- S97-E: temperature=0.5 en retry (vs 0.7 en generación inicial)
 - S47: Background task + event queue (SSE log no actualiza)
 
 ---

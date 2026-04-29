@@ -5394,11 +5394,11 @@ def _validate_artifacts_imports(
             # Heurística: nombre en PascalCase → clase, resto → función
             if _name and _name[0].isupper():
                 _stub_lines.append(
-                    f"\n\nclass {_name}:\n    \"\"\"Stub auto-generado.\"\"\"\n    pass"
+                    f'\n\nclass {_name}:\n    """Stub auto-generado."""\n    pass'
                 )
             else:
                 _stub_lines.append(
-                    f"\n\ndef {_name}(*args, **kwargs):\n    \"\"\"Stub auto-generado.\"\"\"\n    ..."
+                    f'\n\ndef {_name}(*args, **kwargs):\n    """Stub auto-generado."""\n    ...'
                 )
         _stub_content = "\n".join(_stub_lines) + "\n"
 
@@ -5416,14 +5416,13 @@ def _validate_artifacts_imports(
             _stubs_generated.append(_phantom_mod)
             log.warning("[S96-A] stub auto-generado: %s → %s", _phantom_mod, _stub_path)
         except OSError as _stub_err:
-            log.warning("[S96-A] no pudo escribir stub %s — %s", _phantom_mod, _stub_err)
+            log.warning(
+                "[S96-A] no pudo escribir stub %s — %s", _phantom_mod, _stub_err
+            )
 
     if _stubs_generated:
         # Quitar del broken los módulos que ya tienen stub
-        broken = [
-            b for b in broken
-            if not any(mod in b for mod in _stubs_generated)
-        ]
+        broken = [b for b in broken if not any(mod in b for mod in _stubs_generated)]
         if not broken:
             return True, ""
 
@@ -5690,9 +5689,12 @@ async def run_tests(state: OVDState) -> dict:
             written_files=_written_py,
         )
         # S96-E: si S96-A generó stubs, re-validar una vez para confirmar que resolvieron
-        if not _imports_ok and "[S96-A] stub auto-generado" in "\n".join(
-            str(h) for h in state.get("messages", [])[-5:]
-        ) or (not _imports_ok and (work_dir or "")):
+        if (
+            not _imports_ok
+            and "[S96-A] stub auto-generado"
+            in "\n".join(str(h) for h in state.get("messages", [])[-5:])
+            or (not _imports_ok and (work_dir or ""))
+        ):
             _imports_ok2, _import_feedback2 = _validate_artifacts_imports(
                 agent_results=state.get("agent_results", []),
                 directory=work_dir,

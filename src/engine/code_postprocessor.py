@@ -879,7 +879,9 @@ def _fix_spurious_utility_imports(content: str) -> str:
     """
     cleaned, count = _SPURIOUS_IMPORT_RE.subn("", content)
     if count:
-        log.warning("[S96-B] eliminados %d imports espurios de proyectos anteriores", count)
+        log.warning(
+            "[S96-B] eliminados %d imports espurios de proyectos anteriores", count
+        )
     return cleaned
 
 
