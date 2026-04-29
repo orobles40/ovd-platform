@@ -168,3 +168,42 @@ generaba 50k-100k tokens de <think> por request. Con ciclos simples en S22, el t
 completaba antes del timeout — el bug solo se hizo visible con contextos más grandes (S97).
 El cuello de botella Ollama (8 agentes serializados = 4-8 horas) hace inviable validar S97
 con qwen3-coder:30b. Próxima sesión: validar con Claude API (~15 min, ~$0.20).
+
+## S004 | 2026-04-29
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~13:00 |
+| Cierre | 17:30 |
+| Duración | ~4h 30m |
+| Sprint | S100 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | — |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: 2 I001 pre-existentes (test_model_router, test_s98) — diferidos S101
+- [x] ruff format: 5 archivos reformateados
+- [x] pytest unit: 1620 passed / 1 failed (test_s78 — corregido en sesión)
+- [x] OVD conventions: PASS
+- Push ejecutado: NO
+
+### Completado hoy
+- S100-A a S100-M: 12 fixes calidad (stub cleanup, py_compile, jose JWT, DATABASE_URL env, ORM↔SQL, Oracle anti-patrones, TypeScript validateRut, require_role, services.py, QA frontend check, SSE reconnect, DV=K guide)
+- test_s100.py: 23/23 PASS
+- test_s78 corregido: ampliar aserción para aceptar src.contracts.services (S100-I)
+- Ciclo validación S100 (12c71de5): QA 65/100, 21m, solo backend ejecutado (regresión SDD)
+- INFORME_PRUEBA_S100.md: 3 fixes absorbidos, 2 no absorbidos, 5 nuevos gaps documentados
+- Commits: 5a8c06e93 (S100 features) + ba1e2eb41 (session close)
+
+### Notas
+Ciclo S100 reveló regresión crítica: SDD asignó 22 tareas solo a backend — frontend, database, devops no ejecutaron.
+QA +5 pts (60→65) pero no es real: no hay frontend ni infra para penalizar.
+3 fixes verificados en ciclo: validate_rut DV=K (GAP-T1 desde S43 RESUELTO), jose JWT consistente, NameError auth/router eliminado.
+2 no absorbidos: services.py singular persiste, DATABASE_URL hardcodeada.
+S101 prioritario: postprocesador renaming + validación distribución agentes en SDD.
