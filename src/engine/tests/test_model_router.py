@@ -3,6 +3,7 @@ OVD Platform — Tests para model_router.py
 Unit tests: sin LLM real, sin API del Bridge real.
 
 Cubre:
+  - S98-B: _ROLE_MODEL_OVERRIDES — override de modelo por rol específico
   - ResolvedConfig dataclass
   - _apply_stack_routing: lógica de override según stack_routing
   - _cache_key / invalidate_cache
@@ -21,6 +22,7 @@ import pytest
 
 from model_router import (
     ResolvedConfig,
+    _ROLE_MODEL_OVERRIDES,
     _apply_stack_routing,
     _cache,
     _cache_key,
@@ -303,3 +305,92 @@ class TestWarnIfSmallModel:
         with caplog.at_level(logging.WARNING):
             _warn_if_small_model("llama:3b", "qa")
         assert len(caplog.records) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestRoleModelOverrides — S98-B
+# ---------------------------------------------------------------------------
+
+
+class TestRoleModelOverrides:
+    """
+    Verifica el dict _ROLE_MODEL_OVERRIDES que permite asignar modelos distintos
+    por rol (OVD_MODEL_DEVOPS, OVD_MODEL_BACKEND, etc.) sin afectar otros roles.
+    """
+
+    def test_role_overrides_dict_exists(self):
+        """_ROLE_MODEL_OVERRIDES debe existir y ser un dict."""
+        assert isinstance(_ROLE_MODEL_OVERRIDES, dict)
+
+    def test_role_overrides_only_contains_known_roles(self):
+        """El dict solo puede contener roles del fan-out de agentes."""
+        valid_roles = {"backend", "database", "devops", "frontend"}
+        for role in _ROLE_MODEL_OVERRIDES:
+            assert role in valid_roles, f"Rol inesperado en _ROLE_MODEL_OVERRIDES: {role}"
+
+    def test_role_overrides_values_are_non_empty_strings(self):
+        """Los valores del dict deben ser strings no vacíos (los vacíos se excluyen al construir)."""
+        for role, model in _ROLE_MODEL_OVERRIDES.items():
+            assert isinstance(model, str), f"Modelo para {role} debe ser str"
+            assert model.strip(), f"Modelo para {role} no debe ser vacío"
+
+    def test_override_logic_uses_role_model_when_set(self):
+        """
+        Simula la lógica de resolve(): si hay override para el rol, se usa ese modelo;
+        si no hay, se usa _AGENT_MODEL.
+        """
+        import model_router as mr
+
+        # Parchear _ROLE_MODEL_OVERRIDES con un valor de prueba
+        original = mr._ROLE_MODEL_OVERRIDES.copy()
+        try:
+            mr._ROLE_MODEL_OVERRIDES["devops"] = "qwen2.5-coder:7b"
+            # Replicar la lógica de resolve() para agent_role en _AGENT_ROLES
+            agent_role = "devops"
+            model = mr._ROLE_MODEL_OVERRIDES.get(agent_role) or mr._AGENT_MODEL
+            assert model == "qwen2.5-coder:7b"
+        finally:
+            mr._ROLE_MODEL_OVERRIDES.clear()
+            mr._ROLE_MODEL_OVERRIDES.update(original)
+
+    def test_override_logic_falls_back_to_agent_model_when_not_set(self):
+        """Si no hay override para el rol, se usa _AGENT_MODEL."""
+        import model_router as mr
+
+        original = mr._ROLE_MODEL_OVERRIDES.copy()
+        try:
+            mr._ROLE_MODEL_OVERRIDES.pop("devops", None)
+            agent_role = "devops"
+            model = mr._ROLE_MODEL_OVERRIDES.get(agent_role) or mr._AGENT_MODEL
+            assert model == mr._AGENT_MODEL
+        finally:
+            mr._ROLE_MODEL_OVERRIDES.clear()
+            mr._ROLE_MODEL_OVERRIDES.update(original)
+
+    def test_override_for_devops_does_not_affect_backend(self):
+        """Override de devops no debe afectar al rol backend."""
+        import model_router as mr
+
+        original = mr._ROLE_MODEL_OVERRIDES.copy()
+        try:
+            mr._ROLE_MODEL_OVERRIDES["devops"] = "qwen2.5-coder:7b"
+            mr._ROLE_MODEL_OVERRIDES.pop("backend", None)
+
+            devops_model = mr._ROLE_MODEL_OVERRIDES.get("devops") or mr._AGENT_MODEL
+            backend_model = mr._ROLE_MODEL_OVERRIDES.get("backend") or mr._AGENT_MODEL
+
+            assert devops_model == "qwen2.5-coder:7b"
+            assert backend_model == mr._AGENT_MODEL
+            assert devops_model != backend_model or mr._AGENT_MODEL == "qwen2.5-coder:7b"
+        finally:
+            mr._ROLE_MODEL_OVERRIDES.clear()
+            mr._ROLE_MODEL_OVERRIDES.update(original)
+
+    def test_settings_fields_exist_for_all_overrideable_roles(self):
+        """OVDSettings debe tener campos para los 4 roles overrideables."""
+        from settings import OVDSettings
+        s = OVDSettings()
+        assert hasattr(s, "ovd_model_backend")
+        assert hasattr(s, "ovd_model_database")
+        assert hasattr(s, "ovd_model_devops")
+        assert hasattr(s, "ovd_model_frontend")

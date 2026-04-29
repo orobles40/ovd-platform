@@ -64,6 +64,20 @@ _AGENT_MODEL = _s.ovd_agent_model or _DEFAULT_MODEL
 # Roles que usan el provider/modelo de agente (no el de análisis)
 _AGENT_ROLES = {"backend", "frontend", "database", "devops", "security_exec"}
 
+# S98-B: override de modelo por rol — permite usar modelos más ligeros en roles no críticos.
+# Ejemplo: OVD_MODEL_DEVOPS=qwen2.5-coder:7b para devops mientras backend usa qwen3-coder:30b.
+# Solo se aplica cuando el Bridge no devuelve config (fallback a defaults del sistema).
+_ROLE_MODEL_OVERRIDES: dict[str, str] = {
+    role: model
+    for role, model in {
+        "backend": _s.ovd_model_backend,
+        "database": _s.ovd_model_database,
+        "devops": _s.ovd_model_devops,
+        "frontend": _s.ovd_model_frontend,
+    }.items()
+    if model  # excluir vacíos — fallback a _AGENT_MODEL
+}
+
 # P2.A — Timeout configurable para evitar que Ollama bloquee el ciclo indefinidamente
 _LLM_TIMEOUT = _s.ovd_llm_timeout_secs
 
@@ -297,10 +311,11 @@ async def resolve(
         config = await _fetch_resolved(org_id, project_id, agent_role, jwt_token)
 
     if config is None:
-        # Agentes de implementación usan OVD_AGENT_PROVIDER/OVD_AGENT_MODEL si están configurados
+        # Agentes de implementación usan OVD_AGENT_PROVIDER/OVD_AGENT_MODEL si están configurados.
+        # S98-B: OVD_MODEL_{BACKEND,DATABASE,DEVOPS,FRONTEND} permiten override por rol específico.
         if agent_role in _AGENT_ROLES:
             provider = _AGENT_PROVIDER
-            model = _AGENT_MODEL
+            model = _ROLE_MODEL_OVERRIDES.get(agent_role) or _AGENT_MODEL
         else:
             provider = _DEFAULT_PROVIDER
             model = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
