@@ -38,3 +38,7 @@ src/finetune/fused/
 .idea/
 .vscode/
 *.swp
+
+# Base de conocimiento externa — repos de referencia (S96-I)
+# No se trackean: son repos externos clonados localmente para consulta
+src/knowledge/external/
