@@ -17,35 +17,41 @@
 
 ---
 
-## Última sesión (2026-04-29 — sesión 4)
+## Última sesión (2026-04-29 — S100)
 
 **Completado:**
-- S97-A: `qa_score_history` + early stopping por estancamiento (delta < 5)
-- S97-B: file ownership — devops no escribe .py ni tests/
-- S97-C: feedback prescriptivo `[ISSUE-N]` + instrucciones 5 pasos
-- S97-D: FR explícita BD > perfil proyecto (PostgreSQL override Oracle)
-- S97-E: `temperature_override=0.1` en retry QA
-- S97-F (hallazgo crítico): `think=False` → `reasoning=False` en ChatOllama
-- ADR-002: addendum S97-F (think=False ignorado silenciosamente desde S22)
-- ADR-004: nuevo — 4 opciones paralelismo real (filtrado, modelos mixtos, multi-instancia, Claude API)
-- INFORME_PRUEBA_S97.md: telemetría ciclos f02d1e03 (70 min) y 4793c5e1 (124 min)
-- 35/35 tests S97 PASS | 0 regresiones
+- S100-A: limpieza stubs residuales antes de ronda 0 (graph.py `run_tests`)
+- S100-B: py_compile pre-check antes de ejecutar pytest (graph.py)
+- S100-C: mandato python-jose, prohibición PyJWT (system_backend_python.md)
+- S100-D: prohibición DATABASE_URL hardcodeada (system_backend_python.md)
+- S100-E: tabla alineación ORM↔SQL obligatoria (system_sdd.md)
+- S100-F: anti-patrones Oracle PL/SQL — CHECK primo→trigger, DV VARCHAR2(1), LENGTH BETWEEN 8 AND 9
+- S100-G: implementación TypeScript validateRut (system_frontend_react.md)
+- S100-H: patrón require_role() dependency (system_backend_python.md)
+- S100-I: services.py plural en tabla canónica (replace_all)
+- S100-J: QA check componentes frontend faltantes del SDD (graph.py)
+- S100-L: FrLauncher.tsx restoreNodesFromState al reconectar SSE
+- S100-M: guía inline validate_rut DV=K
+- test_s100.py: 23/23 PASS
+- INFORME_PRUEBA_S100.md generado
 
-**Resultado de validación S97 (Ollama):**
-- Ninguno de los 2 ciclos completó — cuello de botella Ollama serializado
-- Ciclo 1 (f02d1e03): bloqueado en qa_review 68 min (thinking mode ON — S97-F)
-- Ciclo 2 (4793c5e1): bloqueado en fan-out 8 agentes × ~7 min = ~56 min (Ollama serial)
-- S97-F es el hallazgo más importante: think=False ignorado desde S22, impacto 10×-15× por nodo
+**Ciclo validación S100** (12c71de5):
+- QA: 65/100 (+5 vs S99), Security: 100/100, 21m 1s
+- Fixes absorbidos: validate_rut DV=K ✅, jose JWT ✅, NameError auth/router ✅
+- No absorbidos: services.py plural, DATABASE_URL env
+- Regresión detectada: SDD solo ejecutó agente backend (devops+db+frontend ignorados)
+- Tests: 3 rondas fallidas (ImportError — service.py singular)
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea:** S98 — Telemetría por nodo + validación S97 con Claude API
-- Opción rápida: `OVD_MODEL=claude-sonnet-4-5` para validar 5 fixes S97 (~$0.20, ~15 min)
-- S98-A: logging duración + tokens por nodo en graph.py (prerequisito para ADR-004)
-- S98-B: Opción A ADR-004 — filtrar agentes a 3-4 para FR tipo "API REST + PostgreSQL"
-- S47: Background task + event queue (SSE log no actualiza — GAP-S47-A pendiente)
+**Primera tarea S101 (prioridades):**
+1. Postprocesador: renombrar `service.py` → `services.py` + actualizar imports (CRÍTICO)
+2. Validación distribución agentes en SDD — detectar FR con keywords frontend/db/devops (CRÍTICO)
+3. Postprocesador DATABASE_URL hardcodeada → os.environ.get() (ALTA)
+4. Fix oracle_involved=False en S56-C cuando FR menciona Oracle explícitamente (ALTA)
+5. Ruff I001 fix en test_model_router.py y test_s98.py (BAJA)
 
 ---
 
