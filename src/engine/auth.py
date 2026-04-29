@@ -39,6 +39,7 @@ import psycopg
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+from exceptions import OVDConfigError, OVDTokenError
 from settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ _DATABASE_URL = _s.database_url
 
 def _require_jwt_secret() -> str:
     if not _JWT_SECRET or len(_JWT_SECRET) < 32:
-        raise RuntimeError(
+        raise OVDConfigError(
             "JWT_SECRET no configurado o demasiado corto (mínimo 32 caracteres). "
             "Generar con: openssl rand -hex 32"
         )
@@ -117,7 +118,7 @@ def verify_access_token(token: str) -> AccessTokenPayload:
         payload = jwt.decode(token, secret, algorithms=[_JWT_ALGORITHM])
         return AccessTokenPayload(**payload)
     except JWTError as e:
-        raise ValueError(f"Token inválido o expirado: {e}") from e
+        raise OVDTokenError(f"Token inválido o expirado: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +196,7 @@ async def verify_refresh_token(raw_token: str) -> dict:
         record = await row.fetchone()
 
     if not record:
-        raise ValueError("Refresh token no encontrado")
+        raise OVDTokenError("Refresh token no encontrado")
 
     token_id, org_id, user_id, expires_at, revoked, revoked_reason = record
 
@@ -205,10 +206,10 @@ async def verify_refresh_token(raw_token: str) -> dict:
             user_id,
             revoked_reason,
         )
-        raise ValueError(f"Refresh token revocado: {revoked_reason}")
+        raise OVDTokenError(f"Refresh token revocado: {revoked_reason}")
 
     if expires_at < now:
-        raise ValueError("Refresh token expirado")
+        raise OVDTokenError("Refresh token expirado")
 
     return {
         "id": token_id,

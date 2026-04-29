@@ -14,6 +14,7 @@ import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from exceptions import OVDTokenError
 from factories import make_qa_result, make_security_result, make_state
 
 # ---------------------------------------------------------------------------
@@ -544,18 +545,18 @@ class TestS10JWT:
             role="developer",
         )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(OVDTokenError):
             verify_access_token(token)
 
     def test_token_invalido_lanza_error(self):
-        """Un JWT malformado debe lanzar ValueError."""
+        """Un JWT malformado debe lanzar OVDTokenError."""
         from auth import verify_access_token
 
-        with pytest.raises(ValueError):
+        with pytest.raises(OVDTokenError):
             verify_access_token("esto.no.es.un.jwt.valido")
 
     def test_token_con_secret_incorrecto_lanza_error(self, monkeypatch):
-        """Un token firmado con diferente secret debe lanzar ValueError al verificar."""
+        """Un token firmado con diferente secret debe lanzar OVDTokenError al verificar."""
         import auth
         from auth import create_access_token, verify_access_token
 
@@ -566,7 +567,7 @@ class TestS10JWT:
         # Cambiar a secret B para la verificación
         monkeypatch.setattr(auth, "_JWT_SECRET", "b" * 64)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(OVDTokenError):
             verify_access_token(token)
 
 

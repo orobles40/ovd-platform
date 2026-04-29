@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from exceptions import OVDTokenError
+
 from auth import (
     _hash_token,
     create_access_token,
@@ -39,7 +41,7 @@ class TestAccessToken:
         assert payload.role == "dev"
 
     def test_token_invalido_lanza_error(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(OVDTokenError):
             verify_access_token("token.invalido.xxx")
 
     def test_token_manipulado_lanza_error(self):
@@ -47,7 +49,7 @@ class TestAccessToken:
         # Corromper la firma
         partes = token.split(".")
         partes[2] = "firmafalsa"
-        with pytest.raises(ValueError):
+        with pytest.raises(OVDTokenError):
             verify_access_token(".".join(partes))
 
     def test_token_incluye_exp(self):

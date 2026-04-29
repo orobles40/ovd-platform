@@ -36,6 +36,8 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from exceptions import OVDCircuitOpenError
+
 log = logging.getLogger("ovd-model-router")
 
 # ---------------------------------------------------------------------------
@@ -82,8 +84,7 @@ _CB_FAIL_THRESHOLD = int(os.environ.get("OVD_CB_FAIL_THRESHOLD", "5"))
 _CB_RECOVERY_SECS = float(os.environ.get("OVD_CB_RECOVERY_SECS", "30"))
 
 
-class CircuitOpenError(Exception):
-    """Lanzada cuando el circuit breaker está abierto para un provider."""
+CircuitOpenError = OVDCircuitOpenError  # alias de compatibilidad — usar OVDCircuitOpenError en código nuevo
 
 
 class _CircuitBreaker:

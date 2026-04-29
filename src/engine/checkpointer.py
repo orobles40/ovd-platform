@@ -15,11 +15,13 @@ import os
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from exceptions import OVDConfigError
+
 
 def get_database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:
-        raise EnvironmentError("DATABASE_URL no configurada")
+        raise OVDConfigError("DATABASE_URL no configurada")
     return url
 
 

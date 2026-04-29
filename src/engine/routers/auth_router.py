@@ -30,6 +30,7 @@ from auth import (
     revoke_refresh_token,
     verify_access_token,
 )
+from exceptions import OVDTokenError
 from rate_limiter import limiter
 
 log = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ async def inject_current_user(
         )
     try:
         return verify_access_token(credentials.credentials)
-    except ValueError as e:
+    except OVDTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
@@ -264,7 +265,7 @@ async def refresh(
             user_agent=request.headers.get("User-Agent", ""),
             ip_address=request.client.host if request.client else "",
         )
-    except ValueError as e:
+    except OVDTokenError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
     _set_refresh_cookie(response, pair.refresh_token)
