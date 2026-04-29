@@ -803,6 +803,8 @@ def _build_fr_content(state: OVDState) -> str:
 
 async def analyze_fr(state: OVDState) -> dict:
     """Analiza el Feature Request y extrae contexto tecnico con structured output."""
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=analyze_fr start")
     project_ctx = state.get("project_context", "")
 
     # S97-D: si la FR menciona explícitamente una BD distinta a Oracle,
@@ -926,6 +928,7 @@ async def analyze_fr(state: OVDState) -> dict:
     }
     # N1.B — publicar session.started (fire-and-forget)
     await nats_client.publish_started({**state, "fr_analysis": analysis})
+    log.info("NODE_TIMING: node=analyze_fr elapsed=%.1fs", time.monotonic() - _t0_node)
     return new_state
 
 
@@ -2073,6 +2076,8 @@ async def generate_sdd(state: OVDState) -> dict:
     Si revision_count > 0, incorpora el feedback del arquitecto (approval_comment)
     para regenerar el SDD en ciclos de revisión iterativa (S15-TUI).
     """
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=generate_sdd start")
     project_ctx = state.get("project_context", "")
     rag_ctx = state.get("rag_context", "")
     revision_count = state.get("revision_count", 0)
@@ -2271,6 +2276,7 @@ async def generate_sdd(state: OVDState) -> dict:
         ]
 
     round_label = f" (revisión #{revision_count + 1})" if revision_count > 0 else ""
+    log.info("NODE_TIMING: node=generate_sdd elapsed=%.1fs", time.monotonic() - _t0_node)
     return {
         "sdd": sdd,
         "status": "sdd_generated",
@@ -2616,6 +2622,15 @@ _AGENT_RUNNERS = {
 # Grupo 2 (client-side): se ejecutan después, con acceso al código del grupo 1
 _SERVER_SIDE_AGENTS: frozenset[str] = frozenset({"database", "backend", "devops"})
 _CLIENT_SIDE_AGENTS: frozenset[str] = frozenset({"frontend"})
+
+# S98-A: palabras clave que indican que el FR requiere un runner frontend explícito.
+# Si ninguna aparece en el FR raw y fr_type no es fullstack/frontend_only,
+# el runner frontend se omite para reducir llamadas LLM innecesarias.
+_FRONTEND_KEYWORDS: frozenset[str] = frozenset({
+    "frontend", "ui", "react", "vue", "angular", "html", "css",
+    "dashboard", "formulario", "interfaz", "componente", "vista",
+    "página", "pagina", "pantalla", "botón", "boton", "navbar",
+})
 
 # S97-B: rutas que el agente devops NO debe escribir.
 # Evita que devops sobrescriba código Python del backend (issue S96: test_contracts.py).
@@ -3003,6 +3018,21 @@ async def route_agents(state: OVDState) -> dict:
         ]
         routing_note = f"Router activo: {', '.join(selected)}"
 
+    # S98-A: filtrado de runners — omitir frontend si el FR no lo menciona explícitamente.
+    # Evita llamadas LLM innecesarias en FRs de backend puro (API REST, microservicio, etc.).
+    if os.environ.get("OVD_AGENT_FILTER_ENABLED", "true").lower() != "false" and "frontend" in selected:
+        fr_raw = analysis.get("raw", "").lower()
+        fr_type = analysis.get("type", "feature").lower()
+        if fr_type not in {"fullstack", "frontend_only"} and not any(
+            kw in fr_raw for kw in _FRONTEND_KEYWORDS
+        ):
+            selected = [a for a in selected if a != "frontend"]
+            log.info(
+                "route_agents: S98-A omitiendo runner 'frontend' — "
+                "FR no menciona UI/frontend explícitamente (fr_type=%s)",
+                fr_type,
+            )
+
     retry_info = ""
     retry_total = state.get("security_retry_count", 0) + state.get("qa_retry_count", 0)
     if retry_total > 0:
@@ -3228,6 +3258,18 @@ async def _agent_executor_impl(state: OVDState) -> dict:
     # la tarea N+1 vea los archivos escritos por la tarea N (acumulación natural).
     # Elimina timeouts estructuralmente: cada tarea ~800 tokens vs 10-15K tokens en total.
     agent_tasks = [t for t in sdd.get("tasks", []) if t.get("agent") == agent_name]
+
+    # S98-A: cap de subtareas por agente — limita llamadas LLM en ciclos con Ollama local.
+    _max_tasks = int(os.environ.get("OVD_MAX_TASKS_PER_AGENT", "0"))
+    if _max_tasks > 0 and len(agent_tasks) > _max_tasks:
+        log.warning(
+            "agent_executor[%s]: S98-A truncando %d → %d subtareas (OVD_MAX_TASKS_PER_AGENT=%d)",
+            agent_name,
+            len(agent_tasks),
+            _max_tasks,
+            _max_tasks,
+        )
+        agent_tasks = agent_tasks[:_max_tasks]
 
     # S83-F: ordenar tareas por dependencias (topological sort) para que la tarea N+1
     # se ejecute después de las tareas de las que depende. Esto garantiza que context injection
@@ -3686,9 +3728,22 @@ async def agent_executor(state: OVDState) -> dict:
     en vez de silenciar el error o abortar el superstep de LangGraph.
     """
     agent_name = state.get("current_agent", "backend")
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=agent_executor[%s] start", agent_name)
     try:
-        return await _agent_executor_impl(state)
+        result = await _agent_executor_impl(state)
+        log.info(
+            "NODE_TIMING: node=agent_executor[%s] elapsed=%.1fs",
+            agent_name,
+            time.monotonic() - _t0_node,
+        )
+        return result
     except Exception as exc:
+        log.info(
+            "NODE_TIMING: node=agent_executor[%s] elapsed=%.1fs (error)",
+            agent_name,
+            time.monotonic() - _t0_node,
+        )
         return _agent_executor_error_result(agent_name, exc)
 
 
@@ -4330,6 +4385,8 @@ async def security_audit(state: OVDState) -> dict:
     """
     # S48-A: bypass completo cuando OVD_SECURITY_MIN_SCORE=0 — no invocar el LLM.
     # Antes (Nivel1-E) el bypass era solo en el router (post-ejecución). El nodo
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=security_audit start")
     # seguía llamando al LLM y podía tardar 20+ min antes de hacer timeout.
     if int(os.environ.get("OVD_SECURITY_MIN_SCORE", "0")) == 0:
         log.info(
@@ -4355,6 +4412,7 @@ async def security_audit(state: OVDState) -> dict:
             ],
         }
 
+    log.info("NODE_TIMING: node=security_audit start (LLM path)")
     project_ctx = state.get("project_context", "")
     org_id = state.get("org_id", "")
     project_id = state.get("project_id", "")
@@ -4582,6 +4640,7 @@ async def security_audit(state: OVDState) -> dict:
 
         _lesson_task.add_done_callback(_on_lesson_done)
 
+    log.info("NODE_TIMING: node=security_audit elapsed=%.1fs", time.monotonic() - _t0_node)
     return {
         "security_result": security,
         "security_scan_results": scan_results,
@@ -4671,6 +4730,8 @@ async def qa_review(state: OVDState) -> dict:
     # (que route_agents limpia antes de que qa_review lo lea — bug S61-C).
     # Condición extra: qa_retry_count == 0 para no bloquear retries de QA legítimos.
     _prev_qa = state.get("qa_result", {})
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=qa_review start")
     _test_retry_count = state.get("test_retry_count", 0)
     _qa_retry_count = state.get("qa_retry_count", 0)
     if _test_retry_count > 0 and _qa_retry_count == 0 and _prev_qa.get("score", 0) > 0:
@@ -4940,6 +5001,7 @@ async def qa_review(state: OVDState) -> dict:
             )
         )
 
+    log.info("NODE_TIMING: node=qa_review elapsed=%.1fs", time.monotonic() - _t0_node)
     return {
         "qa_result": qa,
         "status": "qa_done",
@@ -5597,6 +5659,8 @@ async def run_tests(state: OVDState) -> dict:
     """
     import tempfile
 
+    _t0_node = time.monotonic()
+    log.info("NODE_TIMING: node=run_tests start")
     agent_results = state.get("agent_results", [])
     directory = state.get("directory", "")
     retry_round = state.get("test_retry_count", 0)
@@ -6111,6 +6175,7 @@ async def run_tests(state: OVDState) -> dict:
     status_msg = (
         f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"
     )
+    log.info("NODE_TIMING: node=run_tests elapsed=%.1fs", time.monotonic() - _t0_node)
     return {
         "test_results": {
             "passed": passed,

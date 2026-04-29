@@ -123,3 +123,48 @@ Ciclo prueba S96 completó con 3 loops (GAP-S96-3: QA constante 50/100). El main
 es el feedback QA no prescriptivo — solucionado en el plan con patrón Superpowers 5-step.
 SSE log del dashboard no actualizó durante loops de retry (GAP-S47-A pendiente de S47).
 Monitoreo del ciclo via checkpoints LangGraph en PostgreSQL fue efectivo como workaround.
+
+
+## S003 | 2026-04-29
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 08:35 |
+| Cierre | 12:50 |
+| Duración | ~4h 15m |
+| Sprint | S97 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI
+- [x] ruff lint: PASS
+- [x] ruff format: aplicado (graph.py + test_s97.py)
+- [x] pytest unit: 1577 passed / 10 deselected (0 fallos nuevos)
+- [x] OVD conventions: PASS
+- Push ejecutado: NO
+
+### Completado hoy
+- S97-A: qa_score_history + early stopping por estancamiento (delta < 5 puntos)
+- S97-B: file ownership — devops no escribe .py ni tests/
+- S97-C: feedback prescriptivo [ISSUE-N] + instrucciones 5 pasos
+- S97-D: FR explícita BD > perfil proyecto (PostgreSQL override Oracle)
+- S97-E: temperature_override=0.1 en retry QA
+- S97-F (hallazgo crítico): think=False → reasoning=False en ChatOllama
+- ADR-002: addendum S97-F documentado con impacto (10×-15× slowdown por nodo)
+- ADR-004: nuevo — 4 opciones paralelismo real para fan-out de agentes
+- INFORME_PRUEBA_S97.md: telemetría 2 ciclos, ambos incompletos por Ollama
+- 35/35 tests S97 PASS
+
+### Notas
+S97-F es el hallazgo más relevante: think=False estaba siendo ignorado silenciosamente
+desde S22 porque el parámetro no existe en ChatOllama.model_fields. El modelo qwen3-coder:30b
+generaba 50k-100k tokens de <think> por request. Con ciclos simples en S22, el thinking
+completaba antes del timeout — el bug solo se hizo visible con contextos más grandes (S97).
+El cuello de botella Ollama (8 agentes serializados = 4-8 horas) hace inviable validar S97
+con qwen3-coder:30b. Próxima sesión: validar con Claude API (~15 min, ~$0.20).

@@ -8,44 +8,44 @@
 
 ## Estado actual
 
-- **Sprint activo:** S96
+- **Sprint activo:** S97 (implementado) / S98 (pendiente validación)
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S95
-- **Tests:** 1542 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+- **Sprints completados:** S3 → S96
+- **Tests:** 1577 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
   *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-04-29 — sesión 3)
+## Última sesión (2026-04-29 — sesión 4)
 
 **Completado:**
-- Fix 4 tests (test_s65a_phantom_import_detected, test_s66a × 3) — assertions movidas dentro del `with tempfile` block
-- S96-A validado en ciclo real: auto-generó stub `src/contracts/schemas.py`, ciclo continuó sin abort
-- Ciclo prueba S96 ejecutado: thread `124f0b66`, 19m 42s, QA 50/100, 21 archivos, 347k tokens
-- INFORME_PRUEBA_S96.md generado con análisis completo + 5 gaps identificados
-- S96-F validado: /auth/login funcional, dashboard web operativo
+- S97-A: `qa_score_history` + early stopping por estancamiento (delta < 5)
+- S97-B: file ownership — devops no escribe .py ni tests/
+- S97-C: feedback prescriptivo `[ISSUE-N]` + instrucciones 5 pasos
+- S97-D: FR explícita BD > perfil proyecto (PostgreSQL override Oracle)
+- S97-E: `temperature_override=0.1` en retry QA
+- S97-F (hallazgo crítico): `think=False` → `reasoning=False` en ChatOllama
+- ADR-002: addendum S97-F (think=False ignorado silenciosamente desde S22)
+- ADR-004: nuevo — 4 opciones paralelismo real (filtrado, modelos mixtos, multi-instancia, Claude API)
+- INFORME_PRUEBA_S97.md: telemetría ciclos f02d1e03 (70 min) y 4793c5e1 (124 min)
+- 35/35 tests S97 PASS | 0 regresiones
 
-**Resultado del ciclo prueba S96:**
-- Security: 100/100 (bypass S48-A), QA: 50/100 (3 rondas sin mejoría)
-- GAP-S96-1: Conflicto perfil proyecto (Oracle) vs FR explícita (PostgreSQL) → QA penaliza
-- GAP-S96-2: devops sobrescribió tests/test_contracts.py del backend
-- GAP-S96-3: QA feedback no produce correcciones concretas en el agente
-- GAP-S96-4: SSE log no actualiza tras reconexión (GAP-S47-A pendiente)
-- GAP-S96-5: Frontend no asignado con FR que menciona validación frontend
+**Resultado de validación S97 (Ollama):**
+- Ninguno de los 2 ciclos completó — cuello de botella Ollama serializado
+- Ciclo 1 (f02d1e03): bloqueado en qa_review 68 min (thinking mode ON — S97-F)
+- Ciclo 2 (4793c5e1): bloqueado en fan-out 8 agentes × ~7 min = ~56 min (Ollama serial)
+- S97-F es el hallazgo más importante: think=False ignorado desde S22, impacto 10×-15× por nodo
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea:** S97 — Correcciones para QA > 80
-- Plan detallado: `/mis-entregas/contratos-beneficios/PLAN_S97.md`
-- S97-A: `qa_score_history` reducer + early stopping si delta < 5 puntos
-- S97-B: File locking `agent_file_claims` + orden secuencial database→backend→devops
-- S97-C: `_build_qa_feedback` prescriptivo con [ISSUE-N], [ACCIÓN], ubicaciones
-- S97-D: FR explícita BD > perfil proyecto en `analyze_fr`
-- S97-E: temperature=0.5 en retry (vs 0.7 en generación inicial)
-- S47: Background task + event queue (SSE log no actualiza)
+**Primera tarea:** S98 — Telemetría por nodo + validación S97 con Claude API
+- Opción rápida: `OVD_MODEL=claude-sonnet-4-5` para validar 5 fixes S97 (~$0.20, ~15 min)
+- S98-A: logging duración + tokens por nodo en graph.py (prerequisito para ADR-004)
+- S98-B: Opción A ADR-004 — filtrar agentes a 3-4 para FR tipo "API REST + PostgreSQL"
+- S47: Background task + event queue (SSE log no actualiza — GAP-S47-A pendiente)
 
 ---
 

@@ -100,9 +100,13 @@ Puerto 11436: qwen3-coder:8b  (devops, docs)
 
 ---
 
-### Opción D — Claude API para agentes en producción
+### Opción D — Claude API para agentes en producción ~~DESCARTADA~~
 
-**Descripción:** Usar la API de Anthropic (Claude Sonnet 4.5/4.6) para los agentes en ciclos de producción. La API de Anthropic permite concurrencia real: múltiples requests simultáneos, cada uno procesado en infraestructura distribuida.
+> **Decisión 2026-04-29:** Descartada por política. La plataforma debe operar íntegramente
+> con modelos locales vía Ollama. La infraestructura en el engine ya existe (`OVD_AGENT_PROVIDER=claude`)
+> pero no se activará. Ver PLAN_S98_PARALELISMO.md para el roadmap con Opciones A/B/C.
+
+**Descripción original:** Usar la API de Anthropic (Claude Sonnet 4.5/4.6) para los agentes en ciclos de producción. La API de Anthropic permite concurrencia real: múltiples requests simultáneos, cada uno procesado en infraestructura distribuida.
 
 **Impacto esperado:**
 - Fan-out genuinamente paralelo: tiempo total ≈ `max(tiempos)` ≈ 5-10 min

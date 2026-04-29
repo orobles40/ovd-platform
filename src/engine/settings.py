@@ -55,6 +55,11 @@ class OVDSettings(BaseSettings):
     ovd_vision_enabled: bool = True
     ovd_agent_provider: str = ""
     ovd_agent_model: str = ""
+    # S98-B: modelo por rol específico (override sobre ovd_agent_model)
+    ovd_model_backend: str = ""
+    ovd_model_database: str = ""
+    ovd_model_devops: str = ""
+    ovd_model_frontend: str = ""
 
     # ── Ollama ─────────────────────────────────────────────────────────────────
     ollama_base_url: str = "http://localhost:11434"
@@ -79,6 +84,9 @@ class OVDSettings(BaseSettings):
     # ── Ciclo y calidad ────────────────────────────────────────────────────────
     ovd_max_retries: int = 3
     ovd_max_context_tokens: int = 28000
+    # S98-A: filtrado de runners y cap de subtareas por agente
+    ovd_agent_filter_enabled: bool = True   # omite frontend si FR no lo menciona
+    ovd_max_tasks_per_agent: int = 0        # 0 = sin límite (comportamiento actual)
     ovd_cycle_token_budget: int = 0
     ovd_qa_min_score: int = 70
     ovd_security_min_score: int = 0
