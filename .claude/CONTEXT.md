@@ -63,7 +63,7 @@
 
 | Issue | Impacto | Estado | Sprint |
 |---|---|---|---|
-| `POST /auth/login` → 500 | Bloquea dashboard web | PRIORITARIO | S96-F |
+| `POST /auth/login` → 500 | Bloquea dashboard web | ✅ RESUELTO | S96-F |
 | `test_s63b_cleanup_in_retry_round_zero` | Suite no limpia | Pendiente | S96-D |
 
 ---
