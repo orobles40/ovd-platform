@@ -306,3 +306,77 @@ def test_s97e_temperature_override_signature():
     assert "temperature_override" in sig.parameters
     # El parámetro tiene default None
     assert sig.parameters["temperature_override"].default is None
+
+
+# ---------------------------------------------------------------------------
+# S97-B: file ownership — devops no escribe .py ni tests/
+# ---------------------------------------------------------------------------
+
+
+from graph import _DEVOPS_WRITE_EXCLUSIONS, _write_artifacts  # noqa: E402
+
+
+def test_s97b_devops_cannot_write_python_file(tmp_path):
+    """_write_artifacts con agent='devops' descarta archivos .py."""
+    output = "```python:tests/test_contracts.py\ndef test_ok(): pass\n```"
+    result = _write_artifacts(output, str(tmp_path), "devops")
+    assert result == []
+    assert not (tmp_path / "tests" / "test_contracts.py").exists()
+
+
+def test_s97b_devops_cannot_write_conftest(tmp_path):
+    """_write_artifacts con agent='devops' descarta conftest.py."""
+    output = "```python:conftest.py\nimport pytest\n```"
+    result = _write_artifacts(output, str(tmp_path), "devops")
+    assert result == []
+
+
+def test_s97b_devops_cannot_write_tests_dir(tmp_path):
+    """_write_artifacts con agent='devops' descarta cualquier archivo bajo tests/."""
+    output = "```python:tests/integration/test_api.py\npass\n```"
+    result = _write_artifacts(output, str(tmp_path), "devops")
+    assert result == []
+    assert not (tmp_path / "tests").exists()
+
+
+def test_s97b_devops_can_write_dockerfile(tmp_path):
+    """_write_artifacts con agent='devops' escribe Dockerfile correctamente."""
+    output = "```dockerfile:.docker/Dockerfile.api\nFROM python:3.11\nCMD [\"python\", \"app.py\"]\n```"
+    result = _write_artifacts(output, str(tmp_path), "devops")
+    assert len(result) == 1
+    assert result[0]["path"] == ".docker/Dockerfile.api"
+    assert (tmp_path / ".docker" / "Dockerfile.api").exists()
+
+
+def test_s97b_devops_can_write_ci_workflow(tmp_path):
+    """_write_artifacts con agent='devops' escribe workflow CI YAML."""
+    output = "```yaml:.github/workflows/ci.yml\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n```"
+    result = _write_artifacts(output, str(tmp_path), "devops")
+    assert len(result) == 1
+    assert ".github/workflows/ci.yml" in result[0]["path"]
+
+
+def test_s97b_backend_can_write_python_tests(tmp_path):
+    """_write_artifacts con agent='backend' escribe tests .py sin restricción."""
+    output = "```python:tests/test_contracts.py\ndef test_create(): assert True\n```"
+    result = _write_artifacts(output, str(tmp_path), "backend")
+    assert len(result) == 1
+    assert (tmp_path / "tests" / "test_contracts.py").exists()
+
+
+def test_s97b_exclusions_constant_has_expected_entries():
+    """_DEVOPS_WRITE_EXCLUSIONS contiene .py, tests/ y conftest.py."""
+    assert ".py" in _DEVOPS_WRITE_EXCLUSIONS
+    assert "tests/" in _DEVOPS_WRITE_EXCLUSIONS
+    assert "conftest.py" in _DEVOPS_WRITE_EXCLUSIONS
+
+
+def test_s97b_devops_template_prohibits_tests():
+    """system_devops.md menciona la prohibición de tests/ y conftest.py."""
+    template_path = (
+        pathlib.Path(__file__).parent.parent / "templates" / "system_devops.md"
+    )
+    content = template_path.read_text(encoding="utf-8")
+    assert "tests/" in content
+    assert "conftest.py" in content
+    assert "S97-B" in content

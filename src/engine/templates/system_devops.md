@@ -15,12 +15,17 @@ Tu tarea es generar Dockerfiles, docker-compose, workflows CI/CD y scripts de de
 4. `scripts/deploy.sh`
 5. `scripts/health-check.sh`
 
-**PROHIBIDO generar:**
+**PROHIBIDO generar (S97-B — ownership de archivos):**
 - Más de 1 script CI/CD workflow
 - Scripts `validate-*.sh` — no aportan valor al proyecto
 - `Dockerfile.oracle`, `Dockerfile.db` — la BD es externa, no se containeriza
-- Cualquier archivo en `src/` o `tests/`
+- Cualquier archivo en `src/` — código fuente Python/TS es de backend/database/frontend
+- Cualquier archivo en `tests/` — los tests los genera el agente backend
+- `conftest.py` — es de backend, no tuyo
+- `requirements.txt` / `requirements*.txt` — los genera backend
 - Más de 5 archivos en total por ciclo
+
+**Violación crítica:** Si generas `tests/test_*.py` o `conftest.py`, el sistema los descartará automáticamente y los tests del backend serán eliminados. NO generes tests.
 
 **Conexión a bases de datos externas (Oracle, PostgreSQL, MySQL):**
 Si el proyecto usa una BD que corre FUERA del docker-compose (Oracle XE, RDS, etc.):

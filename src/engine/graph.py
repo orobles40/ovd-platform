@@ -504,6 +504,14 @@ class OVDState(TypedDict):
     # S61-D: resultados de agentes preservados durante selective retry (no reseteados)
     _kept_agent_results: list[dict]
 
+    # S97-B: registro de propiedad de archivos escritos por cada agente (informativo, post-ciclo)
+    # Nota: con fan-out paralelo no puede usarse como lock distribuido durante la ejecución.
+    # La protección real es _DEVOPS_WRITE_EXCLUSIONS en _write_artifacts.
+    agent_file_claims: Annotated[
+        dict,
+        lambda old, new: {**(old or {}), **(new or {})},
+    ]
+
     # S22 — security scanning CLI (previo al LLM review)
     security_scan_results: dict[str, Any]  # {tools_run, findings, blocked}
 
@@ -2608,6 +2616,16 @@ _AGENT_RUNNERS = {
 # Grupo 2 (client-side): se ejecutan después, con acceso al código del grupo 1
 _SERVER_SIDE_AGENTS: frozenset[str] = frozenset({"database", "backend", "devops"})
 _CLIENT_SIDE_AGENTS: frozenset[str] = frozenset({"frontend"})
+
+# S97-B: rutas que el agente devops NO debe escribir.
+# Evita que devops sobrescriba código Python del backend (issue S96: test_contracts.py).
+# La lógica: si la ruta TERMINA en alguna extensión prohibida O CONTIENE algún prefijo
+# de path prohibido, el archivo se omite con un warning.
+_DEVOPS_WRITE_EXCLUSIONS: tuple[str, ...] = (
+    ".py",         # nunca archivos Python (territorio de backend/database)
+    "tests/",      # nunca directorio de tests (lo escribe backend)
+    "conftest.py", # fixture pytest — exclusivo de backend
+)
 
 
 def _build_agent_sdd_content(sdd: dict, agent_name: str) -> str:
@@ -6840,6 +6858,18 @@ def _write_artifacts(
 
         lang = _re.match(r"```([\w+\-]*)", match.group(0))
         lang_name = lang.group(1).split(":")[0] if lang else ""
+
+        # S97-B: protección de ownership — devops no puede escribir archivos Python ni tests
+        if agent == "devops" and any(
+            rel_path.endswith(excl) or excl in rel_path
+            for excl in _DEVOPS_WRITE_EXCLUSIONS
+        ):
+            log.warning(
+                "_write_artifacts[devops]: S97-B — '%s' excluido (regla de ownership: "
+                "devops no escribe .py ni tests/). Archivo ignorado.",
+                rel_path,
+            )
+            continue
 
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
