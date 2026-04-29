@@ -22,15 +22,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any
 
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from settings import get_settings
+
 log = logging.getLogger("ovd-nats")
 
-NATS_URL = os.environ.get("NATS_URL", "")
-NATS_CREDS = os.environ.get("NATS_CREDS_FILE", "")
+_s = get_settings()
+NATS_URL = _s.nats_url
+NATS_CREDS = _s.nats_creds_file
 
 # Conexión lazy — se crea al primer publish
 _nc: Any = None
@@ -66,7 +68,7 @@ async def _get_connection() -> Any:
 
 _NATS_MAX_RETRIES = 2
 _NATS_BACKOFF_SECS = 1.0
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DATABASE_URL = get_settings().database_url
 
 
 @retry(

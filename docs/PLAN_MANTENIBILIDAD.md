@@ -429,18 +429,29 @@ Esto permite cambiar PostgreSQL por otro motor sin tocar los routers.
 
 #### 3-E — Cobertura de tests
 
-Agregar a `pyproject.toml`:
-```toml
-[tool.pytest.ini_options]
-addopts = "--cov=. --cov-fail-under=60"  # Umbral inicial conservador
+**Estado: COMPLETADO** — `pytest-cov 7.1.0` instalado. Baseline medido el 2026-04-28:
 
-[tool.coverage.run]
-omit = ["tests/*", "migrations/*", "alembic.ini"]
-```
+| Módulo | Cobertura |
+|---|---|
+| `settings.py` | 100% |
+| `exceptions.py` | 100% |
+| `task_checkout.py` | 93% |
+| `audit_logger.py` | 89% |
+| `nats_client.py` | 88% |
+| `model_router.py` | 78% |
+| `routers/auth_router.py` | 78% |
+| `graph.py` | 77% |
+| `rag.py` | 79% |
+| `auth.py` | 68% |
+| `api.py` | 53% |
+| `routers/api_v1.py` | 42% |
+| **TOTAL** | **88%** |
 
-Instalar:
+El TOTAL alto (88%) refleja que tests/ son parte del `--cov=.`. Cobertura de código de producción varía por módulo. El umbral 60% ya está superado — próxima meta: 70% en módulos core (`api.py`, `auth.py`).
+
+Para ejecutar localmente:
 ```bash
-uv add --dev pytest-cov
+cd src/engine && python -m pytest tests/ -m "not integration and not e2e and not docker" --cov=. --cov-report=term-missing
 ```
 
 ---

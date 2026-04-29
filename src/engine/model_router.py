@@ -37,40 +37,43 @@ from langchain_openai import ChatOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from exceptions import OVDCircuitOpenError
+from settings import get_settings
 
 log = logging.getLogger("ovd-model-router")
+
+_s = get_settings()
 
 # ---------------------------------------------------------------------------
 # Config del Bridge (donde esta la API con la config de agentes)
 # ---------------------------------------------------------------------------
 
-_BRIDGE_URL = os.environ.get("OVD_BRIDGE_URL", "http://localhost:3000")
-_BRIDGE_SECRET = os.environ.get("OVD_ENGINE_SECRET", "")
+_BRIDGE_URL = _s.ovd_bridge_url
+_BRIDGE_SECRET = _s.ovd_engine_secret
 
 # Defaults del sistema si la API no responde o no hay config
 _DEFAULT_PROVIDER = "ollama"
-_DEFAULT_MODEL = os.environ.get("OVD_MODEL", "qwen2.5-coder:7b")
-_DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+_DEFAULT_MODEL = _s.ovd_model or "qwen2.5-coder:7b"
+_DEFAULT_OLLAMA_URL = _s.ollama_base_url
 
 # OVD_AGENT_PROVIDER / OVD_AGENT_MODEL — provider y modelo para agentes de implementación
 # (backend, frontend, database, devops, security). Permite usar Claude para los agentes
 # mientras se mantiene Ollama para los roles de análisis (analyzer, sdd, qa).
-_AGENT_PROVIDER = os.environ.get("OVD_AGENT_PROVIDER", _DEFAULT_PROVIDER)
-_AGENT_MODEL = os.environ.get("OVD_AGENT_MODEL", _DEFAULT_MODEL)
+_AGENT_PROVIDER = _s.ovd_agent_provider or _DEFAULT_PROVIDER
+_AGENT_MODEL = _s.ovd_agent_model or _DEFAULT_MODEL
 
 # Roles que usan el provider/modelo de agente (no el de análisis)
 _AGENT_ROLES = {"backend", "frontend", "database", "devops", "security_exec"}
 
 # P2.A — Timeout configurable para evitar que Ollama bloquee el ciclo indefinidamente
-_LLM_TIMEOUT = float(os.environ.get("OVD_LLM_TIMEOUT_SECS", "300"))
+_LLM_TIMEOUT = _s.ovd_llm_timeout_secs
 
 # Modelos por defecto para roles de análisis (requieren structured output robusto).
 # Se puede sobreescribir via API de agent-config igual que los roles de agente.
 # Para uso con OSS se recomienda 14b+ en analyzer/sdd; 7b suficiente para qa.
 _ANALYSIS_ROLE_DEFAULTS: dict[str, str] = {
-    "analyzer": os.environ.get("OVD_MODEL_ANALYZER", _DEFAULT_MODEL),
-    "sdd": os.environ.get("OVD_MODEL_SDD", _DEFAULT_MODEL),
-    "qa": os.environ.get("OVD_MODEL_QA", _DEFAULT_MODEL),
+    "analyzer": _s.ovd_model_analyzer or _DEFAULT_MODEL,
+    "sdd": _s.ovd_model_sdd or _DEFAULT_MODEL,
+    "qa": _s.ovd_model_qa or _DEFAULT_MODEL,
 }
 
 # P2.C — Roles que usan structured output — requieren temperature baja para estabilidad
@@ -80,8 +83,8 @@ _STRUCTURED_ROLES = {"analyzer", "sdd", "qa", "security", "router"}
 # S20 — GAP-R4: Circuit breaker por provider (lightweight, en memoria)
 # ---------------------------------------------------------------------------
 
-_CB_FAIL_THRESHOLD = int(os.environ.get("OVD_CB_FAIL_THRESHOLD", "5"))
-_CB_RECOVERY_SECS = float(os.environ.get("OVD_CB_RECOVERY_SECS", "30"))
+_CB_FAIL_THRESHOLD = _s.ovd_cb_fail_threshold
+_CB_RECOVERY_SECS = _s.ovd_cb_recovery_secs
 
 
 CircuitOpenError = OVDCircuitOpenError  # alias de compatibilidad — usar OVDCircuitOpenError en código nuevo
@@ -357,7 +360,7 @@ def build_llm(config: ResolvedConfig) -> Any:
     if config.provider == "claude":
         return ChatAnthropic(
             model=config.model,
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""),
+            api_key=api_key or get_settings().anthropic_api_key,
             max_tokens=8192,
             temperature=config.temperature,
             timeout=_LLM_TIMEOUT,
@@ -366,7 +369,7 @@ def build_llm(config: ResolvedConfig) -> Any:
     if config.provider == "openai":
         return ChatOpenAI(
             model=config.model,
-            api_key=api_key or os.environ.get("OPENAI_API_KEY", ""),
+            api_key=api_key or get_settings().openai_api_key,
             max_tokens=8192,
             temperature=config.temperature,
             request_timeout=_LLM_TIMEOUT,
@@ -438,9 +441,9 @@ async def get_llm(
 # Modelos por defecto para cada provider cuando el routing viene del Stack Registry
 _STACK_ROUTING_DEFAULTS: dict[str, tuple[str, str | None]] = {
     # (provider, model)  — None = usar _DEFAULT_MODEL / variable de entorno
-    "claude": ("claude", os.environ.get("OVD_MODEL_CLAUDE", "claude-sonnet-4-6")),
-    "ollama": ("ollama", os.environ.get("OVD_MODEL", _DEFAULT_MODEL)),
-    "openai": ("openai", os.environ.get("OVD_MODEL_OPENAI", "gpt-4o-mini")),
+    "claude": ("claude", _s.ovd_model_claude or "claude-sonnet-4-6"),
+    "ollama": ("ollama", _s.ovd_model or _DEFAULT_MODEL),
+    "openai": ("openai", _s.ovd_model_openai or "gpt-4o-mini"),
 }
 
 

@@ -30,16 +30,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
 
+from settings import get_settings
+
 log = logging.getLogger(__name__)
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DATABASE_URL = get_settings().database_url
 
 # Eventos válidos — tipados para evitar typos en los call sites
 AUDIT_EVENTS = {

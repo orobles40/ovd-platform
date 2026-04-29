@@ -36,8 +36,9 @@ from pydantic import BaseModel
 import pending_store
 from auth import AccessTokenPayload
 from routers.auth_router import inject_current_user
+from settings import get_settings
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DATABASE_URL = get_settings().database_url
 
 router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 

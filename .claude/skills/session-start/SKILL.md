@@ -62,7 +62,20 @@ Si está DOWN: mostrar comando de inicio:
 cd src/engine && .venv/bin/uvicorn api:app --port 8001
 ```
 
-## 5. Proponer primera tarea
+## 5. Registrar inicio de sesión
+
+```bash
+echo "START=$(date +%s)" > .claude/session-active.md
+echo "DATE=$(date '+%Y-%m-%d %H:%M')" >> .claude/session-active.md
+```
+
+Luego lee el sprint activo de CURRENT.md y agrega:
+```bash
+echo "SPRINT=S96" >> .claude/session-active.md
+```
+(reemplaza S96 con el sprint actual extraído del paso 1)
+
+## 6. Proponer primera tarea
 
 Con base en CURRENT.md y el argumento `$ARGUMENTS` (si se proporcionó):
 

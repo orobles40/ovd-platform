@@ -32,14 +32,17 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from settings import get_settings
+
 log = logging.getLogger("ovd.rag")
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
-_EMBED_PROVIDER = os.environ.get("OVD_RAG_EMBEDDING_PROVIDER", "ollama").lower()
-_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-_EMBED_MODEL = os.environ.get("OVD_EMBED_MODEL", "")
-_TOP_K = int(os.environ.get("OVD_RAG_TOP_K", "5"))
-_MIN_SCORE = float(os.environ.get("OVD_RAG_MIN_SCORE", "0.65"))
+_s = get_settings()
+_DATABASE_URL = _s.database_url
+_EMBED_PROVIDER = _s.ovd_rag_embedding_provider.lower()
+_OLLAMA_URL = _s.ollama_base_url
+_EMBED_MODEL = _s.ovd_embed_model
+_TOP_K = _s.ovd_rag_top_k
+_MIN_SCORE = _s.ovd_rag_min_score
 
 # Modelos default por provider
 _DEFAULT_MODEL = {

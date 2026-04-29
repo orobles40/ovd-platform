@@ -28,24 +28,25 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import psycopg
 
+from settings import get_settings
+
 log = logging.getLogger("ovd.checkout")
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DATABASE_URL = get_settings().database_url
 
 # S41P.B — Umbral de sesión colgada configurable.
 # OVD_HEARTBEAT_TIMEOUT_SECS (segundos) tiene prioridad sobre OVD_STALE_SESSION_MINUTES (minutos).
 # Default: 1800s (30 min). En .env de dev se recomienda 3600s para ciclos largos.
-_hb_secs = int(os.environ.get("OVD_HEARTBEAT_TIMEOUT_SECS", "0"))
+_hb_secs = get_settings().ovd_heartbeat_timeout_secs
 _STALE_THRESHOLD_MINUTES = (
     (_hb_secs // 60)
     if _hb_secs > 0
-    else int(os.environ.get("OVD_STALE_SESSION_MINUTES", "30"))
+    else get_settings().ovd_stale_session_minutes
 )
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,6 @@ Dependencia JWT: inject_current_user() → usa para rutas protegidas de API.
 from __future__ import annotations
 
 import logging
-import os
 
 import psycopg
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -32,10 +31,11 @@ from auth import (
 )
 from exceptions import OVDTokenError
 from rate_limiter import limiter
+from settings import get_settings
 
 log = logging.getLogger(__name__)
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DATABASE_URL = get_settings().database_url
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)

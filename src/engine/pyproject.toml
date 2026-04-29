@@ -87,6 +87,7 @@ docstring-code-format = false
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
 ]
 # uv genera uv.lock automáticamente al hacer `uv sync`

@@ -117,3 +117,93 @@ Solo si el usuario confirma explícitamente:
 ```bash
 git push origin dev
 ```
+
+## Paso 8 — Registrar sesión en skills-log.md
+
+Este paso se ejecuta siempre, independientemente de si se hizo push.
+
+### 8a. Calcular duración
+
+```bash
+if [ -f .claude/session-active.md ]; then
+  source .claude/session-active.md
+  END=$(date +%s)
+  DURATION_SECS=$((END - START))
+  DURATION_MIN=$((DURATION_SECS / 60))
+  HOURS=$((DURATION_MIN / 60))
+  MINS=$((DURATION_MIN % 60))
+  END_TIME=$(date '+%H:%M')
+  START_TIME_READABLE=$(date -d "@$START" '+%H:%M' 2>/dev/null || date -r "$START" '+%H:%M')
+  echo "Duración: ${HOURS}h ${MINS}m"
+fi
+```
+
+### 8b. Preguntar fricción
+
+Hacer UNA pregunta al usuario:
+
+> "Fricción percibida hoy (1=mucha fricción, 5=ninguna fricción): ?"
+
+Esperar respuesta numérica (1–5). Si no responde, usar "—".
+
+### 8c. Detectar skills utilizados en la sesión
+
+Revisar si se invocaron los skills en esta sesión (inferir desde el resumen `$resumen` y el contexto):
+- `/session-start` — siempre sí si llegamos al cierre
+- `/run-tests` — sí si se ejecutaron tests con el skill
+- `/pre-push` — sí si se ejecutó el gate pre-push
+- `/session-close` — siempre sí (estamos aquí)
+
+### 8d. Obtener estado de gates CI (del Paso 1 y Paso 2)
+
+Usar los resultados de ruff y pytest ya ejecutados arriba.
+
+### 8e. Calcular número de sesión
+
+```bash
+SESION_NUM=$(grep -c "^## S[0-9]" .claude/skills-log.md 2>/dev/null || echo 0)
+SESION_NUM=$((SESION_NUM + 1))
+SESION_ID=$(printf "S%03d" $SESION_NUM)
+```
+
+### 8f. Escribir entrada en skills-log.md
+
+Agregar al final de `.claude/skills-log.md` (después de la última entrada):
+
+```markdown
+## {SESION_ID} | {DATE}
+
+| Métrica | Valor |
+|---|---|
+| Inicio | {START_TIME} |
+| Cierre | {END_TIME} |
+| Duración | ~{HOURS}h {MINS}m |
+| Sprint | {SPRINT} |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | {FRICTION_SCORE} |
+
+### Skills utilizados
+- [x] /session-start
+- [x/ ] /run-tests ×N
+- [x/ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x/ ] ruff lint: PASS/FAIL
+- [x/ ] ruff format: PASS/FAIL
+- [x/ ] pytest unit: N passed
+- [x/ ] OVD conventions: PASS/FAIL
+- Push ejecutado: SÍ/NO | Fallos CI post-push: 0
+
+### Completado hoy
+{$resumen}
+
+### Notas
+
+```
+
+### 8g. Limpiar sesión activa
+
+```bash
+rm -f .claude/session-active.md
+```

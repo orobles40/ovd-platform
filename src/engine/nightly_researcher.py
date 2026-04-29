@@ -35,6 +35,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from search_providers import SearchResult, get_provider
+from settings import get_settings
 
 log = logging.getLogger("ovd.nightly_researcher")
 
@@ -42,15 +43,16 @@ log = logging.getLogger("ovd.nightly_researcher")
 # Config
 # ---------------------------------------------------------------------------
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
-_OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-_EMBED_MODEL = os.environ.get("OVD_EMBED_MODEL", "nomic-embed-text")
-_LLM_MODEL = os.environ.get("OVD_MODEL", "claude-sonnet-4-6")
-_NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
-_NIGHTLY_HOUR = int(os.environ.get("OVD_NIGHTLY_HOUR", "2"))
-_NIGHTLY_ENABLED = os.environ.get("OVD_NIGHTLY_ENABLED", "true").lower() == "true"
-_MAX_ORGS = int(os.environ.get("OVD_NIGHTLY_MAX_ORGS", "10"))
-_MAX_QUERIES = int(os.environ.get("OVD_NIGHTLY_MAX_QUERIES", "3"))
+_s = get_settings()
+_DATABASE_URL = _s.database_url
+_OLLAMA_URL = _s.ollama_base_url
+_EMBED_MODEL = _s.ovd_embed_model or "nomic-embed-text"
+_LLM_MODEL = _s.ovd_model or "claude-sonnet-4-6"
+_NATS_URL = _s.nats_url or "nats://localhost:4222"
+_NIGHTLY_HOUR = _s.ovd_nightly_hour
+_NIGHTLY_ENABLED = _s.ovd_nightly_enabled
+_MAX_ORGS = _s.ovd_nightly_max_orgs
+_MAX_QUERIES = _s.ovd_nightly_max_queries
 
 # Palabras clave que indican CVE/vulnerabilidad en la síntesis
 _CVE_KEYWORDS = [
@@ -169,7 +171,7 @@ async def synthesize(
     try:
         llm = ChatAnthropic(
             model=_LLM_MODEL,
-            api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            api_key=get_settings().anthropic_api_key,
             max_tokens=800,
         )
         response = await llm.ainvoke(
