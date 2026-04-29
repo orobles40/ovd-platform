@@ -13,13 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from exceptions import OVDTokenError
-
 from auth import (
     _hash_token,
     create_access_token,
     verify_access_token,
 )
+from exceptions import OVDTokenError
 
 # JWT_SECRET mínimo para tests (32 chars)
 _TEST_SECRET = "a" * 64

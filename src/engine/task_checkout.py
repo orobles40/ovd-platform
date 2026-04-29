@@ -44,9 +44,7 @@ _DATABASE_URL = get_settings().database_url
 # Default: 1800s (30 min). En .env de dev se recomienda 3600s para ciclos largos.
 _hb_secs = get_settings().ovd_heartbeat_timeout_secs
 _STALE_THRESHOLD_MINUTES = (
-    (_hb_secs // 60)
-    if _hb_secs > 0
-    else get_settings().ovd_stale_session_minutes
+    (_hb_secs // 60) if _hb_secs > 0 else get_settings().ovd_stale_session_minutes
 )
 
 # ---------------------------------------------------------------------------

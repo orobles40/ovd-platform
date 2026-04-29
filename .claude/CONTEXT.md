@@ -16,31 +16,31 @@
 
 ---
 
-## Última sesión (2026-04-28)
+## Última sesión (2026-04-28 — sesión 2)
 
 **Completado:**
-- Fase 2 plan mantenibilidad: ruff + Makefile + CI configurados
-- Fase 3-A: settings.py centralizado (Pydantic BaseSettings)
-- Fase 3-C: exceptions.py con jerarquía OVD
-- Migración de 8 módulos a get_settings() (model_router, rag, nightly_researcher, audit_logger, nats_client, task_checkout, routers/api_v1, routers/auth_router)
-- Baseline pytest-cov establecido: 88% TOTAL
-- Propuesta de skills Claude Code v1.0 documentada y aprobada
-- Skills Fase 1 implementados: session-start, session-close, run-tests, pre-push
-- CLAUDE.md dividido en CLAUDE.md (permanente) + CONTEXT.md (dinámico)
+- Análisis completo del RAG: colecciones activas, contenido indexado, gaps identificados
+- S96-H: propuesta re-indexación incremental post-sesión + post-ciclo (4 nuevos doc_types)
+- S96-I: base de conocimiento externa — 13 repos en 4 categorías, .gitignore + setup-knowledge.sh
+- Fix slash commands: migrado `.claude/skills/` → `.claude/commands/` (formato correcto Claude Code)
+- Logging automático de sesiones: session-active.md + skills-log.md operativos
+- ruff auto-fix: 2 errores corregidos, 3 archivos reformateados
 
 **Decisiones tomadas:**
-- Separar CLAUDE.md en CLAUDE.md + CONTEXT.md → APROBADO
-- Sesión dedicada a 5 fallos pre-existentes → APROBADO (planificada en S96-G)
-- Fix /auth/login 500 → PRIORIDAD S96 (S96-F, antes de S96-D y S96-E)
+- RAG escenario 1 (OVD se desarrolla a sí mismo) → re-indexación incremental en session-close
+- RAG escenario 2 (Claude Code + usuario) → NO usa pgvector, lee archivos directamente
+- Repos externos NO se indexan en pgvector — solo grep/lectura directa
+- kyrolabs/awesome-agents descartado (solo links, sin valor semántico)
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea sugerida:** S96-F — Fix POST /auth/login retorna 500
+**Primera tarea:** S96-F — Fix POST /auth/login retorna 500
 - Causa probable: error en `_get_user_by_email()` o en emisión de tokens
 - Workaround actual: curl + OVD_SECRET
 - Bloquea: dashboard web completo
+- Validar con: `/session-start` (ahora en .claude/commands/ — debería funcionar)
 
 ---
 

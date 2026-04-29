@@ -14,8 +14,9 @@ import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from exceptions import OVDTokenError
 from factories import make_qa_result, make_security_result, make_state
+
+from exceptions import OVDTokenError
 
 # ---------------------------------------------------------------------------
 # TestGAP001SecurityAuditIndependiente

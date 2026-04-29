@@ -49,3 +49,38 @@
 <!-- SESIONES REGISTRADAS ABAJO — NO EDITAR MANUALMENTE -->
 <!-- session-start y session-close escriben aquí automáticamente -->
 
+## S001 | 2026-04-28
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 23:46 |
+| Cierre | 23:51 |
+| Duración | ~sesión extendida (contexto comprimido — duración real ~4h) |
+| Sprint | S96 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | — (primera sesión con skills, sin medición previa) |
+
+### Skills utilizados
+- [x] /session-start (ejecutado manualmente — slash command corregido esta sesión)
+- [ ] /run-tests ×0 (tests ejecutados directamente)
+- [ ] /pre-push (no ejecutado — sesión de planificación)
+- [x] /session-close
+
+### Gates CI
+- [x] ruff lint: PASS (2 errores auto-corregidos)
+- [x] ruff format: PASS (3 archivos reformateados)
+- [x] pytest unit: 1542 passed / 10 deselected (0 fallos nuevos)
+- [x] OVD conventions: OK (os.environ.get restantes son módulos pendientes de migración)
+- Push ejecutado: NO | Fallos CI post-push: —
+
+### Completado hoy
+- Análisis RAG completo: colecciones, contenido, gaps
+- S96-H: re-indexación incremental RAG (roadmap + Paso 9 session-close)
+- S96-I: 13 repos referencia externos (.gitignore + setup-knowledge.sh)
+- Fix slash commands: .claude/commands/ (session-start, session-close, run-tests, pre-push)
+- Logging automático de sesiones operativo
+- Sistema de skills documentado y corregido para próximas sesiones
+
+### Notas
+Primera sesión con skills activos. /session-start fallaba por path incorrecto (.claude/skills/ vs .claude/commands/). Corregido al final de la sesión — próxima sesión debería funcionar correctamente.
+

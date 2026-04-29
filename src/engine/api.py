@@ -176,7 +176,10 @@ app = FastAPI(
 # CORS — orígenes permitidos configurables por variable de entorno.
 # En dev: http://localhost:5173 (Vite). En prod: dominio del dashboard.
 # OVD_CORS_ORIGINS puede ser una lista separada por comas.
-_cors_raw = _cfg.ovd_cors_origins or "http://localhost:5173,http://localhost:3000,http://localhost:80"
+_cors_raw = (
+    _cfg.ovd_cors_origins
+    or "http://localhost:5173,http://localhost:3000,http://localhost:80"
+)
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
 app.add_middleware(
