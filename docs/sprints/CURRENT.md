@@ -149,6 +149,30 @@ Por cada archivo modificado → llamar al endpoint `/orgs/{org_id}/knowledge/ind
 
 ---
 
+### S96-I — Base de conocimiento externa: repos de referencia (BAJO)
+
+Clonar repos seleccionados en `src/knowledge/external/` para consulta directa durante sesiones de desarrollo. **No se indexan en pgvector.**
+
+**Propósito:** antes de diseñar una solución a un problema en OVD, buscar si ya fue resuelto en alguno de estos repos y cómo lo implementaron.
+
+**Repos a incluir:**
+
+| Repo | Directorio local | Qué aporta |
+|---|---|---|
+| `obra/superpowers` | `superpowers-upstream/` | ya existe — sincronizar con upstream |
+| `NousResearch/hermes-agent` | `hermes-agent/` | FastMCP/FastAPI templates, web design systems, GitHub workflows, MLOps |
+
+**Directorios a clonar de hermes-agent (no el repo completo):**
+- `optional-skills/mcp/fastmcp/` — templates FastAPI/MCP
+- `skills/creative/popular-web-designs/` — design systems frontend
+- `skills/github/` — workflows DevOps
+- `skills/software-development/` — TDD, planning, debugging
+- `optional-skills/mlops/` — RAG, vector DBs
+
+**Uso durante sesiones:** cuando se enfrente un issue en OVD, antes de diseñar la solución Claude Code hace `grep` o lectura directa en `src/knowledge/external/` para verificar si ya existe una implementación de referencia.
+
+---
+
 ## Ciclo de validación S96
 
 ```bash
