@@ -244,4 +244,5 @@ class TestUpdateRetry:
         )
         result = update_qa_retry(state)
         feedback = result["retry_feedback"]
-        assert "QA REVIEW FAILED" in feedback
+        # S97-C: el nuevo formato usa [S97-QA] en lugar de "QA REVIEW FAILED"
+        assert "[S97-QA]" in feedback or "CORRECCIONES" in feedback

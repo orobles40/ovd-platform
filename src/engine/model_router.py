@@ -525,12 +525,16 @@ async def get_llm_with_context(
     project_id: str,
     jwt_token: str = "",
     stack_routing: str = "auto",
+    temperature_override: float | None = None,
 ) -> Any:
     """
     Atajo Sprint 8: resuelve config con Stack Registry routing y construye el LLM.
     Reemplaza get_llm() en los nodos del grafo que ya reciben AgentContext.
+    S97-E: temperature_override permite reducir temperatura en reintentos de QA.
     """
     config = await resolve_with_context(
         agent_role, org_id, project_id, jwt_token, stack_routing
     )
+    if temperature_override is not None:
+        config.temperature = temperature_override
     return build_llm(config)

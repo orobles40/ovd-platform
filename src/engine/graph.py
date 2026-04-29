@@ -481,6 +481,12 @@ class OVDState(TypedDict):
     qa_retry_count: int  # reintentos de qa_review → execute_agents
     retry_feedback: str  # feedback acumulado para los agentes en reintentos
 
+    # S97-A: historial de scores QA por ronda (acumulador append-only)
+    qa_score_history: Annotated[
+        list,
+        lambda old, new: (old or []) + (new or []),
+    ]
+
     escalation_resolution: str
 
     # S22 — run_tests: ejecución real de tests generados
@@ -791,6 +797,21 @@ async def analyze_fr(state: OVDState) -> dict:
     """Analiza el Feature Request y extrae contexto tecnico con structured output."""
     project_ctx = state.get("project_context", "")
 
+    # S97-D: si la FR menciona explícitamente una BD distinta a Oracle,
+    # filtrar restricciones Oracle del project_ctx antes de pasar al LLM.
+    fr_text = state.get("feature_request", "")
+    _explicit_bd = _extract_explicit_bd_from_fr(fr_text)
+    if _explicit_bd and _explicit_bd != "oracle" and project_ctx:
+        project_ctx = _strip_db_restrictions(project_ctx)
+        project_ctx += (
+            f"\n\n[S97-D] NOTA: El Feature Request especifica {_explicit_bd.upper()} "
+            f"explícitamente. Usar {_explicit_bd.upper()} — ignorar BD del perfil del proyecto."
+        )
+        log.info(
+            "analyze_fr: S97-D — FR menciona '%s' explícitamente, contexto Oracle filtrado",
+            _explicit_bd,
+        )
+
     # GAP-004: calcular constraints_version como hash del project_context
     constraints_version = (
         hashlib.md5(project_ctx.encode()).hexdigest()[:8]
@@ -845,15 +866,29 @@ async def analyze_fr(state: OVDState) -> dict:
                 "ovd.oracle_involved": result.oracle_involved,
                 "ovd.risks_count": len(result.risks),
                 "ovd.constraints_version": constraints_version,
+                "ovd.explicit_bd": _explicit_bd or "",
             }
         )
+
+    # S97-D: si la FR menciona BD no-Oracle explícitamente, forzar oracle_involved=False
+    # aunque el LLM haya retornado True basándose en el perfil del proyecto.
+    _oracle_override = (
+        _explicit_bd is not None and _explicit_bd != "oracle" and result.oracle_involved
+    )
+    if _oracle_override:
+        log.info(
+            "analyze_fr: S97-D — override oracle_involved True→False (FR dice '%s')",
+            _explicit_bd,
+        )
+
+    _final_oracle_involved = False if _oracle_override else result.oracle_involved
 
     analysis = {
         "raw": result.summary,
         "type": result.fr_type,
         "complexity": result.complexity,
         "components": result.components,
-        "oracle_involved": result.oracle_involved,
+        "oracle_involved": _final_oracle_involved,
         "risks": result.risks,
         "summary": result.summary,
     }
@@ -865,6 +900,7 @@ async def analyze_fr(state: OVDState) -> dict:
         "security_retry_count": 0,  # GAP-005: inicializar contadores
         "qa_retry_count": 0,
         "retry_feedback": "",
+        "qa_score_history": [],  # S97-A: historial de scores por ronda
         "token_usage": {},  # FASE 4.D: inicializar acumulador de tokens
         "cycle_start_ts": time.time(),  # P5.C: timestamp inicio del ciclo
         "status": "analyzed",
@@ -1083,6 +1119,28 @@ _DB_RESTRICTION_KEYWORDS = (
     "wallet",
     "oracle_home",
 )
+
+# S97-D: BDs que pueden aparecer explícitamente en la FR
+_BD_KEYWORDS_EXPLICIT: dict[str, str] = {
+    "postgresql": "postgresql",
+    "postgres": "postgresql",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "mongodb": "mongodb",
+    "sqlite": "sqlite",
+    "sql server": "sqlserver",
+    "mssql": "sqlserver",
+    "oracle": "oracle",
+}
+
+
+def _extract_explicit_bd_from_fr(fr_text: str) -> str | None:
+    """S97-D: retorna la BD mencionada explícitamente en la FR, o None."""
+    fr_lower = fr_text.lower()
+    for keyword, bd_name in _BD_KEYWORDS_EXPLICIT.items():
+        if keyword in fr_lower:
+            return bd_name
+    return None
 
 
 def _strip_db_restrictions(project_ctx: str, oracle_involved: bool = False) -> str:
@@ -3076,12 +3134,22 @@ async def _agent_executor_impl(state: OVDState) -> dict:
             }
 
     # Obtener LLM configurado para este agente — S8: con Stack Registry routing
+    # S97-E: en retry de QA, reducir temperatura para mayor adherencia al feedback
+    _qa_retry_count = state.get("qa_retry_count", 0)
+    _temperature_override = 0.1 if _qa_retry_count > 0 else None
+    if _temperature_override is not None:
+        log.info(
+            "_agent_executor: S97-E ronda=%d temperature_override=%.1f (corrección prescriptiva)",
+            _qa_retry_count,
+            _temperature_override,
+        )
     llm = await model_router.get_llm_with_context(
         agent_name,
         org_id,
         project_id,
         jwt_token,
         state.get("stack_routing", "auto"),
+        temperature_override=_temperature_override,
     )
 
     # S6 — G1.C: inyectar contexto de archivos del repo si está disponible
@@ -3213,6 +3281,21 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     agent_name,
                     i + 1,
                     len(agent_tasks),
+                )
+            # S97-C: en retry de QA, añadir preamble Superpowers al inicio del HumanMessage
+            _qa_retry_round = state.get("qa_retry_count", 0)
+            if _qa_retry_round > 0 and retry_feedback:
+                _retry_preamble = (
+                    "⚠️ REINTENTO DE CORRECCIÓN (ronda {round}) — IMPORTANTE:\n"
+                    "Lee el feedback QA al FINAL de este mensaje ANTES de generar código.\n"
+                    "No regeneres archivos que no tienen issues en el feedback.\n"
+                    "Aplica correcciones quirúrgicas: cambia SOLO lo que el feedback indica.\n\n"
+                ).format(round=_qa_retry_round)
+                task_sdd_content = _retry_preamble + task_sdd_content
+                log.info(
+                    "agent_executor[%s]: S97-C preamble Superpowers inyectado (ronda %d)",
+                    agent_name,
+                    _qa_retry_round,
                 )
             # S51-A: tarea de tests → instrucción de prioridad máxima
             _task_desc_lower = (
@@ -8000,15 +8083,71 @@ def _build_security_feedback(security: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_qa_feedback(qa: dict) -> str:
-    """Construye el feedback de QA para el reintento de los agentes."""
-    lines = ["QA REVIEW FAILED — issues a corregir:"]
-    for i in qa.get("issues", []):
-        lines.append(f"  - Issue: {i}")
-    for m in qa.get("missing_requirements", []):
-        lines.append(f"  - Requisito SDD no implementado: {m}")
-    for c in qa.get("code_quality_issues", []):
-        lines.append(f"  - Calidad de codigo: {c}")
+def _parse_location_from_issue(issue: str) -> tuple[str, str]:
+    """S97-C: extrae archivo y línea de texto como 'src/main.py:45: error...'"""
+    import re as _re
+
+    m = _re.search(r"(src/[\w/]+\.py)(?::(\d+))?", issue)
+    if m:
+        return m.group(1), m.group(2) or ""
+    return "", ""
+
+
+def _build_qa_feedback(qa: dict, retry_round: int = 0) -> str:
+    """S97-C: Feedback QA prescriptivo con ubicaciones y acciones específicas.
+
+    Sigue patrón Superpowers 5-step verification: leer → identificar → verificar → mínimo cambio.
+    """
+    score = qa.get("score", 0)
+    lines = [
+        f"[S97-QA] CORRECCIONES RONDA {retry_round + 1} — Score anterior: {score}/100",
+        "=" * 60,
+        "",
+    ]
+
+    issues = qa.get("issues", [])
+    if issues:
+        lines.append("## ISSUES BLOQUEANTES (corregir PRIMERO):")
+        for idx, issue in enumerate(issues, 1):
+            lines.append(f"\n[ISSUE-{idx:02d}] {issue}")
+            _file, _line = _parse_location_from_issue(issue)
+            if _file:
+                lines.append(f"  → ARCHIVO: {_file}")
+                if _line:
+                    lines.append(f"  → LÍNEA: {_line}")
+            lines.append(
+                "  → ACCIÓN: corrige específicamente este problema en el archivo indicado"
+            )
+        lines.append("")
+
+    missing = qa.get("missing_requirements", [])
+    if missing:
+        lines.append("## REQUISITOS NO IMPLEMENTADOS:")
+        for m in missing:
+            lines.append(f"\n[REQ] {m}")
+            lines.append("  → ACCIÓN: implementar esta funcionalidad según el SDD")
+        lines.append("")
+
+    code_issues = qa.get("code_quality_issues", [])
+    if code_issues:
+        lines.append("## CALIDAD DE CÓDIGO (corregir si es posible):")
+        for c in code_issues:
+            lines.append(f"\n[CALIDAD] {c}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## INSTRUCCIONES DE CORRECCIÓN (obligatorias — patrón Superpowers):",
+            "1. Lee TODOS los issues de arriba sin implementar todavía",
+            "2. Para cada [ISSUE], identifica el archivo y la función exacta",
+            "3. Lee el contenido actual de ese archivo antes de modificar",
+            "4. Genera SOLO los cambios mínimos necesarios",
+            "5. NO reescribas archivos que no tienen issues en el feedback",
+            "",
+            "PRIORIDAD: ISSUES BLOQUEANTES > REQUISITOS > CALIDAD",
+        ]
+    )
+
     return "\n".join(lines)
 
 
@@ -8016,6 +8155,7 @@ def route_after_qa(state: OVDState) -> str:
     """
     GAP-005 / P5.B: Despues del qa_review:
     - Si paso (booleano O score >= _QA_MIN_SCORE): entregar
+    - S97-A: Si 2+ rondas con delta < 5 puntos → entrega forzada (evitar loops inútiles)
     - Si fallo y quedan reintentos: volver a execute_agents con feedback de calidad
     - Si fallo y se agotaron los reintentos: escalar al arquitecto
     """
@@ -8034,6 +8174,21 @@ def route_after_qa(state: OVDState) -> str:
         return "run_tests"  # S22: pasar por run_tests antes de generate_docs → deliver
 
     retry_count = state.get("qa_retry_count", 0)
+
+    # S97-A: detección de estancamiento — si 2+ rondas con delta < 5 puntos → entrega forzada
+    score_history = state.get("qa_score_history", [])
+    if len(score_history) >= 2 and retry_count >= 2:
+        delta = abs(
+            score_history[-1].get("score", 0) - score_history[-2].get("score", 0)
+        )
+        if delta < 5:
+            log.warning(
+                "route_after_qa: S97-A estancamiento detectado scores=%s delta=%d — entrega forzada",
+                [h.get("score") for h in score_history],
+                delta,
+            )
+            return "handle_escalation"
+
     if retry_count < MAX_RETRIES:
         return "route_agents"  # GAP-002
     return "handle_escalation"
@@ -8077,8 +8232,21 @@ def update_qa_retry(state: OVDState) -> dict:
     GAP-005: Nodo intermedio que incrementa el contador de reintentos de QA
     y construye el feedback acumulado antes de volver a execute_agents.
     LangGraph llama a este nodo cuando route_after_qa devuelve 'execute_agents'.
+    S97-A: registra entrada en qa_score_history para detección de estancamiento.
+    S97-C: cap aumentado a 5000 chars para preservar más contexto de feedback.
     """
     qa = state.get("qa_result", {})
+    retry_round = state.get("qa_retry_count", 0)
+    current_score = qa.get("score", 0)
+
+    # S97-A: registrar esta ronda en el historial
+    new_history_entry = {
+        "round": retry_round + 1,
+        "score": current_score,
+        "issues_count": len(qa.get("issues", [])),
+        "summary": (qa.get("summary", "") or "")[:150],
+    }
+
     new_feedback = _build_qa_feedback(qa)
     existing_feedback = state.get("retry_feedback", "")
     accumulated = (
@@ -8086,12 +8254,11 @@ def update_qa_retry(state: OVDState) -> dict:
         if existing_feedback
         else new_feedback
     )
-    accumulated = _truncate(
-        accumulated, 3000
-    )  # S31-B: cap para no explotar contexto del agente
+    accumulated = _truncate(accumulated, 5000)  # S97-C: aumentado de 3000 a 5000
 
     return {
-        "qa_retry_count": state.get("qa_retry_count", 0) + 1,
+        "qa_retry_count": retry_round + 1,
+        "qa_score_history": [new_history_entry],  # S97-A: reducer acumula en lista
         "retry_feedback": accumulated,
         "status": "retrying_after_qa",
         "messages": state.get("messages", [])
@@ -8099,8 +8266,8 @@ def update_qa_retry(state: OVDState) -> dict:
             {
                 "role": "agent",
                 "content": (
-                    f"QA fallido (reintento {state.get('qa_retry_count', 0) + 1}/{MAX_RETRIES}). "
-                    f"Score: {qa.get('score', 0)}/100. "
+                    f"QA fallido (reintento {retry_round + 1}/{MAX_RETRIES}). "
+                    f"Score: {current_score}/100. "
                     "Regenerando implementacion con feedback de calidad..."
                 ),
             }

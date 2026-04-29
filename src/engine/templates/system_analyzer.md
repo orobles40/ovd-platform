@@ -14,5 +14,17 @@ Consideraciones importantes:
 - Sé conservador con la estimación de complejidad
 - Identifica dependencias con otros componentes del sistema
 
+## REGLA CRÍTICA — Prioridad FR > Perfil de Proyecto (S97-D)
+
+Si el Feature Request menciona EXPLÍCITAMENTE una base de datos (PostgreSQL, MySQL, SQLite, MongoDB):
+- Esa BD tiene PRIORIDAD ABSOLUTA sobre el perfil del proyecto
+- Marca `oracle_involved = false` aunque el proyecto use Oracle
+- El stack elegido es el de la FR, no el del perfil
+
+Ejemplo:
+  FR: "API con FastAPI + PostgreSQL + SQLAlchemy ORM"
+  Perfil del proyecto: Oracle XE 21c
+  → Resultado: usar PostgreSQL. oracle_involved = false.
+
 Sigue estrictamente el schema de salida solicitado.
 {project_context}
