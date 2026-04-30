@@ -207,3 +207,90 @@ QA +5 pts (60→65) pero no es real: no hay frontend ni infra para penalizar.
 3 fixes verificados en ciclo: validate_rut DV=K (GAP-T1 desde S43 RESUELTO), jose JWT consistente, NameError auth/router eliminado.
 2 no absorbidos: services.py singular persiste, DATABASE_URL hardcodeada.
 S101 prioritario: postprocesador renaming + validación distribución agentes en SDD.
+
+---
+
+## S005 | 2026-04-29
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 17:33 |
+| Cierre | 22:16 |
+| Duración | ~4h 43m |
+| Sprint | S101 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (148 archivos)
+- [x] pytest unit: 1651 passed
+- [x] OVD conventions: PASS (sin regresiones nuevas)
+- Push ejecutado: NO | Fallos CI post-push: 0
+
+### Completado hoy
+- S101-A: postprocesador rename service.py → services.py + actualizar imports (graph.py run_tests)
+- S101-B: _fix_sdd_agent_assignments() — inferencia agente por output_file extension/path (graph.py)
+- S101-C: _fix_database_url_hardcoded() — DATABASE_URL literal → os.environ.get() (code_postprocessor.py)
+- S101-D: oracle_involved forzado a True cuando FR menciona "oracle" (graph.py analyze_fr)
+- S101-E: ruff I001 fix en test_model_router.py y test_s98.py
+- test_s101.py: 30/30 PASS (5 clases, tests unitarios puros con tmp_path)
+- Ciclo validación S101 (1b359097): QA 90/100 — primer PASS histórico, 10m 41s (-50% duración)
+- INFORME_PRUEBA_S101.md generado con análisis detallado de 9 archivos + propuestas S102
+- CONTEXT.md y CURRENT.md actualizados para S102
+
+### Notas
+QA 90 es el pico histórico del proyecto (anterior: S76 con 93, pero ese no incluyó Oracle fullstack).
+S101-B y S101-C no se activaron en ciclo: S101-B requiere output_file en tasks SDD (GAP estructural),
+S101-C requiere reiniciar engine (problema operacional, no de código).
+Background task S47 confirmado en producción: ciclo completó aunque el browser recaró la pestaña.
+
+---
+
+## S006 | 2026-04-29
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 22:00 (estimado — sesión con compresión de contexto) |
+| Cierre | 23:12 |
+| Duración | ~1h 12m (fase de monitoreo y análisis) |
+| Sprint | S102 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | — |
+
+### Skills utilizados
+- [x] /session-start (sesión previa — continuación)
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (149 archivos)
+- [x] pytest unit: 1675 passed (+24 tests S102)
+- [x] OVD conventions: PASS (sin regresiones)
+- Push ejecutado: NO | Fallos CI post-push: 0
+
+### Completado hoy
+- S102-A: postprocesador `_fix_silent_service_import()` — elimina try/except ImportError silencioso
+- S102-B: `_fix_sdd_agent_assignments()` — keyword inference para tareas sin output_file
+- S102-C: `output_file` obligatorio en `system_sdd.md`
+- test_s102.py: 24/24 PASS
+- Ciclo validación S102 (77a54e0c): QA 60/100, 30m 35s, 26 archivos, 4 agentes (primer ciclo fullstack)
+- INFORME_PRUEBA_S102.md generado con análisis completo: 3 rondas de retry, 10 GAPs, 6 propuestas S103
+- CONTEXT.md actualizado con estado S102 y roadmap S103
+
+### Notas
+S102 es el primer ciclo con los 4 agentes activos — hito histórico. Sin embargo QA regresó a 60
+por coherencia inter-agente rota: los agentes generan nombres distintos para los mismos artefactos.
+El problema central de S103 es P1 (Shared Type Contract): una tabla normalizada en el SDD que
+coordine nombres de clases/funciones entre agentes. S62-B reutilizó QA score del ronda 0 en retry 2.
+S91-A auto-generó contracts/router.py pero sin pasar por el postprocesador S102-A — nuevo gap.
+Ronda 2 produjo main.py 600 bytes con arquitectura correcta (routers separados) pero falló en test
+imports: `list_contracts` inventado por el LLM sin generarlo en services.py.
