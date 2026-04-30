@@ -1332,6 +1332,9 @@ def _fix_sdd_agent_assignments(tasks: list[dict]) -> list[dict]:
         inferred: str | None = None
 
         # S102-B: fallback por keywords en title/id/description cuando output_file está vacío
+        # S103-P3: "frontend" eliminado de keywords — es sustantivo genérico que aparece en
+        # docker-compose y configs devops como nombre de servicio, causando falsos positivos
+        # (ciclo S102: CyclesExport.tsx generado en vez de docker-compose.yml).
         if not output_file:
             _kw_text = " ".join(
                 [
@@ -1352,7 +1355,6 @@ def _fix_sdd_agent_assignments(tasks: list[dict]) -> list[dict]:
                         "component",
                         ".tsx",
                         ".jsx",
-                        "frontend",
                         "react",
                         "vitest",
                         "tailwind",
@@ -2947,6 +2949,107 @@ def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> st
     )
 
 
+_S103_S72A_RE = _re_top.compile(r"\[S72-A\]\s+USA EXACTAMENTE:\s*`([^`]+)`")
+_S103_BACKTICK_DEF_RE = _re_top.compile(r"`(def\s+\w+\s*\([^)]*\))`")
+_S103_SNAKE_FUNC_RE = _re_top.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\s*\(")
+_S103_DEF_SIG_RE = _re_top.compile(r"(def\s+\w+\s*\([^)]*\))")
+_S103_BUILTINS = frozenset(
+    "print len range list dict str int float bool type isinstance hasattr getattr "
+    "setattr open super object property classmethod staticmethod next iter enumerate "
+    "zip map filter sorted reversed any all sum min max append extend get set update "
+    "format split join strip replace lower upper".split()
+)
+
+
+def _build_type_contract(sdd: dict) -> str:
+    """S103-P1: tabla de nombres normalizados extraída del SDD para coordinación inter-agente.
+
+    Extrae nombres exactos de funciones y clases de las tareas SDD (S72-A hints +
+    firmas en backticks + listas de funciones) y los inyecta en cada prompt de agente.
+    Previene divergencias de nombres entre agentes (ej: list_contracts inventada en tests
+    pero ausente en services.py).
+    """
+    by_module: dict[str, list[tuple[str, bool]]] = {}  # path → [(signature, is_s72a)]
+
+    for task in sdd.get("tasks", []):
+        desc = task.get("description", "") + " " + task.get("title", "")
+        output_file = task.get("output_file", task.get("file", ""))
+
+        if not output_file or not output_file.endswith(".py"):
+            continue
+
+        entries = by_module.setdefault(output_file, [])
+        seen_names: set[str] = set()
+        for sig, _ in entries:
+            m = _re_top.match(r"(?:def|class)\s+(\w+)", sig)
+            if m:
+                seen_names.add(m.group(1))
+
+        # 1. S72-A exact hints — más autoritativos
+        for s72m in _S103_S72A_RE.finditer(desc):
+            hint = s72m.group(1).strip()
+            for part in hint.split("/"):
+                part = part.strip().rstrip(".")
+                sig_m = _S103_DEF_SIG_RE.search(part)
+                if sig_m:
+                    sig = sig_m.group(1)
+                    name_m = _re_top.match(r"def\s+(\w+)", sig)
+                    if name_m and name_m.group(1) not in seen_names:
+                        entries.append((sig, True))
+                        seen_names.add(name_m.group(1))
+                elif part.startswith("class "):
+                    cls_m = _re_top.match(r"class\s+(\w+)", part)
+                    if cls_m and cls_m.group(1) not in seen_names:
+                        entries.append((part, True))
+                        seen_names.add(cls_m.group(1))
+
+        # 2. Backtick-quoted `def func(...)` en descripción
+        for btm in _S103_BACKTICK_DEF_RE.finditer(desc):
+            sig = btm.group(1)
+            name_m = _re_top.match(r"def\s+(\w+)", sig)
+            if name_m:
+                name = name_m.group(1)
+                if name not in seen_names and name not in _S103_BUILTINS:
+                    entries.append((sig, False))
+                    seen_names.add(name)
+
+        # 3. snake_case(args) en listas explícitas de funciones
+        if "funciones" in desc.lower() or " functions" in desc.lower():
+            for snm in _S103_SNAKE_FUNC_RE.finditer(desc):
+                name = snm.group(1)
+                if (
+                    name not in seen_names
+                    and name not in _S103_BUILTINS
+                    and len(name) >= 5
+                ):
+                    entries.append((f"def {name}(...)", False))
+                    seen_names.add(name)
+
+    non_empty = {k: v for k, v in by_module.items() if v}
+    if not non_empty:
+        return ""
+
+    lines: list[str] = [
+        "[S103-P1 — CONTRATO DE TIPOS COMPARTIDO]\n"
+        "USA EXACTAMENTE estos nombres en todo el código. "
+        "Un nombre distinto = ImportError = ciclo fallido:\n",
+    ]
+    for mod_path in sorted(non_empty):
+        entries = non_empty[mod_path]
+        lines.append(f"{mod_path}:")
+        for sig, is_s72a in entries:
+            suffix = "  ← OBLIGATORIO (S72-A)" if is_s72a else ""
+            lines.append(f"  {sig}{suffix}")
+        lines.append("")
+
+    lines.append(
+        "PROHIBIDO: importar funciones que no estén en esta lista. "
+        "Si un test necesita una función, esa función DEBE existir con ese nombre exacto "
+        "en el módulo indicado.\n"
+    )
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_single_task_sdd_content(
     sdd: dict,
     agent_name: str,
@@ -2962,15 +3065,19 @@ def _build_single_task_sdd_content(
     10-15K tokens (todas las tareas) a ~800 tokens (una tarea), eliminando timeouts.
 
     S64-B: acepta written_files para inyectar manifest de módulos disponibles.
+    S103-P1: inyecta contrato de tipos normalizado para coordinación inter-agente.
     """
     # S64-B: manifest de módulos al inicio del prompt — groundea al LLM con el inventario real
     module_manifest = _build_sdd_module_manifest(sdd, written_files)
+    # S103-P1: contrato de tipos — nombres exactos de funciones/clases para todos los agentes
+    type_contract = _build_type_contract(sdd)
 
     # S56-D: filtrar requirements por depends_on de la tarea para reducir tokens
     task_requirements = _filter_requirements_for_task(sdd.get("requirements", []), task)
 
     base = (
         f"{module_manifest}"
+        f"{type_contract}"
         f"## Summary\n{sdd.get('summary', '')}\n\n"
         f"## Requirements\n{_json.dumps(task_requirements, ensure_ascii=False, indent=2)}\n\n"
         f"## Design\n{sdd.get('design', {}).get('overview', '')}\n\n"
@@ -5381,6 +5488,126 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# S103-P2 — Helper: validación de nombres importados dentro de módulos locales
+# ---------------------------------------------------------------------------
+
+
+def _check_undefined_import_names(
+    agent_results: list[dict],
+    directory: str,
+) -> tuple[bool, str]:
+    """S103-P2: verifica que los nombres importados de módulos locales existan en esos módulos.
+
+    Complementa S65-A (que valida existencia de módulo) verificando que la función/clase
+    concreta importada esté definida a top-level en el módulo destino.
+
+    Caso raíz S102: `from src.contracts.services import list_contracts` fallaba en pytest
+    porque list_contracts no estaba definida — S65-A lo ignoraba porque el módulo existía.
+    """
+    import ast as _ast_p2
+    from pathlib import Path as _Path_p2
+
+    base = _Path_p2(directory)
+    if not base.exists():
+        return True, ""
+
+    # 1. Construir mapa módulo_dotted → nombres definidos a top-level
+    _SKIP_DIRS = {"__pycache__", ".venv", "venv", "node_modules", ".git"}
+    module_exports: dict[str, set[str]] = {}
+    for py_file in base.rglob("*.py"):
+        rel = py_file.relative_to(base)
+        if any(p in _SKIP_DIRS for p in rel.parts):
+            continue
+        if rel.name.startswith("test_") or rel.name == "conftest.py":
+            continue
+        mod_dotted = str(rel).replace("/", ".").removesuffix(".py")
+        try:
+            src_text = py_file.read_text(encoding="utf-8", errors="replace")
+            tree = _ast_p2.parse(src_text)
+            defined: set[str] = set()
+            for stmt in tree.body:
+                if isinstance(
+                    stmt,
+                    (_ast_p2.FunctionDef, _ast_p2.AsyncFunctionDef, _ast_p2.ClassDef),
+                ):
+                    defined.add(stmt.name)
+                elif isinstance(stmt, _ast_p2.Assign):
+                    for t in stmt.targets:
+                        if isinstance(t, _ast_p2.Name):
+                            defined.add(t.id)
+                elif isinstance(stmt, _ast_p2.AnnAssign) and isinstance(
+                    stmt.target, _ast_p2.Name
+                ):
+                    defined.add(stmt.target.id)
+            module_exports[mod_dotted] = defined
+        except (OSError, SyntaxError):
+            continue
+
+    if not module_exports:
+        return True, ""
+
+    # 2. Recopilar archivos a verificar (artefactos generados + test_*.py en disco)
+    files_to_check: list[str] = []
+    seen_paths: set[str] = set()
+    for result in agent_results or []:
+        for art in result.get("artifacts", []):
+            path = art.get("path", "") if isinstance(art, dict) else str(art)
+            if path.endswith(".py") and path not in seen_paths:
+                files_to_check.append(path)
+                seen_paths.add(path)
+    for py_file in base.rglob("test_*.py"):
+        rel_str = str(py_file.relative_to(base))
+        if rel_str not in seen_paths:
+            files_to_check.append(rel_str)
+            seen_paths.add(rel_str)
+
+    # 3. Verificar nombre a nombre
+    undefined: list[str] = []
+    for path in files_to_check:
+        full_path = base / path
+        try:
+            source = full_path.read_text(encoding="utf-8", errors="replace")
+            tree = _ast_p2.parse(source)
+        except (OSError, SyntaxError):
+            continue
+        for node in _ast_p2.walk(tree):
+            if not isinstance(node, _ast_p2.ImportFrom):
+                continue
+            if node.level > 0 or not node.module:
+                continue
+            target_mod = node.module
+            if target_mod not in module_exports:
+                continue  # módulo no existe en disco — S65-A ya lo reportó
+            defined_in_mod = module_exports[target_mod]
+            for alias in node.names:
+                name = alias.name
+                if name == "*":
+                    continue
+                if name not in defined_in_mod:
+                    undefined.append(
+                        f"  {path}: from {target_mod} import {name}"
+                        f"  ← '{name}' no definido en {target_mod}"
+                    )
+
+    if not undefined:
+        return True, ""
+
+    body = "\n".join(undefined)
+    log.warning(
+        "[S103-P2] %d nombre(s) no definidos en módulo:\n%s",
+        len(undefined),
+        body[:600],
+    )
+    feedback = (
+        "[S103-P2] NOMBRES NO DEFINIDOS EN MÓDULO:\n"
+        f"{body}\n"
+        "CAUSA: el agente importó funciones/clases que NO existen en el módulo destino.\n"
+        "ACCIÓN: definir la función faltante en el módulo indicado O corregir el nombre del import."
+    )
+    return False, feedback
+
+
+# ---------------------------------------------------------------------------
 # S65-A — Helper: validación pre-pytest de imports
 # ---------------------------------------------------------------------------
 
@@ -5708,6 +5935,8 @@ def _validate_artifacts_imports(
             )
 
     # S91-A: auto-generar src/contracts/router.py cuando falta y main.py lo importa
+    # S103-P4: usar services (plural) — S101-A ya renombró service.py→services.py
+    # S103-P5: imports directos sin try/except ImportError — fallo explícito en import-time
     _contracts_router_py = base / "src" / "contracts" / "router.py"
     if "src.contracts.router" in _broken_text and not _contracts_router_py.exists():
         _contracts_router_content = (
@@ -5715,18 +5944,15 @@ def _validate_artifacts_imports(
             "from sqlalchemy.orm import Session\n"
             "from typing import List\n"
             "from src.database import get_db\n"
-            "from src.auth.dependencies import get_current_user\n\n"
+            "from src.auth.dependencies import get_current_user\n"
+            "from src.contracts.services import (\n"
+            "    create_contract, get_contract_by_rut, update_contract,\n"
+            "    delete_contract, list_benefits, create_benefit,\n"
+            ")\n"
+            "from src.contracts.models import (\n"
+            "    Contract, ContractCreate, ContractUpdate, Benefit, BenefitCreate,\n"
+            ")\n\n"
             "router = APIRouter(prefix='/contratos', tags=['contratos'])\n\n\n"
-            "try:\n"
-            "    from src.contracts.service import (\n"
-            "        create_contract, get_contract_by_rut, update_contract,\n"
-            "        delete_contract, list_benefits, create_benefit,\n"
-            "    )\n"
-            "    from src.contracts.models import (\n"
-            "        Contract, ContractCreate, ContractUpdate, Benefit, BenefitCreate,\n"
-            "    )\n"
-            "except ImportError:\n"
-            "    pass\n\n\n"
             "@router.post('/', status_code=status.HTTP_201_CREATED)\n"
             "async def create_contract_endpoint(data: ContractCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):\n"
             "    return create_contract(data, db)\n\n\n"
@@ -5982,12 +6208,24 @@ async def run_tests(state: OVDState) -> dict:
                         _imp_content = _imp_file.read_text(
                             encoding="utf-8", errors="ignore"
                         )
-                        _imp_updated = _imp_content.replace(
-                            f"from src.{_module_dir}.service import",
-                            f"from src.{_module_dir}.services import",
-                        ).replace(
-                            "from .service import",
-                            "from .services import",
+                        # S103-P4: cubrir todos los patrones de referencia al módulo antiguo
+                        _imp_updated = (
+                            _imp_content.replace(
+                                f"from src.{_module_dir}.service import",
+                                f"from src.{_module_dir}.services import",
+                            )
+                            .replace(
+                                "from .service import",
+                                "from .services import",
+                            )
+                            .replace(
+                                f"import src.{_module_dir}.service",
+                                f"import src.{_module_dir}.services",
+                            )
+                            .replace(
+                                f"src.{_module_dir}.service.",
+                                f"src.{_module_dir}.services.",
+                            )
                         )
                         if _imp_updated != _imp_content:
                             _imp_file.write_text(_imp_updated, encoding="utf-8")
@@ -6220,6 +6458,75 @@ async def run_tests(state: OVDState) -> dict:
                     {
                         "role": "agent",
                         "content": f"S65-A: imports rotos detectados — {_import_feedback[:200]}",
+                    }
+                ],
+            }
+
+    # S103-P2: verificar que los nombres importados existan en los módulos locales.
+    # Complementa S65-A (módulo existe) con verificación a nivel de función/clase.
+    # Solo corre si S65-A pasó — si el módulo no existe, ya hay feedback suficiente.
+    if runner == "pytest" and work_dir:
+        _p2_ok, _p2_feedback = _check_undefined_import_names(
+            agent_results=state.get("agent_results", []),
+            directory=work_dir,
+        )
+        if not _p2_ok:
+            _prev_p2_error = state.get("last_test_error", "")
+            _p2_loop = (
+                retry_round >= 1
+                and "[S103-P2]" in _prev_p2_error
+                and _p2_feedback.split("\n")[1:4] == _prev_p2_error.split("\n")[1:4]
+            )
+            if _p2_loop:
+                log.warning(
+                    "run_tests: S103-P2 import-name loop detectado (ronda=%d) — goto generate_docs",
+                    retry_round,
+                )
+                from langgraph.types import Command as _Command_p2
+
+                return _Command_p2(
+                    update={
+                        "test_results": {
+                            "passed": False,
+                            "output": _p2_feedback,
+                            "runner": "name_validator",
+                            "retry_round": retry_round,
+                        },
+                        "test_retry_count": 2,
+                        "retry_feedback": _p2_feedback,
+                        "last_test_error": _p2_feedback,
+                        "status": "tests_failed",
+                        "messages": state.get("messages", [])
+                        + [
+                            {
+                                "role": "agent",
+                                "content": (
+                                    f"S103-P2: nombres no definidos sin cambio en ronda {retry_round + 1} — "
+                                    "pasando a generate_docs."
+                                ),
+                            }
+                        ],
+                    },
+                    goto="generate_docs",
+                )
+            log.warning(
+                "run_tests: S103-P2 nombres no definidos detectados antes de pytest"
+            )
+            return {
+                "test_results": {
+                    "passed": False,
+                    "output": _p2_feedback,
+                    "runner": "name_validator",
+                    "retry_round": retry_round,
+                },
+                "retry_feedback": _p2_feedback,
+                "last_test_error": _p2_feedback,
+                "status": "tests_failed",
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": f"S103-P2: nombres no definidos en módulo — {_p2_feedback[:200]}",
                     }
                 ],
             }
