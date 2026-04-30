@@ -605,6 +605,42 @@ async def start_session(
             "Seleccionar proyecto en el dashboard o pasar directory en el body."
         )
 
+    # S104-C + S105-P1: limpiar residuos de ciclos anteriores
+    if resolved_directory:
+        import shutil as _shutil_c
+        from pathlib import Path as _Path_c
+
+        _ws = _Path_c(resolved_directory)
+
+        # S104-C: eliminar __pycache__ para evitar bytecode residual
+        for _cache_dir in _ws.rglob("__pycache__"):
+            try:
+                _shutil_c.rmtree(_cache_dir, ignore_errors=True)
+            except Exception:
+                pass
+        logging.getLogger("ovd.api").info(
+            "session_create: S104-C __pycache__ limpiado en %s", resolved_directory
+        )
+
+        # S105-P1: eliminar test_*.py generados por ciclos anteriores para evitar
+        # naming_mismatch entre tests OLD (de un SDD anterior) y código NEW (del SDD actual).
+        # Los tests del ciclo nuevo los regenera el agente backend — no los preservamos entre ciclos.
+        _tests_dir = _ws / "tests"
+        if _tests_dir.exists():
+            _removed = []
+            for _old_test in _tests_dir.glob("test_*.py"):
+                try:
+                    _old_test.unlink()
+                    _removed.append(_old_test.name)
+                except Exception:
+                    pass
+            if _removed:
+                logging.getLogger("ovd.api").info(
+                    "session_create: S105-P1 eliminados %d test(s) del ciclo anterior: %s",
+                    len(_removed),
+                    _removed,
+                )
+
     # S42-E: Resolver stack_language desde ovd_stack_profiles por project_id
     resolved_stack_language = ""
     if body.project_id:

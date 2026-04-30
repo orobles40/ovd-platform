@@ -91,7 +91,18 @@ _ANALYSIS_ROLE_DEFAULTS: dict[str, str] = {
 }
 
 # P2.C — Roles que usan structured output — requieren temperature baja para estabilidad
-_STRUCTURED_ROLES = {"analyzer", "sdd", "qa", "security", "router"}
+# S104-A: agentes implementadores añadidos — temperature=0.3 causa variabilidad no determinística con qwen3-coder MoE
+_STRUCTURED_ROLES = {
+    "analyzer",
+    "sdd",
+    "qa",
+    "security",
+    "router",
+    "backend",
+    "frontend",
+    "database",
+    "devops",
+}
 
 # ---------------------------------------------------------------------------
 # S20 — GAP-R4: Circuit breaker por provider (lightweight, en memoria)
@@ -403,6 +414,7 @@ def build_llm(config: ResolvedConfig) -> Any:
             num_ctx=32768,  # S52-A: ventana explícita — sin esto Ollama puede usar default 2048 y truncar tareas tardías
             temperature=config.temperature,
             reasoning=False,  # S97-F: param correcto en langchain-ollama (think= era ignorado silenciosamente)
+            seed=42,  # S104-A: determinismo entre ciclos — mismo prompt+modelo+seed → output reproducible
         )
 
     if config.provider == "custom":

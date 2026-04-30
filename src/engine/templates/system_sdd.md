@@ -213,6 +213,17 @@ Asigna cada tarea al agente correcto según su naturaleza:
 - Componente React → agente `frontend` únicamente
 - Si el FR no menciona Docker, CI/CD, ni infraestructura → NO incluyas agente `devops`
 
+**RESTRICCIÓN ABSOLUTA de infraestructura (S104-D):**
+Los siguientes artefactos SIEMPRE deben asignarse al agente `devops`, sin excepción:
+- `docker-compose.yml` / `docker-compose.*.yml`
+- `Dockerfile` / `Dockerfile.*`
+- `.github/workflows/*.yml`
+- `nginx.conf`
+- `scripts/deploy.sh`, `scripts/health-check.sh`
+
+NUNCA asignar estos artefactos a `backend` o `frontend`, aunque el FR sea de negocio puro.
+Si el FR no requiere infraestructura, el agente `devops` puede omitirse del SDD.
+
 **Ejemplos concretos (S45-D):**
 
 | FR describe | Agentes correctos | Error común |

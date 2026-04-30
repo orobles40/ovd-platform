@@ -5607,6 +5607,70 @@ def _check_undefined_import_names(
     return False, feedback
 
 
+def _detect_circular_self_imports(directory: str) -> tuple[bool, str]:
+    """S104-B: detecta módulos que se importan a sí mismos (circular self-import).
+
+    Patrón: src/auth/services.py contiene `from src.auth.services import X`.
+    _check_undefined_import_names no detecta esto porque el módulo existe en disco.
+    """
+    import ast as _ast_b
+    from pathlib import Path as _Path_b
+
+    base = _Path_b(directory)
+    if not base.exists():
+        return True, ""
+    _SKIP_DIRS = {"__pycache__", ".venv", "venv", "node_modules", ".git"}
+    errors: list[str] = []
+    for py_file in base.rglob("*.py"):
+        rel = py_file.relative_to(base)
+        if any(p in _SKIP_DIRS for p in rel.parts):
+            continue
+        mod_dotted = str(rel).replace("/", ".").removesuffix(".py")
+        try:
+            tree = _ast_b.parse(py_file.read_text(encoding="utf-8", errors="replace"))
+            for node in _ast_b.walk(tree):
+                if isinstance(node, _ast_b.ImportFrom) and node.module == mod_dotted:
+                    names = [a.name for a in node.names]
+                    errors.append(
+                        f"  {rel}: `from {mod_dotted} import {', '.join(names)}`"
+                    )
+                elif isinstance(node, _ast_b.Import):
+                    for alias in node.names:
+                        if alias.name == mod_dotted:
+                            errors.append(f"  {rel}: `import {mod_dotted}`")
+        except (OSError, SyntaxError):
+            continue
+
+    if not errors:
+        return True, ""
+
+    body = "\n".join(errors)
+    log.warning("[S104-B] %d circular self-import(s):\n%s", len(errors), body[:400])
+    feedback = (
+        "[S104-B] CIRCULAR SELF-IMPORT DETECTADO:\n"
+        f"{body}\n"
+        "CAUSA: el módulo se está importando a sí mismo.\n"
+        "ACCIÓN: eliminar esa línea de import — las funciones ya están definidas en el mismo archivo."
+    )
+    return False, feedback
+
+
+def _classify_test_error(output: str) -> str:
+    """S104-E: clasifica el error de pytest para seleccionar estrategia de retry específica."""
+    lo = output.lower()
+    if "circular" in lo or "partially initialized" in lo:
+        return "circular_import"
+    if "cannot import name" in lo:
+        return "naming_mismatch"
+    if "importerror" in lo or "modulenotfounderror" in lo:
+        return "import_error"
+    if "syntaxerror" in lo:
+        return "syntax_error"
+    if "assertionerror" in lo:
+        return "assertion_error"
+    return "generic"
+
+
 # ---------------------------------------------------------------------------
 # S65-A — Helper: validación pre-pytest de imports
 # ---------------------------------------------------------------------------
@@ -6531,6 +6595,32 @@ async def run_tests(state: OVDState) -> dict:
                 ],
             }
 
+    # S104-B: detectar circular self-imports antes de pytest
+    if runner == "pytest" and work_dir:
+        _b_ok, _b_feedback = _detect_circular_self_imports(work_dir)
+        if not _b_ok:
+            log.warning(
+                "run_tests: S104-B circular self-import detectado antes de pytest"
+            )
+            return {
+                "test_results": {
+                    "passed": False,
+                    "output": _b_feedback,
+                    "runner": "circular_import_validator",
+                    "retry_round": retry_round,
+                },
+                "retry_feedback": _b_feedback,
+                "last_test_error": _b_feedback,
+                "status": "tests_failed",
+                "messages": state.get("messages", [])
+                + [
+                    {
+                        "role": "agent",
+                        "content": f"S104-B: circular self-import detectado — {_b_feedback[:200]}",
+                    }
+                ],
+            }
+
     # S77-C: verificar y auto-inyectar routers faltantes en main.py (post-execute)
     if runner == "pytest" and work_dir and retry_round == 0:
         _missing_routers, _ = _verify_main_includes_routers(work_dir)
@@ -6797,6 +6887,35 @@ async def run_tests(state: OVDState) -> dict:
         _pre_feedback += _db_url_feedback_s79c + "\n\n"
     if _pre_feedback:
         output = _pre_feedback + output
+
+    # S104-E: clasificar tipo de error y enriquecer feedback con instrucción específica
+    if not passed:
+        _error_class = _classify_test_error(output)
+        _taxonomy_hints = {
+            "circular_import": (
+                "[S104-E:circular_import] PRIORIDAD: eliminar imports circulares. "
+                "Si un módulo importa desde sí mismo, borra esa línea — las funciones ya están definidas."
+            ),
+            "naming_mismatch": (
+                "[S104-E:naming_mismatch] PRIORIDAD: revisar el type contract. "
+                "El test importa un nombre que no coincide con lo definido — usar exactamente los nombres del SDD."
+            ),
+            "import_error": (
+                "[S104-E:import_error] PRIORIDAD: verificar que el módulo existe y está correctamente nombrado. "
+                "Revisar src/ para confirmar la ruta del archivo."
+            ),
+            "syntax_error": (
+                "[S104-E:syntax_error] PRIORIDAD: corregir error de sintaxis Python antes de cualquier otra cosa. "
+                "El archivo no puede ser importado hasta que la sintaxis sea válida."
+            ),
+            "assertion_error": (
+                "[S104-E:assertion_error] La lógica de negocio no cumple el test — "
+                "corregir la implementación SIN modificar el test."
+            ),
+        }
+        if _error_class in _taxonomy_hints:
+            output = _taxonomy_hints[_error_class] + "\n\n" + output
+            log.info("run_tests: S104-E error_class=%s", _error_class)
 
     status_msg = (
         f"Tests ({runner}): {'OK' if passed else 'FAIL'} — {output[:200].strip()}"

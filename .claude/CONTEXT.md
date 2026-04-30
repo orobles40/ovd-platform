@@ -8,43 +8,53 @@
 
 ## Estado actual
 
-- **Sprint activo:** S103 (completado) / S104 (planificación)
+- **Sprint activo:** S105 (completado) / S106 (planificación)
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S102
-- **Tests:** 1675 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+- **Sprints completados:** S3 → S105
+- **Tests:** 1754 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
   *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-04-30 — S103)
+## Última sesión (2026-04-30 — S105)
 
-**Completado:**
-- S103-P1: `_build_type_contract(sdd)` — tabla normalizada de nombres inyectada en cada agente
-- S103-P2: `_check_undefined_import_names()` — pre-flight validator en run_tests
-- S103-P3: eliminación de "frontend" del keyword list en `_fix_sdd_agent_assignments()`
-- S103-P4: propagación rename S101-A — 2 patterns adicionales (`import src.X.service` y `src.X.service.`)
-- S103-P5: template S91-A corregido — `services` plural + imports directos sin try/except
-- test_s103.py: 53/53 PASS (7 clases)
-- INFORME_PRUEBA_S103.md generado (mis-entregas/contratos-beneficios/)
+**Completado (S104):**
+- S104-A: `_STRUCTURED_ROLES` ampliado (backend/frontend/database/devops) + `seed=42` en ChatOllama
+- S104-B: `_detect_circular_self_imports()` agregado a graph.py + llamada en run_tests
+- S104-C: limpieza `__pycache__` recursiva en `session_create` de api.py
+- S104-D: restricción absoluta en `system_sdd.md` — docker-compose/Dockerfile → siempre devops
+- S104-E: `_classify_test_error()` + hints de taxonomía inyectados al output en run_tests
+- test_s104.py: 30/30 PASS (6 clases, incluye TestS105P1) | test_model_router.py actualizado
+- Suite completa: **1754 passed** (0 regresiones)
 
-**Ciclo validación S103** (d2d92f15 — tmpdir, BD no registrado: org_id="test" sin FK):
-- QA: **90/100 ✅** (0 retries), Security: 100/100, **10m 4s** (−67% vs S102)
-- Tokens: 108,071 entrada / 25,858 salida (−68% vs S102)
-- **Delta histórico: QA 60→90 (+30 pts), primer PASS en ciclo fullstack Oracle sin retries**
-- P1 efectivo: 0 run_tests failures en ronda 0 — list_contracts coherente entre agents
-- P3 parcial: postprocessor corregido pero architect LLM asignó docker-compose a frontend (GAP)
-- Pendiente: ciclo con org_id real para código inspeccionable
+**Completado (S105):**
+- S105-P1: limpieza `tests/test_*.py` del ciclo anterior en `session_create` de api.py
+- test_s104.py: clase TestS105P1 (4 tests) integrada y pasando
+
+**Ciclo validación S104** (078f18ca — workspace persistente):
+- QA: **52/100 ❌** (2 retries), **27m 51s**, tokens: 301K / 64K
+
+**Ciclo validación S105** (69ba0b13 — workspace persistente, BD registrado: ORG_OMAR_ROBLES):
+- QA: **40/100 ❌** (2 retries), **21m 49s**, tokens: 183K entrada / 54K salida
+- S105-P1 confirmado: 6 old tests eliminados antes del ciclo ✅
+- Naming mismatches: 18 (ronda 0) → 15 (ronda 1) → 15 (ronda 2) — sin convergencia
+- Contaminación RAG Oracle detectada: docker-compose.yml generado con Oracle XE en lugar de PostgreSQL ❌
+- S104-D sigue fallando: TASK-011 (docker-compose) → frontend vía S102-B override ❌
+- **Causa raíz QA=40:** models.py sin schemas Pydantic + validate_rut vs validate_rut_format + RAG Oracle
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea S104 (prioridades):**
-1. **P1** — Restricción SDD docker-compose/Dockerfile: agregar en `system_sdd.md` que infra de contenedores SIEMPRE va a devops (ALTO)
-2. **P2** — Manejo org_id inválido: rechazar sesión con 400 o usar org default si org_id no existe en ovd_orgs (ALTO)
-3. **P3** — Ciclo validación con org_id real: para tener registro en BD y código inspeccionable
-4. **P4** — Fix 5 tests pre-existentes (S96-G): test_s31, test_s39, test_s47, test_s55, test_s63b
+**Primera tarea S106 (prioridades):**
+1. **S106-P1 (CRÍTICO)** — Schemas Pydantic obligatorios en models.py — task SDD explícita para ContratoCreate/Response/etc.
+2. **S106-P2 (CRÍTICO)** — Fix `validate_rut_format` → `validate_rut` en SDD template + auto-corrección en `_check_undefined_import_names()`
+3. **S106-P3 (CRÍTICO)** — Filtro RAG por `db_engine` — excluir chunks Oracle al indexar y recuperar en proyectos PostgreSQL
+4. **S106-P4 (ALTA)** — Fix S102-B postprocessor: guard `_INFRA_ARTIFACTS` para no reasignar docker-compose/Dockerfile
+5. **S106-P5 (ALTA)** — QA penaliza naming_mismatch: `-2 pts por mismatch` si S103-P2 detecta nombres no definidos
+6. **S106-P6 (MEDIA)** — Type contract incluye `list_{entity}s(db)` automáticamente para cada entidad del SDD
+7. **Ciclo validación S106**: target QA ≥ 80, 0 naming mismatches, docker-compose → devops con PostgreSQL
 
 ---
 
@@ -85,6 +95,8 @@
 | S101 | 1b359097 | **90** (PASS) | 3 passed | 10m 41s |
 | S102 | 77a54e0c | **60** | exit 2 × 3 (3 retries) | 30m 35s |
 | S103 | d2d92f15 | **90** (PASS) | 0 retries | 10m 4s |
+| S104 | 078f18ca | **52** | P2: 2 retries | 27m 51s |
+| S105 | 69ba0b13 | **40** | P2: 2 retries | 21m 49s |
 
 ---
 

@@ -242,22 +242,21 @@ class TestResolveTemperature:
         temp = _resolve_temperature("qa", "claude")
         assert temp > 0.0
 
-    def test_backend_ollama_tiene_temperature_baja(self):
-        """role='backend' con provider='ollama' → temperature <= 0.3 (generación, no structured)."""
+    def test_backend_ollama_tiene_temperature_cero(self):
+        """role='backend' con provider='ollama' → temperature=0.0 (S104-A: structured role)."""
         temp = _resolve_temperature("backend", "ollama")
-        # backend no es structured role → temperatura de generación
-        assert temp <= 0.3
+        assert temp == 0.0
 
-    def test_backend_claude_tiene_temperatura_generacion(self):
-        """role='backend' con provider='claude' → temperature de generación (0.5)."""
+    def test_backend_claude_tiene_temperatura_structured(self):
+        """role='backend' con provider='claude' → temperature=0.2 (S104-A: structured role)."""
         temp = _resolve_temperature("backend", "claude")
-        assert temp == 0.5
+        assert temp == 0.2
 
     def test_analyzer_es_structured_role(self):
-        """role='analyzer' → temperatura structured (más baja que generación)."""
+        """role='analyzer' → temperatura structured (igual a backend, ambos son structured desde S104-A)."""
         temp_structured = _resolve_temperature("analyzer", "ollama")
-        temp_generation = _resolve_temperature("backend", "ollama")
-        assert temp_structured <= temp_generation
+        temp_backend = _resolve_temperature("backend", "ollama")
+        assert temp_structured == temp_backend == 0.0
 
     def test_security_es_structured_role(self):
         """role='security' → temperatura structured."""
