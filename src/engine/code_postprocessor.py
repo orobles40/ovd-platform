@@ -413,6 +413,47 @@ def _fix_database_url_hardcoded(content: str, rel_path: str) -> str:
     return new_content
 
 
+# ---------------------------------------------------------------------------
+# S102-A — Promover imports silenciados por try/except ImportError: pass
+# ---------------------------------------------------------------------------
+
+
+def _fix_silent_service_import(content: str, rel_path: str) -> str:
+    """S102-A: promueve imports de service silenciados por try/except ImportError: pass.
+
+    El LLM genera:
+        try:
+            from src.contracts.service import create_contract, ...
+            from src.contracts.models import ...
+        except ImportError:
+            pass
+
+    Esto silencia el error — el router arranca sin excepción pero los endpoints
+    crashean con NameError en runtime. Fix: extraer los imports fuera del try/except
+    para que el error sea explícito e inmediato (falla en import-time, no en call-time).
+    """
+    if not rel_path.endswith("router.py"):
+        return content
+    # Captura cualquier línea indentada dentro del try (incluye imports multi-línea con paréntesis)
+    _pattern = re.compile(
+        r"^try:\n((?:[ \t]+[^\n]+\n)+)except\s+ImportError:\s*\n[ \t]+pass[ \t]*\n",
+        re.MULTILINE,
+    )
+
+    def _unwrap(match: re.Match) -> str:
+        block = match.group(1)
+        lines = [line.lstrip() for line in block.splitlines()]
+        return "\n".join(lines) + "\n"
+
+    new_content = _pattern.sub(_unwrap, content)
+    if new_content != content:
+        log.warning(
+            "[S102-A] try/except ImportError silencioso → imports directos en %s",
+            rel_path,
+        )
+    return new_content
+
+
 # S84-A — Fix Oracle init en database.py con URL PostgreSQL
 # ---------------------------------------------------------------------------
 
@@ -1025,6 +1066,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S73-A: SQLAlchemy v1 → v2
     content = _fix_sqlalchemy_v1(content)
+
+    # S102-A: promover imports silenciados por try/except ImportError: pass en router.py
+    content = _fix_silent_service_import(content, rel_path)
 
     # S101-C: reemplazar DATABASE_URL hardcodeada por os.environ.get()
     content = _fix_database_url_hardcoded(content, rel_path)

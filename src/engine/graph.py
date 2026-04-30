@@ -1328,10 +1328,91 @@ def _fix_sdd_agent_assignments(tasks: list[dict]) -> list[dict]:
         if not isinstance(task, dict):
             continue
         output_file = task.get("output_file", "") or task.get("file", "") or ""
-        if not output_file:
-            continue
         current_agent = task.get("agent", "backend")
         inferred: str | None = None
+
+        # S102-B: fallback por keywords en title/id/description cuando output_file está vacío
+        if not output_file:
+            _kw_text = " ".join(
+                [
+                    task.get("id", ""),
+                    task.get("title", ""),
+                    str(task.get("description", ""))[:300],
+                ]
+            ).lower()
+            _kw_rules: list[tuple[list[str], str]] = [
+                (
+                    [
+                        "loginform",
+                        "dashboard",
+                        "contractlist",
+                        "contractform",
+                        "benefitform",
+                        "benefittable",
+                        "component",
+                        ".tsx",
+                        ".jsx",
+                        "frontend",
+                        "react",
+                        "vitest",
+                        "tailwind",
+                        "shadcn",
+                        "usecontract",
+                        "useloan",
+                        "useauth",
+                        "src/components",
+                        "src/pages",
+                        "src/hooks",
+                    ],
+                    "frontend",
+                ),
+                (
+                    [
+                        "migration",
+                        "migración",
+                        "create table",
+                        "alter table",
+                        "trigger ",
+                        "seed ",
+                        ".sql",
+                        "pl/sql",
+                        "plsql",
+                        "oracle sequence",
+                        "migrations/",
+                        "create index",
+                    ],
+                    "database",
+                ),
+                (
+                    [
+                        "dockerfile",
+                        "docker-compose",
+                        "nginx",
+                        "ci/cd",
+                        "github actions",
+                        ".github/",
+                        "pipeline",
+                        "kubernetes",
+                        "k8s",
+                        "deploy",
+                    ],
+                    "devops",
+                ),
+            ]
+            for _kws, _agent_kw in _kw_rules:
+                if any(kw in _kw_text for kw in _kws):
+                    inferred = _agent_kw
+                    break
+            if inferred and inferred != current_agent:
+                log.warning(
+                    "S102-B: tarea %s reasignada '%s'→'%s' (keyword en title/description)",
+                    task.get("id", "?"),
+                    current_agent,
+                    inferred,
+                )
+                task["agent"] = inferred
+                corrected += 1
+            continue  # sin output_file no hay más inferencias posibles
         # Por nombre de archivo exacto
         fname = pathlib.Path(output_file).name
         if fname in _name_map:

@@ -65,8 +65,38 @@ Genera tareas de implementación con los campos:
 - **agent**: "frontend" | "backend" | "database" | "devops"
 - **title**: Título accionable y breve
 - **description**: Qué debe implementar exactamente el agente
+- **output_file**: Ruta EXACTA del archivo principal a generar (OBLIGATORIO — ver regla S102-C abajo)
 - **depends_on**: IDs de tareas prerequisito (lista vacía si no hay dependencias)
 - **estimated_complexity**: "low" | "medium" | "high"
+
+### Regla OBLIGATORIA — output_file en cada task (S102-C)
+
+**CADA task DEBE tener un campo `output_file` con la ruta exacta del archivo que genera.**
+
+Este campo determina qué agente ejecuta la tarea. Sin él, el sistema asigna todo a `backend` y el frontend, la base de datos y el devops NO se generan.
+
+| Tipo de archivo | output_file ejemplo | agent correcto |
+|---|---|---|
+| Componente React/TypeScript | `src/components/LoginForm.tsx` | frontend |
+| Hook React | `src/hooks/useContract.ts` | frontend |
+| Página React | `src/pages/Dashboard.tsx` | frontend |
+| Script SQL / migración | `migrations/001_create_tables.sql` | database |
+| Trigger PL/SQL | `migrations/002_trigger_valor_total.sql` | database |
+| Dockerfile | `Dockerfile` | devops |
+| docker-compose | `docker-compose.yml` | devops |
+| GitHub Actions | `.github/workflows/ci.yml` | devops |
+| Módulo Python | `src/contracts/service.py` | backend |
+| Tests Python | `tests/test_contracts.py` | backend |
+
+❌ INCORRECTO — sin output_file:
+```json
+{"id": "TASK-007", "agent": "backend", "title": "Crear LoginForm con validación RUT", ...}
+```
+
+✅ CORRECTO — con output_file:
+```json
+{"id": "TASK-007", "agent": "frontend", "title": "Crear LoginForm con validación RUT", "output_file": "src/components/LoginForm.tsx", ...}
+```
 
 ### Reglas obligatorias para tasks (S40-templates)
 
