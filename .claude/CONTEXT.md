@@ -8,7 +8,7 @@
 
 ## Estado actual
 
-- **Sprint activo:** S102 (completado) / S103 (planificación)
+- **Sprint activo:** S103 (completado) / S104 (planificación)
 - **Rama de trabajo:** `dev`
 - **Sprints completados:** S3 → S102
 - **Tests:** 1675 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
@@ -17,33 +17,34 @@
 
 ---
 
-## Última sesión (2026-04-29 — S102)
+## Última sesión (2026-04-30 — S103)
 
 **Completado:**
-- S102-A: postprocesador `_fix_silent_service_import()` — elimina try/except ImportError silencioso en routers
-- S102-B: `_fix_sdd_agent_assignments()` — keyword inference para tareas sin output_file (ACTIVO con falso positivo)
-- S102-C: campo `output_file` obligatorio en `system_sdd.md`
-- test_s102.py: 24/24 PASS
-- INFORME_PRUEBA_S102.md generado (mis-entregas/contratos-beneficios/)
+- S103-P1: `_build_type_contract(sdd)` — tabla normalizada de nombres inyectada en cada agente
+- S103-P2: `_check_undefined_import_names()` — pre-flight validator en run_tests
+- S103-P3: eliminación de "frontend" del keyword list en `_fix_sdd_agent_assignments()`
+- S103-P4: propagación rename S101-A — 2 patterns adicionales (`import src.X.service` y `src.X.service.`)
+- S103-P5: template S91-A corregido — `services` plural + imports directos sin try/except
+- test_s103.py: 53/53 PASS (7 clases)
+- INFORME_PRUEBA_S103.md generado (mis-entregas/contratos-beneficios/)
 
-**Ciclo validación S102** (77a54e0c):
-- QA: **60/100** (force-deliver — 3 run_tests failures), Security: 100/100, **30m 35s**
-- Tokens: 336,861 entrada / 65,269 salida — 4 agentes activados (hito histórico)
-- GAP principal: coherencia inter-agente — functions inventadas en tests vs lo que existe en services.py
-- S102-B falso positivo: "frontend" sustantivo activa re-routing devops→frontend (docker-compose)
-- S91-A auto-genera router.py pero hereda anti-patrón try/except ImportError (S102-A no alcanza)
-- Ronda 2 (selective retry): main.py mejoró a 600 bytes con router pattern; aún falla por list_contracts inexistente
+**Ciclo validación S103** (d2d92f15 — tmpdir, BD no registrado: org_id="test" sin FK):
+- QA: **90/100 ✅** (0 retries), Security: 100/100, **10m 4s** (−67% vs S102)
+- Tokens: 108,071 entrada / 25,858 salida (−68% vs S102)
+- **Delta histórico: QA 60→90 (+30 pts), primer PASS en ciclo fullstack Oracle sin retries**
+- P1 efectivo: 0 run_tests failures en ronda 0 — list_contracts coherente entre agents
+- P3 parcial: postprocessor corregido pero architect LLM asignó docker-compose a frontend (GAP)
+- Pendiente: ciclo con org_id real para código inspeccionable
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea S103 (prioridades):**
-1. **P1** — Shared Type Contract en SDD: tabla normalizada de clases/funciones para coordinación entre agentes (CRÍTICO)
-2. **P2** — Pre-flight import validator: ast.parse() en run_tests para detectar referencias sin import antes de escribir (CRÍTICO)
-3. **P3** — Refinar keywords S102-B: solo `.tsx/.jsx`, component names; no sustantivos genéricos como "frontend"
-4. **P4** — Propagación rename S101-A: actualizar todos los importadores al renombrar service→services
-5. **P5** — Aplicar S102-A a S91-A: los archivos auto-generados también deben pasar por el postprocesador
+**Primera tarea S104 (prioridades):**
+1. **P1** — Restricción SDD docker-compose/Dockerfile: agregar en `system_sdd.md` que infra de contenedores SIEMPRE va a devops (ALTO)
+2. **P2** — Manejo org_id inválido: rechazar sesión con 400 o usar org default si org_id no existe en ovd_orgs (ALTO)
+3. **P3** — Ciclo validación con org_id real: para tener registro en BD y código inspeccionable
+4. **P4** — Fix 5 tests pre-existentes (S96-G): test_s31, test_s39, test_s47, test_s55, test_s63b
 
 ---
 
@@ -83,6 +84,7 @@
 | S100 | — | **65** | — | 21m |
 | S101 | 1b359097 | **90** (PASS) | 3 passed | 10m 41s |
 | S102 | 77a54e0c | **60** | exit 2 × 3 (3 retries) | 30m 35s |
+| S103 | d2d92f15 | **90** (PASS) | 0 retries | 10m 4s |
 
 ---
 

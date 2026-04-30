@@ -3310,3 +3310,233 @@ Propuestas derivadas del análisis comparativo Obsidian vs OVD (2026-04-06), ord
 - **OB-07**: Analizar Obsidian Canvas vs alternativas (react-flow, excalidraw embebido); definir qué datos persisten y cómo se sincronizan con el engine
 - **OB-08**: Evaluar generadores de sitio estático compatibles con markdown (Astro, VitePress, MkDocs); definir qué información es pública vs privada
 - **PP-06**: Depende de PP-03; no iniciar hasta que PP-03 esté estable en producción
+
+---
+
+## Épicas estratégicas
+
+> Iniciativas de largo plazo que requieren diseño técnico dedicado antes de entrar a sprint.
+> Cada épica se descompone en sprints cuando su sesión de diseño esté completa.
+> Última actualización: 2026-04-30
+
+---
+
+### ÉPICA-1 — Modos de operación: Greenfield / Incremental / Migración
+
+**Registrada:** 2026-04-30
+**Prioridad:** Alta
+**Estado:** 💡 Diseño pendiente
+
+#### Contexto
+
+OVD opera hoy exclusivamente en modo **greenfield**: cada ciclo genera el sistema completo desde cero,
+sobreescribiendo el directorio de trabajo. Esto limita el uso a proyectos nuevos y hace que los ciclos
+de benchmark necesiten limpiar el workspace antes de cada ejecución.
+
+Para ser una herramienta de desarrollo real, OVD debe soportar tres modos de operación distintos:
+
+#### Modo 1 — Greenfield (ya implementado)
+
+El directorio está vacío. OVD genera todos los artefactos desde cero.
+
+```
+FR: "Implementar sistema de contratos y beneficios"
+→ OVD genera src/, migrations/, tests/, Dockerfile, etc.
+```
+
+#### Modo 2 — Incremental (no implementado)
+
+El proyecto ya tiene código existente. OVD lee el estado actual y genera **solo lo nuevo**,
+preservando todo lo que ya existe y funciona.
+
+```
+FR-1: "Crear sistema de login" → genera auth/
+FR-2: "Agregar módulo de contratos" → lee auth/ existente, genera solo contracts/
+FR-3: "Agregar reportes PDF" → lee auth/ + contracts/, genera solo reports/
+```
+
+**Regla clave:** el código existente es **intocable** — solo se agregan o modifican los artefactos
+que el nuevo FR requiere explícitamente.
+
+#### Modo 3 — Migración tecnológica (no implementado)
+
+El proyecto tiene un stack origen que debe transformarse a un stack destino. El código existente
+es el **input de transformación**, no una base a preservar.
+
+```
+FR: "Migrar este sistema de WebLogic 12 a WebLogic 14"
+→ OVD lee descriptores WL12, mapea patrones al equivalente WL14, genera la migración
+
+FR: "Migrar de Struts 1.x a Spring Boot 3"
+→ OVD lee Actions/Dispatch, produce Controllers/@RestController equivalentes
+
+FR: "Migrar base de datos de Oracle 12c a Oracle 19c"
+→ OVD lee DDL, triggers, packages PL/SQL, genera equivalentes compatibles con 19c
+```
+
+**Regla clave:** el código existente es el **origen** — se analiza para entender estructura y lógica,
+luego se genera el equivalente en el stack destino.
+
+#### Diferencias críticas entre modos
+
+| Dimensión | Greenfield | Incremental | Migración |
+|-----------|-----------|-------------|-----------|
+| Código existente | No hay | Intocable | Es el input |
+| Qué se genera | Todo | Solo lo nuevo | Equivalente transformado |
+| Conflictos de archivos | No aplica | No sobreescribir | Reemplazar controlado |
+| Stack origen conocido | No aplica | Mismo stack | Stack origen + destino |
+| read_existing_codebase | No necesario | Obligatorio | Obligatorio |
+
+#### Configuración de proyecto en el Workspace
+
+Antes de lanzar cualquier ciclo, el proyecto debe tener configurado su contexto de fuentes y base de
+datos. Esta configuración vive en `ovd_projects` y se resuelve en `session_create` antes de generar.
+
+**Fuentes del código existente (tres orígenes posibles):**
+
+| Campo | Descripción | Ejemplo |
+|-------|-------------|---------|
+| `directory` | Ruta local con los fuentes | `/Users/omar/proyectos/hhmm/src` |
+| `github_repo` | Repositorio GitHub (público o privado con token) | `omarrobles/hhmm` |
+| `gitlab_repo` | Repositorio GitLab (self-hosted o cloud) | `gitlab.cas.cl/sistemas/hhmm` |
+
+Solo uno de los tres es necesario. Si se especifican varios, el orden de prioridad es:
+`directory` > `github_repo` > `gitlab_repo`. El nodo `clone_repo` ya maneja GitHub; GitLab
+requiere extensión del mismo nodo.
+
+**Esquema de base de datos (tres variantes):**
+
+| Variante | Descripción | Cuándo aplica |
+|----------|-------------|---------------|
+| `db_reuse` | El esquema existente se mantiene tal cual | Modo incremental: nueva funcionalidad sobre tablas actuales |
+| `db_migrate` | El esquema se transforma (mismas entidades, nuevo motor o nueva versión) | Migración Oracle 12c → 19c, Oracle → PostgreSQL |
+| `db_new` | Esquema nuevo desde cero, sin relación con el existente | Modo greenfield o nuevo módulo sin dependencia de tablas anteriores |
+
+Campos en `ovd_projects` para la dimensión BD:
+
+```json
+{
+  "db_engine_source": "oracle_12c",
+  "db_engine_target": "oracle_19c",
+  "db_schema_mode": "db_migrate",
+  "db_schema_source": "migrations/",
+  "db_connection_target": "host.docker.internal:1521/XEPDB1"
+}
+```
+
+El agente `database` recibe estos campos en su prompt y genera DDL, triggers y migraciones
+adecuados al motor destino. En modo `db_reuse`, el agente recibe el DDL actual y genera solo
+los `ALTER TABLE` o nuevos objetos necesarios para el FR, sin recrear lo que ya existe.
+
+**Combinaciones válidas modo × BD:**
+
+| Modo | db_schema_mode | Comportamiento del agente database |
+|------|---------------|-------------------------------------|
+| Greenfield | `db_new` | Genera DDL completo desde cero |
+| Incremental | `db_reuse` | Solo agrega objetos nuevos (ALTER, nuevas tablas) |
+| Incremental | `db_migrate` | Transforma esquema existente (ej: agregar columnas, cambiar tipos) |
+| Migración | `db_migrate` | Traduce DDL origen al dialecto del motor destino |
+| Reutilización | `db_reuse` o `db_new` | Copia estructura validada del ciclo base, adapta al nuevo proyecto |
+
+#### Trabajo técnico requerido
+
+**Fase A — Configuración de proyecto extendida:**
+- Nuevos campos en `ovd_projects`: `gitlab_repo`, `db_engine_source`, `db_engine_target`,
+  `db_schema_mode`, `db_schema_source`, `db_connection_target`
+- UI en dashboard: formulario de proyecto con secciones "Fuentes" y "Base de datos"
+- Validación en `session_create`: si `db_schema_mode != db_new`, verificar que existe
+  esquema origen (archivo DDL o directorio `migrations/`)
+
+**Fase B — Selección de modo en el FR:**
+- Campo `mode: greenfield | incremental | migration | reuse` en `StartSessionRequest`
+- UI en el dashboard: selector de modo con descripción clara por caso de uso
+- Validación: modos `incremental`, `migration`, `reuse` requieren fuente de código configurada
+
+**Fase C — Nodo `read_existing_codebase`:**
+- Ejecutar antes de `analyze_fr` cuando `mode != greenfield`
+- Clonar repo (GitHub/GitLab) o leer `directory` local
+- Indexar: archivos, módulos, funciones exportadas, esquema BD si existe
+- Producir `codebase_context` inyectado en los prompts de todos los agentes
+- En modo incremental: context indica "esto ya existe, no lo regeneres"
+- En modo migración: context es el input a transformar
+- En modo reutilización: context es el ejemplo validado a seguir
+
+**Fase D — Agente de migración (modos migration/reuse):**
+- Especializado por par de stacks/motores: `wl12→wl14`, `oracle12c→oracle19c`, `struts→springboot`
+- Recibe artefacto origen y genera equivalente en stack/motor destino
+- Para BD: traduce DDL, triggers, packages PL/SQL al dialecto destino
+- Los stack templates (S58) son la base — necesitan variantes "origen" y "destino"
+
+**Fase E — write_artifacts selectivo (modo incremental):**
+- Antes de escribir, verificar si el archivo ya existe
+- Política de merge: `overwrite` (greenfield) | `append-only` | `merge-smart`
+- Para BD en modo `db_reuse`: solo generar scripts `ALTER` o nuevos objetos, nunca `DROP`
+
+#### Casos de uso reales identificados
+
+| Caso | Modo | Fuente | BD origen | BD destino |
+|------|------|--------|-----------|-----------|
+| HHMM: nuevo módulo de liquidaciones | Incremental | GitLab CAS / directorio local | Oracle 19c (existente) | Oracle 19c (mismas tablas + nuevas) |
+| HHMM: migración WL12 → WL14 | Migración | GitLab CAS | Oracle 19c (sin cambio) | Oracle 19c (sin cambio) |
+| Migración Oracle 12c → 19c (PL/SQL) | Migración | directorio local | Oracle 12c | Oracle 19c |
+| Sistema de licitaciones (base contratos S103) | Reutilización | ciclo S103 QA=90 | Oracle XE (nuevo) | Oracle XE |
+| Nuevo proyecto React + FastAPI desde cero | Greenfield | — | — | PostgreSQL o Oracle (nuevo) |
+
+#### Dependencias
+
+- `github_repo` + `clone_repo` ya existen — extender para GitLab
+- `ovd_stack_profiles` ya tiene `language` — extender con dimensión BD
+- Stack templates (S58) necesitan variantes "origen" para modo migración
+- RAG puede indexar el codebase clonado para mejorar contexto de los agentes
+- `_build_type_contract()` (S103-P1) es la base para extraer el contrato de tipos del codebase existente
+
+#### Modo 4 — Reutilización de sistemas probados como base
+
+Un sistema que ya alcanzó QA ≥ 90 en ciclos anteriores es **conocimiento validado**. Al desarrollar
+un sistema nuevo similar, OVD debe poder reutilizar ese sistema probado como punto de partida en lugar
+de regenerar desde cero.
+
+```
+Ciclo S103: Sistema Contratos/Beneficios → QA=90 ✅ (validado)
+
+Nuevo FR: "Implementar sistema de gestión de licitaciones con autenticación RUT"
+→ OVD detecta similitud con el sistema de contratos validado
+→ Usa contratos/S103 como base: rut_validator, auth/, estructura Oracle, patrones React
+→ Genera solo lo diferente (licitaciones vs contratos, nuevas reglas de negocio)
+```
+
+**Diferencia con modo incremental:** en modo incremental el código existente pertenece al
+**mismo proyecto** (misma base de código). En modo reutilización, el código base viene de
+**otro proyecto ya validado** — es una plantilla probada, no la misma codebase.
+
+**Casos de uso:**
+- Nuevo módulo similar a uno ya validado en otro cliente → usar el ciclo validado como template
+- Migración: el sistema origen ha evolucionado en ciclos previos → la versión más reciente y
+  con mayor QA es la base de la migración, no la versión original
+- Variante de stack: mismo sistema pero en otro lenguaje → el diseño probado (SDD, endpoints,
+  entidades) se reutiliza; solo los agentes implementadores cambian
+
+**Trabajo técnico requerido:**
+
+- **Búsqueda semántica en ovd_cycles:** dado un nuevo FR, buscar en ciclos anteriores con
+  `qa_score ≥ 85` que tengan FR similar (pgvector similarity sobre `fr_text`)
+- **Selección del ciclo base:** proponer al usuario los top-3 ciclos más similares y permitir
+  elegir cuál usar como referencia
+- **Inyección en prompts:** el SDD y los agentes reciben el `agent_results` del ciclo base
+  como contexto de referencia, no como código a copiar sino como ejemplo validado
+- **Diferenciación automática:** el type contract del ciclo base (S103-P1) se usa para
+  mantener consistencia de nombres en el nuevo sistema
+
+> Esta es la base para el concepto de **librería de sistemas validados** — cada ciclo QA ≥ 90
+> se convierte en un activo reutilizable para futuros proyectos del mismo dominio.
+
+---
+
+#### Criterio de entrada a sprint
+
+Una épica entra a sprint cuando:
+1. Se completó la sesión de diseño técnico (prototipo en papel del flujo de nodos)
+2. Se identificaron los archivos a modificar y las funciones a crear
+3. Existe un FR de prueba que valida el modo (ej: FR de migración WL12→WL14 con proyecto real)
+
+---
