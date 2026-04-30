@@ -8,50 +8,43 @@
 
 ## Estado actual
 
-- **Sprint activo:** S97 (implementado) / S98 (pendiente validación)
+- **Sprint activo:** S101 (completado) / S102 (planificación)
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S96
-- **Tests:** 1577 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+- **Sprints completados:** S3 → S101
+- **Tests:** 1651 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
   *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-04-29 — S100)
+## Última sesión (2026-04-29 — S101)
 
 **Completado:**
-- S100-A: limpieza stubs residuales antes de ronda 0 (graph.py `run_tests`)
-- S100-B: py_compile pre-check antes de ejecutar pytest (graph.py)
-- S100-C: mandato python-jose, prohibición PyJWT (system_backend_python.md)
-- S100-D: prohibición DATABASE_URL hardcodeada (system_backend_python.md)
-- S100-E: tabla alineación ORM↔SQL obligatoria (system_sdd.md)
-- S100-F: anti-patrones Oracle PL/SQL — CHECK primo→trigger, DV VARCHAR2(1), LENGTH BETWEEN 8 AND 9
-- S100-G: implementación TypeScript validateRut (system_frontend_react.md)
-- S100-H: patrón require_role() dependency (system_backend_python.md)
-- S100-I: services.py plural en tabla canónica (replace_all)
-- S100-J: QA check componentes frontend faltantes del SDD (graph.py)
-- S100-L: FrLauncher.tsx restoreNodesFromState al reconectar SSE
-- S100-M: guía inline validate_rut DV=K
-- test_s100.py: 23/23 PASS
-- INFORME_PRUEBA_S100.md generado
+- S101-A: postprocesador rename `service.py` → `services.py` + actualizar imports (graph.py `run_tests`)
+- S101-B: `_fix_sdd_agent_assignments()` — inferencia de agente por extension/path del output_file (graph.py)
+- S101-C: `_fix_database_url_hardcoded()` — reemplaza DATABASE_URL literal por os.environ.get() (code_postprocessor.py)
+- S101-D: `oracle_involved` forzado a True cuando FR menciona "oracle" (graph.py `analyze_fr`)
+- S101-E: ruff I001 fix en test_model_router.py y test_s98.py
+- test_s101.py: 30/30 PASS
+- INFORME_PRUEBA_S101.md generado
 
-**Ciclo validación S100** (12c71de5):
-- QA: 65/100 (+5 vs S99), Security: 100/100, 21m 1s
-- Fixes absorbidos: validate_rut DV=K ✅, jose JWT ✅, NameError auth/router ✅
-- No absorbidos: services.py plural, DATABASE_URL env
-- Regresión detectada: SDD solo ejecutó agente backend (devops+db+frontend ignorados)
-- Tests: 3 rondas fallidas (ImportError — service.py singular)
+**Ciclo validación S101** (1b359097):
+- QA: **90/100** (primer PASS histórico — `qa_passed: true`), Security: 100/100, 10m 41s
+- Tokens: 170K entrada / 20.7K salida (-35% vs S100)
+- S101-D absorbido: oracle_involved=True automático
+- S101-C no activó: engine sin reiniciar (usar código anterior al commit)
+- S101-B no absorbido: SDD genera tasks sin `output_file` → inferencia imposible
+- GAP-S101-1 (crítico): contracts/router.py importa service.py inexistente con try/except silencioso
 
 ---
 
 ## Próxima sesión
 
-**Primera tarea S101 (prioridades):**
-1. Postprocesador: renombrar `service.py` → `services.py` + actualizar imports (CRÍTICO)
-2. Validación distribución agentes en SDD — detectar FR con keywords frontend/db/devops (CRÍTICO)
-3. Postprocesador DATABASE_URL hardcodeada → os.environ.get() (ALTA)
-4. Fix oracle_involved=False en S56-C cuando FR menciona Oracle explícitamente (ALTA)
-5. Ruff I001 fix en test_model_router.py y test_s98.py (BAJA)
+**Primera tarea S102 (prioridades):**
+1. Fix try/except ImportError silencioso en routers — postprocesador S102-A (CRÍTICO)
+2. SDD system prompt: `output_file` obligatorio en cada task — desbloquea S101-B (ALTO)
+3. Reiniciar engine para activar S101-C (DATABASE_URL) antes del primer ciclo
+4. Verificar que GAP-S101-2 (frontend no generado) se resuelve con output_file obligatorio
 
 ---
 

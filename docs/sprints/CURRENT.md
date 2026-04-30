@@ -1,78 +1,69 @@
-# Sprint activo — S96
+# Sprint activo — S102
 
-> Última actualización: 2026-04-28 | Rama: `dev`
+> Última actualización: 2026-04-29 | Rama: `dev`
 > Skills Fase 1 implementados: session-start, session-close, run-tests, pre-push
 
 ## Estado del ciclo de validación
 
-| Ciclo | Hash | S65-A | pytest | Bloqueador |
-|-------|------|-------|--------|------------|
-| S94 | 5a17c6a2 | **pasa** | **9 items / 1 error** | S63-B borraba src/ — **RESUELTO** |
-| S95 | 65ab6e7b | bloquea | no ejecuta | `prime_validator` import espurio |
+| Ciclo | Sprint | QA | Security | Duración | Notas |
+|-------|--------|----|----------|----------|-------|
+| 1b359097 | S101 | **90** ✅ | 100 | 10m 41s | Primer QA PASS histórico |
+| 12c71de5 | S100 | 65 | 100 | 21m 1s | — |
+| S99 | S99 | 60 | 85 | 18m | — |
 
-**Hito alcanzado:** S94 fue el primer ciclo con `collected 9 items / 1 error` — pytest ejecutó código real.
+**Hito S101:** QA 90/100 — primera vez `qa_passed: true` en ciclo Oracle fullstack.
 
-**Bloqueador actual:** `from src.utils.prime_validator import is_prime` en `contracts/service.py` — el LLM contamina con contexto del proyecto IMC anterior. Fix: S96-B.
+**Bloqueadores actuales S102:**
+- `contracts/router.py` importa `service.py` inexistente con `try/except: pass` (GAP-S101-1)
+- SDD tasks sin `output_file` → frontend no se genera (GAP-S101-2)
+- `database.py` DATABASE_URL hardcodeada — S101-C no activó (engine sin reiniciar)
 
 ---
 
-## Roadmap S96
+## Roadmap S102
 
-### S96-A — Auto-generador general de stubs (CRÍTICO)
+### S102-A — Fix try/except ImportError silencioso en routers (CRÍTICO)
 
-En `_validate_artifacts_imports`, reemplazar los casos individuales S89-A/S90-A/S91-A por un mecanismo general: cuando S65-A detecta `src.X.Y ← módulo no existe`, generar automáticamente un stub mínimo `src/X/Y.py` con exports vacíos derivados del import statement.
+**Problema:** `contracts/router.py` genera `try: from src.contracts.service import ... except ImportError: pass` — silencia el error, endpoints crashean en runtime con NameError.
 
-**Impacto esperado:** cualquier módulo local faltante se auto-genera sin código adicional.
+**Fix:** postprocesador en `code_postprocessor.py` que detecta el patrón y genera un stub mínimo `service.py` con las funciones importadas si el archivo no existe.
 
-### S96-B — Filtro de imports espurios de proyectos anteriores (CRÍTICO)
-
-En `code_postprocessor.py`, agregar `_fix_spurious_utility_imports()` que elimina imports de módulos que no pertenecen al dominio actual:
-- `src.utils.prime_validator`
-- `src.utils.imc_validator`
-- `src.calculadora.*`
-
-**Causa raíz:** el LLM mezcla contexto de proyectos anteriores (calculadora IMC) con el proyecto actual (contratos).
-**Fix:** regex que elimina esas líneas de import de `service.py` y `router.py`.
-
-### S96-C — Postprocessor ORM naming español→inglés (ALTO)
-
-`_fix_orm_class_names_es_to_en()` en `code_postprocessor.py`:
-
-| Nombre español (prohibido) | Nombre inglés (correcto) |
-|---------------------------|--------------------------|
-| `ContratoORM` | `ContractORM` |
-| `BeneficioORM` | `BenefitORM` |
-| `UsuarioORM` | `UserORM` |
-
-S79-B (template) no es suficiente — el LLM sigue generando nombres en español. El postprocessor lo corrige determinísticamente con `re.sub()`.
-
-### S96-F — Fix POST /auth/login → 500 (CRÍTICO — PRIORIDAD S96)
-
-**Decisión 2026-04-28:** Priorizado antes de S96-D y S96-E por bloquear el dashboard web completo.
-
-`POST /auth/login` retorna 500 desde ciclo S75. Workaround actual: acceso vía curl + OVD_SECRET.
-
-**Diagnóstico a realizar:**
-1. Revisar `routers/auth_router.py → _get_user_by_email()` — posible error en query o en retorno
-2. Revisar `auth.py → issue_tokens()` — posible error al generar el par access/refresh
-3. Verificar que `ovd_users` tiene el usuario `omar@omarrobles.dev` activo en BD
-4. Verificar que `DATABASE_URL` está correctamente configurada en settings
-
-**Comando de diagnóstico rápido:**
-```bash
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -v -X POST http://localhost:8001/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"omar@omarrobles.dev","password":"ovd-dev-2026"}'
+```python
+def _fix_silent_import_error_router(content: str, work_dir: str, rel_path: str) -> str:
+    """S102-A: detecta try/except ImportError silencioso en routers y genera service.py stub."""
+    ...
 ```
 
-**Criterio de aceptación:** `POST /auth/login` retorna 200 con `access_token` y `refresh_token`.
+**Criterio de aceptación:** `contracts/router.py` sin try/except y `contracts/services.py` stub generado con funciones vacías que retornan 501 Not Implemented.
 
----
+### S102-B — SDD output_file obligatorio en tasks (ALTO)
 
-### S96-G — Sesión dedicada: corregir 5 fallos pre-existentes (MEDIO)
+**Problema:** SDD genera tasks sin `output_file` → `_fix_sdd_agent_assignments()` (S101-B) no puede inferir agente → frontend/database/devops no se generan.
 
-**Decisión 2026-04-28:** Asignar sesión dedicada exclusiva para estos 5 fallos. No mezclar con features.
+**Fix A (template):** Agregar a `system_sdd.md`:
+```
+REGLA OBLIGATORIA (S102-B): Cada task DEBE tener "output_file" con la ruta exacta del archivo.
+Ejemplos: "src/components/LoginForm.tsx", "migrations/001_create_tables.sql", "Dockerfile"
+```
+
+**Fix B (fallback inferencia por título):** Si `output_file` ausente, `_fix_sdd_agent_assignments()` analiza el campo `id` o `description` para palabras clave (tsx, sql, docker, migrations, components, pages).
+
+**Criterio de aceptación:** ciclo de validación genera agentes frontend + backend (mínimo 2 agentes activados).
+
+### S102-C — Verificación pre-ciclo: reinicio engine (OPERACIONAL)
+
+**Acción inmediata antes del primer ciclo S102:** reiniciar engine para activar S101-C (DATABASE_URL postprocessor).
+
+```bash
+# Verificar que el postprocesador está activo
+cd src/engine && grep -n "_fix_database_url_hardcoded" code_postprocessor.py
+# Reiniciar
+pkill -f "uvicorn api:app" && .venv/bin/uvicorn api:app --port 8001
+```
+
+### S102-G — Sesión dedicada: corregir 5 fallos pre-existentes (MEDIO)
+
+**Pendiente desde S96-G** — no mezclar con features. Usar `/fix-test [nombre]`.
 
 | Test | Causa | Esfuerzo estimado |
 |---|---|---|
@@ -81,18 +72,6 @@ curl -v -X POST http://localhost:8001/auth/login \
 | `test_s55::test_write_artifacts_overwrites_when_new_content_larger` | Actualizar test a write_artifacts actual | 30 min |
 | `test_s63::test_s63b_cleanup_not_in_run_tests` | RuntimeError — coordinar con S96-D | 45 min |
 | `test_s31::test_cycle_start_ts_reciente` | Fix timing o marcar con `@pytest.mark.flaky` | 20 min |
-
-Usar `/fix-test [nombre]` para abordar cada uno con contexto precargado.
-
----
-
-### S96-D — Fix test_s63.py regresión (MEDIO)
-
-`test_s63b_cleanup_in_retry_round_zero` espera el comportamiento pre-S94 (borra todos los archivos). Actualizar el test para reflejar la nueva lógica: si `collected \d+ items` en el error → preserva `src/`.
-
-### S96-E — Verificación post-auto-gen (MEDIO)
-
-Después de auto-generar archivos (S89-A/S90-A/S91-A), re-ejecutar `_validate_artifacts_imports` para verificar que los nuevos archivos resuelven los imports rotos. Actualmente se filtra el broken-list pero no se re-valida.
 
 ---
 
@@ -202,9 +181,13 @@ Directorios útiles de hermes-agent: `optional-skills/mcp/fastmcp/`, `skills/cre
 
 ---
 
-## Ciclo de validación S96
+## Ciclo de validación S102
 
 ```bash
+# Antes del ciclo: reiniciar engine para activar S101-C
+pkill -f "uvicorn api:app" 2>/dev/null; cd src/engine && .venv/bin/uvicorn api:app --port 8001 &
+
+# Limpiar entrega anterior
 rm -rf /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/src/ \
        /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/tests/ \
        /Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/conftest.py \
@@ -215,18 +198,14 @@ SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d '
 curl -s -X POST http://localhost:8001/session \
   -H "Content-Type: application/json" \
   -H "X-OVD-Secret: $SECRET" \
-  -d '{
-    "org_id": "ORG_OMAR_ROBLES",
-    "project_id": "PROJ_CONTRATOS_BENEFICIOS",
-    "feature_request": "Sistema de contratos con autenticación JWT usando RUT chileno. API REST FastAPI: login RUT+contraseña, CRUD contratos por empleado, listado de beneficios. PostgreSQL + SQLAlchemy ORM.",
-    "auto_approve": true
-  }'
+  -d @/Users/omarrobles/Workspace/mis-entregas/PLAN_PRUEBA_OVD.md
 ```
 
-**Métricas objetivo:**
-- S65-A no bloquea (0 imports rotos en round 0)
-- pytest ejecuta real (exit 0 o exit 1 con fallos lógicos)
-- QA ≥ 70
+**Métricas objetivo S102:**
+- ≥ 2 agentes activados (backend + frontend mínimo)
+- DATABASE_URL via env (no hardcodeada) — S101-C activo
+- contracts/router.py sin try/except silencioso — S102-A activo
+- QA ≥ 85 (consolidar S101)
 
 ---
 
@@ -234,8 +213,10 @@ curl -s -X POST http://localhost:8001/session \
 
 | Issue | Descripción | Estado | Sprint |
 |-------|-------------|--------|--------|
-| Login dashboard 500 | `POST /auth/login` retorna 500 | **PRIORITARIO** | S96-F |
-| test_s63b regresión | `test_s63b_cleanup_in_retry_round_zero` roto por S94-fix | Pendiente | S96-D |
+| SDD tasks sin output_file | Frontend no se genera, S101-B inefectivo | **PRIORITARIO** | S102-B |
+| contracts/service.py faltante | router.py silencia ImportError | **PRIORITARIO** | S102-A |
+| DATABASE_URL hardcodeada | S101-C no activó (engine sin reiniciar) | Pendiente | S102-C |
+| test_s63b regresión | `test_s63b_cleanup_in_retry_round_zero` roto por S94-fix | Pendiente | S102-G |
 
 ## Fallos pre-existentes — pendientes de corrección en S96-G
 
