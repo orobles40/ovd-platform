@@ -7,6 +7,8 @@ S74-D: Detectar secretos hardcoded y SHA-256 para passwords (log only).
 S75-A: Elimina funciones de módulo que redefinen imports con wrapper trivial (RecursionError).
 S77-A: Elimina/corrige parámetros Oracle inválidos en create_engine (thick=True → eliminar).
 S77-B: Reordena @field_validator/@model_validator ANTES de @classmethod (Pydantic v2).
+S107-P2: Reemplaza imágenes Oracle por postgres:16-alpine en docker-compose.yml.
+S107-P3: Sincroniza imports service→router→tests post-fan-out (alias de nombres obvios).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -20,6 +22,7 @@ Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra variable local que shadowea función del módulo (UnboundLocalError)
 - Elimina wrapper trivial que shadea import a nivel módulo (RecursionError)
 - Advierte sobre secretos hardcoded y SHA-256 para passwords
+- Reemplaza imágenes Oracle en docker-compose.yml por postgres:16-alpine (S107-P2)
 """
 
 from __future__ import annotations
@@ -1012,7 +1015,169 @@ def _fix_orm_class_names_es_to_en(content: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Entry point: postprocess_python_file
+# S107-P2 — Fix Oracle image in docker-compose
+# ---------------------------------------------------------------------------
+
+_ORACLE_DOCKER_IMAGE_RE = re.compile(
+    r"(image:\s*)(gvenzl/oracle-xe[^\s\n]*|oracle/database[^\s\n]*"
+    r"|oracleinanutshell/oracle-xe[^\s\n]*)",
+    re.IGNORECASE,
+)
+
+
+def _fix_oracle_in_docker_compose(content: str, oracle_involved: bool) -> str:
+    """S107-P2: reemplaza imágenes Oracle por postgres:16-alpine cuando oracle_involved=False.
+
+    El modelo qwen3-coder:30b genera gvenzl/oracle-xe por conocimiento de entrenamiento
+    incluso cuando el FR pide PostgreSQL. Este postprocesador es el safety net.
+    """
+    if oracle_involved:
+        return content
+    if not _ORACLE_DOCKER_IMAGE_RE.search(content):
+        return content
+    fixed, n = _ORACLE_DOCKER_IMAGE_RE.subn(r"\1postgres:16-alpine", content)
+    if n:
+        log.warning(
+            "[S107-P2] %d imagen(es) Oracle reemplazada(s) por postgres:16-alpine "
+            "en docker-compose (oracle_involved=False)",
+            n,
+        )
+    return fixed
+
+
+# ---------------------------------------------------------------------------
+# S107-P3 — Sync service imports in router/tests post-fan-out
+# ---------------------------------------------------------------------------
+
+_SERVICE_IMPORT_RE = re.compile(
+    r"^from\s+(src\.\S+\.(?:service|services))\s+import\s+(.+)$",
+    re.MULTILINE,
+)
+
+
+def _extract_defined_functions(filepath: str) -> set[str]:
+    """Extrae nombres de funciones definidas en un archivo Python via AST."""
+    import pathlib
+
+    path = pathlib.Path(filepath)
+    if not path.exists():
+        return set()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        }
+    except SyntaxError:
+        return set()
+
+
+def _build_service_alias_map(defined_fns: set[str]) -> dict[str, str]:
+    """Construye mapeo alias→nombre_real basado en patrones de naming cross-language.
+
+    El agente usa español para services.py (deactivate_X, get_Xs) e inglés/REST
+    para router.py y tests (delete_X, list_Xs). Este mapa corrige las divergencias.
+    """
+    alias_map: dict[str, str] = {}
+    for fn in defined_fns:
+        if fn.startswith("deactivate_"):
+            entity = fn[len("deactivate_") :]
+            for alt in (f"delete_{entity}", f"disable_{entity}", f"remove_{entity}"):
+                alias_map[alt] = fn
+        if fn.startswith("get_") and fn.endswith("s"):
+            alias_map[fn.replace("get_", "list_", 1)] = fn
+        if fn.startswith("calcular_"):
+            rest = fn[len("calcular_") :]
+            for alt in (f"get_{rest}", f"calculate_{rest}", "get_contract_total"):
+                alias_map[alt] = fn
+        if fn.startswith("create_") and not fn.startswith("create_access"):
+            pass  # create_ es generalmente consistente
+    return alias_map
+
+
+def _apply_import_corrections(
+    content: str, alias_map: dict[str, str]
+) -> tuple[str, list[str]]:
+    """Reemplaza imports con alias por sus nombres canónicos en alias_map."""
+    if not alias_map:
+        return content, []
+    applied: list[str] = []
+
+    def _fix_names_in_import(m: re.Match) -> str:
+        module = m.group(1)
+        names_str = m.group(2)
+        names = [n.strip() for n in names_str.split(",")]
+        fixed: list[str] = []
+        for name in names:
+            canonical = alias_map.get(name)
+            if canonical:
+                applied.append(f"{name} → {canonical} (en {module})")
+                fixed.append(canonical)
+            else:
+                fixed.append(name)
+        return f"from {module} import {', '.join(fixed)}"
+
+    new_content = _SERVICE_IMPORT_RE.sub(_fix_names_in_import, content)
+    return new_content, applied
+
+
+def sync_service_imports(work_dir: str) -> list[str]:
+    """S107-P3: sincroniza imports de router/tests con las funciones reales de services.py.
+
+    Después del fan-out paralelo, router.py y tests pueden importar nombres que no
+    existen en services.py (divergencia de naming cross-context). Este postprocesador
+    aplica un mapa de alias determinístico para corregir las importaciones.
+
+    Retorna lista de correcciones aplicadas (para logging).
+    """
+    import pathlib
+
+    base = pathlib.Path(work_dir)
+    if not base.exists():
+        return []
+
+    # 1. Recopilar funciones definidas en todos los services.py / service.py
+    all_defined: set[str] = set()
+    for service_file in base.rglob("service*.py"):
+        if "test" not in service_file.name:
+            all_defined |= _extract_defined_functions(str(service_file))
+
+    if not all_defined:
+        return []
+
+    alias_map = _build_service_alias_map(all_defined)
+    if not alias_map:
+        return []
+
+    fixes: list[str] = []
+
+    # 2. Corregir router.py y test_*.py que importen desde service(s).py
+    for py_file in base.rglob("*.py"):
+        rel = py_file.relative_to(base)
+        rel_str = str(rel)
+        if "router" not in rel_str and "test_" not in py_file.name:
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        new_content, applied = _apply_import_corrections(content, alias_map)
+        if applied:
+            py_file.write_text(new_content, encoding="utf-8")
+            fixes.extend(applied)
+            log.warning(
+                "[S107-P3] %s: %d imports corregidos: %s",
+                rel_str,
+                len(applied),
+                applied,
+            )
+
+    return fixes
+
+
+# ---------------------------------------------------------------------------
+# Entry point: postprocess_python_file / postprocess_yaml_file
 # ---------------------------------------------------------------------------
 
 
@@ -1121,5 +1286,23 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
             len(original),
             len(content),
         )
+
+    return content
+
+
+def postprocess_yaml_file(
+    content: str, rel_path: str, oracle_involved: bool = False
+) -> str:
+    """S107-P2: post-procesa archivos YAML generados por LLM (docker-compose, etc.).
+
+    Actualmente aplica:
+    - Reemplazo de imágenes Oracle por postgres:16-alpine en docker-compose (S107-P2)
+    """
+    if not (rel_path.endswith(".yml") or rel_path.endswith(".yaml")):
+        return content
+
+    fname = rel_path.lower()
+    if "docker-compose" in fname or "docker_compose" in fname:
+        content = _fix_oracle_in_docker_compose(content, oracle_involved)
 
     return content

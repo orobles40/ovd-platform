@@ -525,6 +525,10 @@ class OVDState(TypedDict):
     # P5.C: timestamp UNIX de inicio del ciclo (registrado en analyze_fr)
     cycle_start_ts: float
 
+    # S107-P1: contrato arquitectónico canónico generado antes del fan-out de agentes.
+    # JSON string con las firmas exactas de service.py que router.py y tests DEBEN importar.
+    architecture_contract: str
+
     # Output
     deliverables: list[dict]
     status: Annotated[
@@ -2998,6 +3002,127 @@ _S106_NON_ENTITIES = frozenset(
     "Metadata Create Update Delete Read Get Post Put Patch".split()
 )
 
+# ---------------------------------------------------------------------------
+# S107-P1 — Architecture Gate: contrato canónico de interfaces
+# ---------------------------------------------------------------------------
+
+_S107_SNAKE_FN_RE = _re_top.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,})\b")
+_S107_CRUD_VERBS = frozenset(
+    "create get update delete deactivate list calcular calculate get_by "
+    "find search validate activate disable enable".split()
+)
+_S107_EXCLUDE_NAMES = frozenset(
+    "int str bool float dict list set tuple type none true false "
+    "self cls return yield raise pass import from as with for in "
+    "if else elif while try except finally async await def class".split()
+)
+
+
+def _extract_service_functions_from_task(desc: str) -> list[str]:
+    """Extrae nombres de funciones CRUD de la descripción de una task de service.py."""
+    fns: list[str] = []
+    seen: set[str] = set()
+
+    # 1. Patrones explícitos: "funciones X, Y, Z" o "functions X, Y, Z"
+    for m in _re_top.finditer(
+        r"funciones?\s+([a-z_,\s]+?)(?:\n|$|\.|y\s+)", desc, _re_top.IGNORECASE
+    ):
+        for name in _re_top.findall(r"[a-z][a-z0-9_]{3,}", m.group(1)):
+            if name not in seen and name not in _S107_EXCLUDE_NAMES:
+                fns.append(name)
+                seen.add(name)
+
+    # 2. snake_case con verbo CRUD conocido en la raíz
+    for m in _S107_SNAKE_FN_RE.finditer(desc):
+        name = m.group(1)
+        if name in seen or name in _S107_EXCLUDE_NAMES or len(name) < 5:
+            continue
+        root = name.split("_")[0]
+        if root in _S107_CRUD_VERBS:
+            fns.append(name)
+            seen.add(name)
+
+    return fns
+
+
+def _build_architecture_contract_text(sdd: dict) -> str:
+    """S107-P1: genera el bloque JSON de Architecture Contract a partir del SDD.
+
+    Extrae nombres canónicos de funciones de las tasks de service.py y los presenta
+    como un contrato vinculante en formato JSON. Router.py y tests DEBEN importar
+    estos nombres exactamente — no pueden renombrarlos por convención propia.
+
+    A diferencia del type_contract (texto libre, consultivo), este bloque es:
+    - JSON estructurado (el modelo lo procesa como datos, no como instrucción)
+    - Etiquetado explícitamente como VINCULANTE
+    - Inyectado al INICIO del HumanMessage (máxima prioridad en el contexto)
+    """
+    entities: list[dict] = []
+
+    for task in sdd.get("tasks", []):
+        output_file = task.get("output_file", task.get("file", ""))
+        if not output_file:
+            continue
+        fname = output_file.replace("\\", "/").split("/")[-1]
+        if fname not in ("service.py", "services.py"):
+            continue
+
+        desc = task.get("description", "") + " " + task.get("title", "")
+        fns = _extract_service_functions_from_task(desc)
+        if not fns:
+            continue
+
+        module_path = output_file.replace("\\", "/")
+        # Inferir módulo de import: src/contracts/service.py → src.contracts.service
+        import_module = module_path.removesuffix(".py").replace("/", ".")
+
+        entities.append(
+            {
+                "service_module": module_path,
+                "import_as": import_module,
+                "canonical_functions": fns,
+                "REGLA": (
+                    "router.py y tests DEBEN importar estos nombres EXACTAMENTE. "
+                    "NO renombrarlos (delete→deactivate, list→get, etc.)."
+                ),
+            }
+        )
+
+    if not entities:
+        return ""
+
+    contract = {"architecture_contract": entities, "version": "S107-P1"}
+    return (
+        "\n[ARCHITECTURE CONTRACT — S107-P1 — VINCULANTE]\n"
+        "Las siguientes firmas son el ÚNICO contrato válido para este ciclo.\n"
+        "router.py y tests DEBEN importar exactamente estos nombres de service.py:\n\n"
+        f"```json\n{_json.dumps(contract, ensure_ascii=False, indent=2)}\n```\n\n"
+        "CRÍTICO: Si router.py importa `delete_contrato` pero service.py define `deactivate_contrato`"
+        " → ImportError en pytest. Respeta el contrato sin excepción.\n\n"
+    )
+
+
+async def generate_architecture_contract(state: OVDState) -> dict:
+    """S107-P1: nodo que genera el Architecture Contract antes del fan-out de agentes.
+
+    Corre después de request_approval (SDD ya aprobado) y antes de route_agents.
+    No hace llamadas LLM — es determinístico basado en el SDD.
+    Almacena el contrato en state["architecture_contract"] para inyección en agentes.
+    """
+    sdd = state.get("sdd", {})
+    contract_text = _build_architecture_contract_text(sdd)
+    if contract_text:
+        log.info(
+            "generate_architecture_contract: contrato generado (%d chars, %d entidades)",
+            len(contract_text),
+            contract_text.count('"service_module"'),
+        )
+    else:
+        log.info(
+            "generate_architecture_contract: SDD sin tasks de service.py — contrato vacío"
+        )
+    return {"architecture_contract": contract_text}
+
 
 def _build_type_contract(sdd: dict) -> str:
     """S103-P1: tabla de nombres normalizados extraída del SDD para coordinación inter-agente.
@@ -3171,6 +3296,7 @@ def _build_single_task_sdd_content(
     task_index: int,
     total_tasks: int,
     written_files: list[str] | None = None,
+    architecture_contract: str = "",
 ) -> str:
     """S39-D: construye el SDD para una sola tarea del agente.
 
@@ -3180,7 +3306,11 @@ def _build_single_task_sdd_content(
 
     S64-B: acepta written_files para inyectar manifest de módulos disponibles.
     S103-P1: inyecta contrato de tipos normalizado para coordinación inter-agente.
+    S107-P1: inyecta architecture_contract al inicio (vinculante, antes del module_manifest).
     """
+    # S107-P1: Architecture Contract va PRIMERO — máxima prioridad en el contexto del LLM
+    arch_block = architecture_contract or ""
+
     # S64-B: manifest de módulos al inicio del prompt — groundea al LLM con el inventario real
     module_manifest = _build_sdd_module_manifest(sdd, written_files)
     # S103-P1: contrato de tipos — nombres exactos de funciones/clases para todos los agentes
@@ -3190,6 +3320,7 @@ def _build_single_task_sdd_content(
     task_requirements = _filter_requirements_for_task(sdd.get("requirements", []), task)
 
     base = (
+        f"{arch_block}"
         f"{module_manifest}"
         f"{type_contract}"
         f"## Summary\n{sdd.get('summary', '')}\n\n"
@@ -3558,6 +3689,10 @@ async def _agent_executor_impl(state: OVDState) -> dict:
     jwt_token = state.get("jwt_token", "")
     retry_feedback = state.get("retry_feedback", "")
     language = state.get("language", "es")
+    # S107-P1: Architecture Contract generado antes del fan-out
+    architecture_contract = state.get("architecture_contract", "")
+    # S107-P2: oracle_involved para postprocesador docker-compose
+    _oracle_involved_agent = state.get("fr_analysis", {}).get("oracle_involved", True)
     stack_language = state.get(
         "stack_language", ""
     )  # S42-E: lenguaje del stack del proyecto
@@ -3734,6 +3869,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     i,
                     len(agent_tasks),
                     written_files=_written_so_far,
+                    architecture_contract=architecture_contract,
                 )
             )
 
@@ -3813,6 +3949,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             stack_language=stack_language,  # S42-E
                             lessons_context=lessons_context,  # S41
                             stack_routing=state.get("stack_routing", "auto"),  # S49-C
+                            oracle_involved=_oracle_involved_agent,  # S107-P2
                         ),
                         timeout=_AGENTS_TIMEOUT,  # S41P.A
                     )
@@ -3893,6 +4030,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     written_files=[
                         a.get("path", "") for a in all_artifacts if isinstance(a, dict)
                     ],
+                    architecture_contract=architecture_contract,
                 )
             )
             # Refrescar contexto con archivos ya escritos
@@ -3922,6 +4060,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             stack_language=stack_language,
                             lessons_context=lessons_context,
                             stack_routing=state.get("stack_routing", "auto"),
+                            oracle_involved=_oracle_involved_agent,  # S107-P2
                         ),
                         timeout=_AGENTS_TIMEOUT,
                     )
@@ -4062,6 +4201,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     stack_language=stack_language,  # S42-E
                     lessons_context=lessons_context,  # S41
                     stack_routing=state.get("stack_routing", "auto"),  # S49-C
+                    oracle_involved=_oracle_involved_agent,  # S107-P2
                 )
             return await runner(
                 agent_sdd_content,
@@ -4216,6 +4356,7 @@ async def _run_agent_with_tools(
     stack_language: str = "",  # S42-E: lenguaje del stack para selección de template
     lessons_context: str = "",  # S41: lecciones de ciclos anteriores del mismo proyecto
     stack_routing: str = "auto",  # S49-C: routing del stack para detectar Ollama
+    oracle_involved: bool = True,  # S107-P2: para postprocesador docker-compose
 ) -> dict:
     """
     S17T.B — Bucle agentico con tool calling.
@@ -4277,6 +4418,7 @@ async def _run_agent_with_tools(
                 directory,
                 agent_name,
                 preserve_nonempty=_preserve,
+                oracle_involved=oracle_involved,
             )
             if written_arts:
                 runner_result = dict(runner_result, artifacts=written_arts)
@@ -4376,6 +4518,7 @@ async def _run_agent_with_tools(
                             directory,
                             agent_name,
                             preserve_nonempty=_preserve,
+                            oracle_involved=oracle_involved,
                         )
                         if _written:
                             _runner_result = dict(_runner_result, artifacts=_written)
@@ -4510,6 +4653,7 @@ async def _run_agent_with_tools(
             directory,
             agent_name,
             preserve_nonempty=bool(retry_feedback),  # S57-D
+            oracle_involved=oracle_involved,
         )
 
     # S24-A: post-scan del workspace — detectar archivos escritos que no fueron
@@ -5323,6 +5467,45 @@ async def qa_review(state: OVDState) -> dict:
         else ""
     )
 
+    # S107-P5: verificar architecture contract vs implementación real (AST)
+    _arch_contract_text = state.get("architecture_contract", "")
+    _arch_contract_issues: list[str] = []
+    if _arch_contract_text and qa_directory:
+        try:
+            _arch_json_match = _re_top.search(
+                r"```json\n(.*?)\n```", _arch_contract_text, _re_top.DOTALL
+            )
+            if _arch_json_match:
+                _arch_data = _json.loads(_arch_json_match.group(1))
+                from code_postprocessor import _extract_defined_functions
+
+                for _entity in _arch_data.get("architecture_contract", []):
+                    _svc_module = _entity.get("service_module", "")
+                    _canonical_fns = _entity.get("canonical_functions", [])
+                    if not _svc_module or not _canonical_fns:
+                        continue
+                    _svc_path = str(pathlib.Path(qa_directory) / _svc_module)
+                    _defined = _extract_defined_functions(_svc_path)
+                    for _fn in _canonical_fns:
+                        if _fn not in _defined and _defined:
+                            _arch_contract_issues.append(
+                                f"[S107-P5] {_fn}() en architecture contract NO encontrado en {_svc_module}"
+                            )
+        except Exception as _p5_err:
+            log.debug("qa_review: S107-P5 verificación contract — error: %s", _p5_err)
+
+    _arch_contract_block = ""
+    if _arch_contract_issues:
+        _arch_contract_block = (
+            f"\n\n[S107-P5] ARCHITECTURE CONTRACT VIOLATIONS ({len(_arch_contract_issues)} issue(s)):\n"
+            + "\n".join(f"  - {i}" for i in _arch_contract_issues)
+            + "\nCada función faltante en service.py causa ImportError en tests. Penalizar -5 pts por item.\n"
+        )
+        log.warning(
+            "qa_review: S107-P5 — %d function(s) del architecture contract no encontradas en disco",
+            len(_arch_contract_issues),
+        )
+
     messages_qa = [
         SystemMessage(
             content=template_loader.render(
@@ -5340,6 +5523,7 @@ async def qa_review(state: OVDState) -> dict:
                     if qa_summary
                     else ""
                 )
+                + _arch_contract_block
             )
         ),
     ]
@@ -6479,6 +6663,18 @@ async def run_tests(state: OVDState) -> dict:
                 "run_tests: S101-A — %d service.py renombrado(s) a services.py: %s",
                 len(_renamed_services),
                 _renamed_services,
+            )
+
+    # S107-P3: sincronizar imports service→router→tests post-fan-out
+    if runner == "pytest" and work_dir:
+        from code_postprocessor import sync_service_imports
+
+        _p3_fixes = sync_service_imports(work_dir)
+        if _p3_fixes:
+            log.warning(
+                "run_tests: S107-P3 — %d import(s) sincronizado(s) service→router/tests: %s",
+                len(_p3_fixes),
+                _p3_fixes[:10],
             )
 
     # S65-E: garantizar infraestructura mínima Python en el workspace
@@ -7783,6 +7979,7 @@ def _write_artifacts(
     directory: str,
     agent: str,
     preserve_nonempty: bool = False,  # S55-B: preserva archivos existentes no-vacíos en retry
+    oracle_involved: bool = True,  # S107-P2: para postprocesador docker-compose
 ) -> list[dict]:
     """Parsea bloques de código con ruta (```lang:path) y los escribe al disco.
 
@@ -7907,6 +8104,14 @@ def _write_artifacts(
                 from code_postprocessor import postprocess_python_file
 
                 content = postprocess_python_file(content, rel_path, work_dir=str(base))
+
+            # S107-P2: post-procesar YAML (docker-compose Oracle→PostgreSQL)
+            if rel_path.endswith((".yml", ".yaml")):
+                from code_postprocessor import postprocess_yaml_file
+
+                content = postprocess_yaml_file(
+                    content, rel_path, oracle_involved=oracle_involved
+                )
 
             target.write_text(content, encoding="utf-8")
             # S54-A: verificación post-write — confirmar que el archivo existe en disco
@@ -9052,7 +9257,7 @@ _SECURITY_MIN_SCORE = int(os.environ.get("OVD_SECURITY_MIN_SCORE", "0"))
 def route_after_approval(state: OVDState) -> str:
     decision = state.get("approval_decision", "")
     if decision == "approved":
-        return "route_agents"  # GAP-002: fan-out nativo
+        return "generate_architecture_contract"  # S107-P1: Architecture Gate antes del fan-out
     elif decision == "revision_requested":
         return "generate_sdd"  # S15-TUI: volver a generar SDD con feedback
     return END  # "rejected" o vacío → terminar ciclo
@@ -9366,6 +9571,9 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
     )  # S11: investigación web (no-op si sin trigger)
     builder.add_node("generate_sdd", generate_sdd)
     builder.add_node("request_approval", request_approval)
+    builder.add_node(
+        "generate_architecture_contract", generate_architecture_contract
+    )  # S107-P1
     # GAP-002: fan-out nativo — route_agents + agent_executor reemplazan execute_agents
     builder.add_node("route_agents", route_agents)
     builder.add_node("agent_executor", agent_executor)
@@ -9409,11 +9617,13 @@ def build_graph(checkpointer: BaseCheckpointSaver) -> StateGraph:
         "request_approval",
         route_after_approval,
         {
-            "route_agents": "route_agents",
+            "generate_architecture_contract": "generate_architecture_contract",  # S107-P1
             "generate_sdd": "generate_sdd",  # S15-TUI: revisión iterativa del SDD
             END: END,
         },
     )
+    # S107-P1: Architecture Gate → fan-out de agentes
+    builder.add_edge("generate_architecture_contract", "route_agents")
 
     # GAP-002 + S47: fan-out en dos grupos por capa
     # Grupo 1 (server-side): database + backend + devops — paralelo

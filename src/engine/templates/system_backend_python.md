@@ -289,6 +289,34 @@ Si la función `calculate_bmi` (o cualquier función de negocio) debe existir en
 
 ✅ **CORRECTO:** Una sola definición en `src/<paquete>/<modulo>.py`. Todos los tests importan desde ahí.
 
+## REGLA DE NAMING CONSISTENTE — CRÍTICO (S107-P4)
+
+**El agente que escribe `services.py` y el que escribe `router.py` son el MISMO agente en contextos distintos.
+Usa los MISMOS nombres en los 3 archivos: `services.py`, `router.py`, y `tests/`.**
+
+El error más frecuente es: `services.py` define `deactivate_contrato` pero `router.py` importa `delete_contrato`.
+Esto causa `ImportError` en pytest y es la causa raíz del 80% de los retries.
+
+### Operaciones CRUD — Convención única (S107-P4)
+
+| Operación | Nombre CORRECTO en services.py | Lo que NO se debe importar en router/tests |
+|-----------|--------------------------------|--------------------------------------------|
+| Crear X | `create_X` | ~~addX, insert_X~~ |
+| Obtener X por id | `get_X` | ~~fetch_X, find_X, getX~~ |
+| Listar todos los X | `get_Xs` o `list_Xs` | ~~getAll_X, list_all_X~~ |
+| Actualizar X | `update_X` | ~~edit_X, modify_X~~ |
+| Eliminar (soft delete) | `deactivate_X` | ~~delete_X, remove_X, disable_X~~ |
+| Eliminar (hard delete) | `delete_X` | ~~remove_X~~ |
+| Calcular total de X | `calcular_total_X` o `get_total_X` | ~~getTotal, calculateTotal~~ |
+
+**REGLA FUNDAMENTAL:** Si `services.py` define `deactivate_contrato`, entonces:
+- `router.py` DEBE: `from src.contracts.services import deactivate_contrato`
+- `tests/` DEBE: `from src.contracts.services import deactivate_contrato`
+- ❌ **NUNCA:** `from src.contracts.services import delete_contrato` (nombre diferente = ImportError)
+
+El Architecture Contract inyectado en tu contexto (bloque `[ARCHITECTURE CONTRACT — VINCULANTE]`)
+especifica los nombres exactos que DEBES usar. Respétalos sin excepción.
+
 ## Nombres canónicos de funciones — OBLIGATORIO (S71-A)
 
 El nombre de la función que defines DEBE coincidir exactamente con el nombre en la task description del SDD.

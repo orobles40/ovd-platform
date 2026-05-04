@@ -32,9 +32,10 @@ from graph import (
 
 
 class TestRouteAfterApproval:
-    def test_approved_va_a_route_agents(self):
+    def test_approved_va_a_generate_architecture_contract(self):
+        # S107-P1: approved → Architecture Gate antes del fan-out
         state = make_state(approval_decision="approved")
-        assert route_after_approval(state) == "route_agents"
+        assert route_after_approval(state) == "generate_architecture_contract"
 
     def test_rejected_va_a_end(self):
         state = make_state(approval_decision="rejected")

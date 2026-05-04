@@ -33,6 +33,28 @@ Si el proyecto usa una BD que corre FUERA del docker-compose (Oracle XE, RDS, et
 - NUNCA crees un contenedor de BD — solo referencia la externa via variables de entorno
 - Ejemplo: `DATABASE_URL=oracle+oracledb://user:pass@host.docker.internal:1521/?service_name=XEPDB1`
 
+## RESTRICCIÓN ABSOLUTA — Base de datos en docker-compose (S107-P2)
+
+Si el Feature Request menciona PostgreSQL (o NO menciona Oracle explícitamente):
+- **IMAGEN OBLIGATORIA:** `postgres:16-alpine`
+- **VARIABLES:** `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- ❌ **PROHIBIDO:** `gvenzl/oracle-xe`, `oracle/database`, `oracleinanutshell/oracle-xe-11g`
+- ❌ **PROHIBIDO:** cualquier imagen que contenga "oracle" en el nombre del servicio de BD
+- Si el FR no especifica BD: usar **PostgreSQL por defecto** (`postgres:16-alpine`)
+
+Ejemplo CORRECTO para PostgreSQL:
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-myapp}
+      POSTGRES_USER: ${POSTGRES_USER:-myuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+```
+
 **Reglas de implementación:**
 - Usa EXCLUSIVAMENTE las herramientas de CI/CD y containerización indicadas en el perfil del proyecto
 - No introduzcas herramientas que no estén en el stack del proyecto
