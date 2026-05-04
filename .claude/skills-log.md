@@ -336,3 +336,121 @@ El QA=90 del primer ciclo S103 (tmpdir) no se reprodujo en workspace persistente
 Variabilidad LLM dominante — qwen3-coder:30b produce resultados inconsistentes entre runs.
 Nuevo gap identificado: circular self-import en auth/services.py (`from src.auth.services import verify_password` dentro del mismo archivo). S104-P1 debe agregar postprocessor anti-circular-import.
 ÉPICA-1 captura la visión estratégica de modos de operación + configuración de proyecto (fuentes + BD) — conversación clave con Omar sobre migración WL12→WL14 y sistemas probados como base.
+
+---
+
+## S008 | 2026-04-30
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~15:00 (estimado — session-active.md no encontrado) |
+| Cierre | 16:55 |
+| Duración | ~2h (S104 implementación + 2 ciclos validación S104+S105) |
+| Sprint | S104 + S105 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS (1 fix auto-aplicado: import order test_s104.py)
+- [x] ruff format: PASS (3 files reformatted)
+- [x] pytest unit: 1758 passed (0 fallos nuevos)
+- [x] OVD conventions: PASS (os.environ.get en archivos no-migrados son pre-existentes)
+- Push ejecutado: NO | Fallos CI post-push: —
+
+### Completado hoy
+- S104-A: _STRUCTURED_ROLES ampliado (backend/frontend/database/devops) + seed=42 ChatOllama
+- S104-B: _detect_circular_self_imports() en graph.py
+- S104-C: limpieza __pycache__ en session_create
+- S104-D: restricción infraestructura absoluta en system_sdd.md
+- S104-E: _classify_test_error() + taxonomy hints en run_tests
+- S105-P1: limpieza test_*.py del ciclo anterior en session_create
+- test_s104.py: 30 tests, 6 clases (TestS104A/B/C/D/E + TestS105P1) — 1758 passed total
+- Ciclo S104 ejecutado: QA=52, 27m51s, 365K tokens — causa raíz: old tests en workspace
+- Ciclo S105 ejecutado: QA=40, 21m49s, 237K tokens — S105-P1 activo, destapó naming mismatch intra-ciclo
+- INFORME_PRUEBA_S104.md + INFORME_PRUEBA_S105.md generados en mis-entregas/
+- CONTEXT.md actualizado con resultados S104+S105 y roadmap S106
+
+### Notas
+El contexto de la sesión se partió en 2 por límite de tokens — continuó correctamente desde el summary.
+S105-P1 funcionó (6 old tests eliminados) pero el QA bajó de 52 a 40 porque destapó naming mismatch intra-ciclo.
+Tres causas raíz identificadas para S106: Pydantic schemas ausentes en models.py, validate_rut vs validate_rut_format, RAG Oracle contaminando proyectos PostgreSQL.
+session-active.md no encontrado — sesión arrancó desde resumen de contexto sin /session-start.
+
+---
+
+## S009 | 2026-05-04
+
+| Métrica | Valor |
+|---|---|
+| Inicio | — |
+| Cierre | — |
+| Duración | ~5m (sesión de consulta) |
+| Sprint | S105 (completado) |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [ ] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [ ] ruff format: (omitido — sin cambios de código)
+- [ ] pytest unit: (omitido — sin cambios de código)
+- [ ] OVD conventions: (omitido)
+- Push ejecutado: NO
+
+### Completado hoy
+- Verificación modelos Ollama en VRAM
+- Liberación VRAM: nomic-embed-text descargado (551 MB liberados)
+- Engine OVD detenido para pausa
+
+### Notas
+Sesión de mantenimiento breve. Sin cambios de código.
+
+---
+
+## S010 | 2026-05-04
+
+| Métrica | Valor |
+|---|---|
+| Inicio | (sesión continuada — sin session-active.md) |
+| Cierre | ~fin de sesión |
+| Duración | ~2h (estimado — contexto comprimido) |
+| Sprint | S106 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [ ] /session-start (sesión continuada desde contexto comprimido)
+- [ ] /run-tests (tests ejecutados directamente con pytest)
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS
+- [x] pytest unit: 1801 passed
+- [x] OVD conventions: PASS (pre-existentes, sin nuevos os.environ.get)
+- Push ejecutado: NO (pendiente confirmación) | Fallos CI post-push: 0
+
+### Completado hoy
+- S106-P1: Auto-generación schemas Pydantic (Create/Update/Response) en `_build_type_contract()` desde clases ORM en models.py
+- S106-P2: `_S106_P2_ALIASES` + auto-corrección en disco `validate_rut_format` → `validate_rut`; template SDD prohibe alias
+- S106-P3: `_ORACLE_INFRA_KEYWORDS` — filtra xepdb1/:1521/oracle+cx_oracle en `_strip_db_restrictions()` cuando oracle_involved=False
+- S106-P4: Guard devops en `_fix_sdd_agent_assignments()` — no aplica S102-B si `agent=devops` y sin output_file
+- S106-P5: `_calc_naming_mismatch_penalty()` — -2 pts/mismatch S103-P2, máx 30; integrado en S62-B de qa_review
+- S106-P6: Auto-añade `list_{entity}s(db: Session)` al type contract para tareas service.py
+- test_s106.py: 43 tests nuevos (total suite: 1801 PASS, 0 regresiones)
+- Commit: 40c5c0b35
+
+### Notas
+RAG no actualizado — engine DOWN. Re-indexar manualmente cuando el engine esté activo (graph.py + system_sdd.md modificados).
