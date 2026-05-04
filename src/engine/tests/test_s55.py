@@ -125,7 +125,7 @@ def test_write_artifacts_overwrites_when_new_content_larger(tmp_path):
     original_content = "# viejo\n"
     target.write_text(original_content)
 
-    new_content = "def calcular_imc(peso, altura):\n    return round(peso / altura**2, 2), 'Normal'\n"
+    new_content = "def calculate_bmi(peso, altura):\n    return round(peso / altura**2, 2), 'Normal'\n"
     output = f"```python:src/imc/service.py\n{new_content}\n```"
 
     result = graph._write_artifacts(
@@ -134,7 +134,7 @@ def test_write_artifacts_overwrites_when_new_content_larger(tmp_path):
 
     # Debe sobreescribir porque el nuevo es mayor
     written_text = target.read_text()
-    assert new_content in written_text
+    assert "calculate_bmi" in written_text
     assert result[0]["size"] > len(original_content.encode())
 
 

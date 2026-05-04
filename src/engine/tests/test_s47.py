@@ -87,10 +87,10 @@ class TestS47ADispatchAgents:
         assert group2 == []
 
     def test_dispatch_frontend_despacha_pendientes(self):
-        """S47-A3: _dispatch_frontend despacha los agentes en pending_agents."""
+        """S47-A3: _dispatch_frontend despacha los agentes en _dispatch_now (S59-B)."""
         from graph import _dispatch_frontend
 
-        state = make_state(pending_agents=["frontend"])
+        state = make_state(_dispatch_now=["frontend"])
         sends = _dispatch_frontend(state)
         assert len(sends) == 1
         assert sends[0].arg["current_agent"] == "frontend"
