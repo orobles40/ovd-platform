@@ -8497,6 +8497,60 @@ def _detect_test_runner(agent_results: list[dict], directory: str = "") -> str |
     return _classify(all_paths)
 
 
+async def _index_sdd_for_rag(state: dict) -> None:
+    """
+    S96-H2 — Indexa el SDD del ciclo en RAG como chunk tipo 'delivery'.
+    Fire-and-forget: los errores se loguean pero no propagan al ciclo.
+    Permite que ciclos futuros consulten SDDs anteriores como referencia.
+    """
+    import os
+
+    if os.getenv("OVD_RAG_ENABLED", "true").lower() == "false":
+        return
+    sdd = state.get("sdd")
+    if not sdd:
+        return
+    try:
+        import json
+
+        import rag as _rag
+
+        project_id = state.get("project_id", "")
+        org_id = state.get("org_id", "")
+        session_id = state.get("session_id", "")
+        fr = state.get("feature_request", "")
+        qa_score = (
+            state.get("qa_result", {}).get("score", 0)
+            if isinstance(state.get("qa_result"), dict)
+            else 0
+        )
+
+        content = f"SDD — {fr[:200]}\n\n{json.dumps(sdd, ensure_ascii=False, indent=2)[:3000]}"
+        chunk = {
+            "content": content,
+            "doc_type": "delivery",
+            "source_file": f"sdd/{session_id[:8]}.json",
+            "metadata": {
+                "session_id": session_id,
+                "qa_score": qa_score,
+                "fr_type": state.get("fr_analysis", {}).get("type", "")
+                if isinstance(state.get("fr_analysis"), dict)
+                else "",
+                "complexity": state.get("fr_analysis", {}).get("complexity", "")
+                if isinstance(state.get("fr_analysis"), dict)
+                else "",
+            },
+        }
+        n = await _rag.index_chunks_async([chunk], project_id, org_id)
+        log.info(
+            "S96-H2: SDD indexado en RAG — %d chunk(s) para sesión %s",
+            n,
+            session_id[:8],
+        )
+    except Exception as e:
+        log.warning("S96-H2: error indexando SDD en RAG — %s", e)
+
+
 async def _index_delivery_report(state: dict, report_file: str) -> None:
     """
     RAG-02 — Indexa el informe de entrega en el RAG via knowledge.bootstrap.
@@ -9065,6 +9119,9 @@ async def deliver(state: OVDState) -> dict:
     # RAG-02 — Indexar informe de entrega en RAG (fire-and-forget)
     if report_file:
         asyncio.create_task(_index_delivery_report(state, report_file))
+
+    # S96-H2 — Indexar SDD del ciclo en RAG para aprendizaje futuro (fire-and-forget)
+    asyncio.create_task(_index_sdd_for_rag(state))
 
     # S41.A5 — Indexar post-mortem del ciclo como lección (fire-and-forget)
     _agent_names_deliver = [

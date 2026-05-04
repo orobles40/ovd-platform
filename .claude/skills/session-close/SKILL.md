@@ -210,7 +210,7 @@ rm -f .claude/session-active.md
 
 ## Paso 9 — Re-indexar RAG (archivos modificados)
 
-> Aplica a partir de S96-H. Si el engine no está corriendo, omitir con advertencia.
+> Aplica a partir de S96-H. No requiere el engine activo — usa rag.py directamente.
 
 ### 9a. Identificar archivos modificados en la sesión
 
@@ -220,43 +220,31 @@ git diff --name-only HEAD | grep -E "^src/engine/.*\.py$|^docs/.*\.md$"
 
 Si no hay archivos modificados → omitir el paso.
 
-### 9b. Verificar que el engine está activo
+### 9b. Re-indexar archivos Python de src/engine/
+
+Por cada archivo `.py` modificado en `src/engine/` (excluyendo `tests/` y `.venv/`):
 
 ```bash
-curl -s --max-time 3 http://localhost:8001/health 2>/dev/null | grep -q "ok" && echo "UP" || echo "DOWN"
+cd src/engine && .venv/bin/python scripts/rag_bootstrap.py \
+  --org-id 01KMK160F1TJ807Z0BDSJD504D \
+  --project-id ovd-platform \
+  --path "<ruta-absoluta-del-archivo>" \
+  --doc-type codebase
 ```
 
-Si está DOWN → advertir: "RAG no actualizado — engine no disponible. Re-indexar manualmente cuando el engine esté activo." y omitir 9c.
+### 9c. Re-indexar archivos Markdown de docs/
 
-### 9c. Re-indexar cada archivo modificado
-
-Por cada archivo `.py` de `src/engine/` (excluyendo `tests/` y `.venv/`):
+Por cada archivo `.md` modificado en `docs/`:
 
 ```bash
-SECRET=$(grep '^OVD_SECRET=' src/engine/.env | head -1 | sed 's/.*=//' | tr -d ' \r')
-curl -s -X POST "http://localhost:8001/orgs/01KMK160F1TJ807Z0BDSJD504D/knowledge/index" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "project_id": "ovd-platform",
-    "source_path": "<ruta-absoluta-del-archivo>",
-    "doc_type": "codebase"
-  }'
-```
-
-Por cada archivo `.md` de `docs/`:
-
-```bash
-curl -s -X POST "http://localhost:8001/orgs/01KMK160F1TJ807Z0BDSJD504D/knowledge/index" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "project_id": "ovd-platform",
-    "source_path": "<ruta-absoluta-del-archivo>",
-    "doc_type": "doc"
-  }'
+cd src/engine && .venv/bin/python scripts/rag_bootstrap.py \
+  --org-id 01KMK160F1TJ807Z0BDSJD504D \
+  --project-id ovd-platform \
+  --path "<ruta-absoluta-del-archivo>" \
+  --doc-type doc
 ```
 
 Reportar: `RAG actualizado — N archivos re-indexados (M codebase + K docs)`
 
-> **Nota:** Este paso usa re-indexación incremental (archivo a archivo), no re-bootstrap completo. El bootstrap completo solo se ejecuta manualmente en H1.
+> **Nota:** Este paso usa re-indexación incremental (archivo a archivo) vía `rag_bootstrap.py`.
+> Para re-bootstrap completo: `python scripts/rag_bootstrap.py --org-id ... --project-id ... --clear`

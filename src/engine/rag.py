@@ -327,3 +327,40 @@ async def search_async(
     return await asyncio.to_thread(
         search, query, project_id, top_k, min_score, filters, rag_filters
     )
+
+
+def clear_project_chunks(project_id: str) -> int:
+    """S96-H: elimina todos los chunks de un proyecto de pgvector.
+
+    Retorna el número de chunks eliminados. Usado por rag_bootstrap.py antes
+    de un re-bootstrap completo para evitar duplicados obsoletos.
+    """
+    db_url = _get_connection_string()
+    if not db_url:
+        log.warning("rag.clear_project_chunks: DATABASE_URL no definida")
+        return 0
+    try:
+        import psycopg
+
+        collection_name = f"{_COLLECTION_PREFIX}{project_id}"
+        with psycopg.connect(db_url) as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM langchain_pg_embedding
+                WHERE collection_id = (
+                    SELECT uuid FROM langchain_pg_collection WHERE name = %s
+                )
+                """,
+                (collection_name,),
+            )
+            deleted = cur.rowcount
+            conn.commit()
+        log.info(
+            "rag.clear_project_chunks: %d chunks eliminados para %s",
+            deleted,
+            project_id,
+        )
+        return deleted
+    except Exception as e:
+        log.error("rag.clear_project_chunks: error — %s", e)
+        return 0
