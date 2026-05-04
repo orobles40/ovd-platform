@@ -8001,11 +8001,8 @@ def _write_artifacts(
 
     base = pathlib.Path(directory).expanduser().resolve()
     if not base.exists():
-        log.warning(
-            "_write_artifacts: directorio '%s' no existe, omitiendo escritura",
-            directory,
-        )
-        return []
+        log.info("_write_artifacts: creando directorio '%s'", directory)
+        base.mkdir(parents=True, exist_ok=True)
 
     # Regex: ```lang:relative/path\n...content...\n```
     pattern = _re.compile(
