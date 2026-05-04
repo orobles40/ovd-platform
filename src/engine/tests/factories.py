@@ -71,7 +71,6 @@ _STATE_DEFAULTS: dict[str, Any] = {
     "generated_docs": [],
     # Tokens / timing
     "token_usage": {},
-    "cycle_start_ts": time.time() - 5.0,
     # Output
     "deliverables": [],
     "status": "idle",
@@ -87,7 +86,10 @@ def make_state(**overrides) -> dict:
     Uso:
         state = make_state(feature_request="Fix bug en login", auto_approve=True)
     """
-    return {**_STATE_DEFAULTS, **overrides}
+    # cycle_start_ts se calcula en cada llamada para evitar que el timestamp
+    # quede congelado al importar el módulo (falla test_s31 en suites largas).
+    base = {**_STATE_DEFAULTS, "cycle_start_ts": time.time() - 5.0}
+    return {**base, **overrides}
 
 
 def make_fr_analysis(

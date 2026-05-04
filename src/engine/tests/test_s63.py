@@ -257,7 +257,7 @@ def test_s63b_cleanup_not_in_run_tests(tmp_path):
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(graph.run_tests(state))
+        asyncio.run(graph.run_tests(state))
 
     # El archivo escrito por el retry actual NO debe ser borrado por run_tests
     assert service.exists(), (
