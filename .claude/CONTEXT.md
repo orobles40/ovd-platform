@@ -8,12 +8,26 @@
 
 ## Estado actual
 
-- **Sprint activo:** S109 (completado)
+- **Sprint activo:** S110 (en progreso — S96-H completado)
 - **Rama de trabajo:** `dev`
 - **Sprints completados:** S3 → S109
-- **Tests:** 1873 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
-  *(2 pre-existentes siguen fallando: test_s31 flaky timing, test_s63b RuntimeError S94)*
+- **Tests:** 1886 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+  *(suite 100% limpia — 0 fallos pre-existentes pendientes)*
+- **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
+
+---
+
+## Última sesión (2026-05-04 — S110 / S96-H)
+
+**S96-H — RAG actualizado (ALTO) — COMPLETADO:**
+- H1: `rag.clear_project_chunks(project_id)` en `rag.py` — elimina chunks stale de pgvector
+- H1: `scripts/rag_bootstrap.py` — CLI con `--clear`, `--dry-run`, `--path`, `load_dotenv` automático
+- H1 fix: psycopg3 requiere `postgresql://` nativo (no `postgresql+psycopg2://` de SQLAlchemy)
+- H2: `_index_sdd_for_rag()` fire-and-forget en `deliver` — SDD de cada ciclo indexado como `delivery`
+- H3: `session-close` SKILL.md Paso 9 actualizado — usa `rag_bootstrap.py` sin JWT
+- Re-bootstrap ejecutado: **5235 chunks** frescos (3630 codebase + 1605 docs), 0 fallidos
+- Tests: `test_s96h.py` — 11/11 PASS | Suite: **1886 passed** (0 regresiones)
 
 ---
 
@@ -100,10 +114,10 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S110 — Opciones:**
-1. **S96-G continuación**: corregir test_s31 (race condition) y test_s63b (RuntimeError S94-fix) — suite quedaría completamente limpia
-2. **Nueva feature**: el plan S47 en el archivo de plans está obsoleto (ya implementado). Evaluar roadmap en `docs/sprints/CURRENT.md`
-3. **Ciclo validación adicional**: confirmar QA estable ≥ 90 con segundo ciclo del mismo FR
+**S111 — Opciones:**
+1. **Ciclo validación S110**: confirmar QA estable con S96-H activo (SDD indexado en cada ciclo)
+2. **S96-I — OB-02**: indexar artefactos generados (código de cada agente) post-ciclo como doc_type=codebase
+3. **Feature roadmap**: revisar `docs/sprints/CURRENT.md` para próximo sprint de features
 
 ---
 
