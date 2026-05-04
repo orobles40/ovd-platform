@@ -8,12 +8,25 @@
 
 ## Estado actual
 
-- **Sprint activo:** S108 (completado)
+- **Sprint activo:** S109 (completado)
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S108
-- **Tests:** 1869 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
-  *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
+- **Sprints completados:** S3 → S109
+- **Tests:** 1873 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+  *(2 pre-existentes siguen fallando: test_s31 flaky timing, test_s63b RuntimeError S94)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
+
+---
+
+## Última sesión (2026-05-04 — S109)
+
+**Ciclo validación S109 (thread 5931bd36):** QA **90/100** ✅ en 11m 53s. S108-B fix confirmado. 3 agentes: devops + backend + frontend.
+
+**S96-G (parcial) — Fix tests pre-existentes:**
+- `test_s39::test_usa_cap_800_en_truncate` → renombrado y aserción actualizada al patrón invariante (S61-B cambió cap 800→2000)
+- `test_s47::test_dispatch_frontend_despacha_pendientes` → `pending_agents` → `_dispatch_now` (S59-B cambió la clave)
+- `test_s55::test_write_artifacts_overwrites_when_new_content_larger` → `calcular_imc` → `calculate_bmi` (S72-B renombra)
+
+Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b (RuntimeError S94-fix).
 
 ---
 
@@ -87,12 +100,10 @@
 
 ## Próxima sesión
 
-**Primera tarea: S109 — Ciclo validación con S108-B fix aplicado**
-- Limpiar workspace y lanzar ciclo fresco con el guard ORM+Pydantic activo
-- Target: QA ≥ 90, pytest sin collection errors, S79-C ausente
-- Verificar que `[S108-B]` aparece solo en archivos Pydantic puros (no en models.py mixto)
-- Si QA ≥ 90: sprint S109 puede enfocarse en nuevas features (S47-background task o S96-G tests)
-- `INFORME_PRUEBA_S108.md` generado — ver `docs/INFORME_PRUEBA_S108.md`
+**S110 — Opciones:**
+1. **S96-G continuación**: corregir test_s31 (race condition) y test_s63b (RuntimeError S94-fix) — suite quedaría completamente limpia
+2. **Nueva feature**: el plan S47 en el archivo de plans está obsoleto (ya implementado). Evaluar roadmap en `docs/sprints/CURRENT.md`
+3. **Ciclo validación adicional**: confirmar QA estable ≥ 90 con segundo ciclo del mismo FR
 
 ---
 
@@ -104,10 +115,9 @@
 | Test | Causa conocida | Prioridad |
 |---|---|---|
 | `test_s31::test_cycle_start_ts_reciente` | Flaky por timing — race condition | Media |
-| `test_s39::test_usa_cap_800_en_truncate` | Cap obsoleto desde S61-B | Alta (fácil) |
-| `test_s47::test_dispatch_frontend_despacha_pendientes` | Roto por S94-fix | Alta |
-| `test_s55::test_write_artifacts_overwrites_when_new_content_larger` | write_artifacts cambió post-S55 | Alta |
 | `test_s63::test_s63b_cleanup_not_in_run_tests` | RuntimeError por S94-fix | Alta |
+
+*(test_s39, test_s47, test_s55 corregidos en S109 — ver commit 9fb5f97f0)*
 
 ---
 
@@ -137,6 +147,7 @@
 | S105 | 69ba0b13 | **40** | P2: 2 retries | 21m 49s |
 | S107 | 0426dd25 | **94** ✅ | 1 retry (S79-C+Pydantic Date) | 13m 45s |
 | S108 | 3fbfc62d | **60** ❌ | 0 retries (NameError S108-B regresión) | 14m 50s |
+| S109 | 5931bd36 | **90** ✅ | 0 retries (S108-B guard activo) | 11m 53s |
 
 ---
 
