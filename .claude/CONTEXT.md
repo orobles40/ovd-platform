@@ -17,7 +17,7 @@
 
 ---
 
-## Última sesión (2026-05-04 — S108)
+## Última sesión (2026-05-04 — S108 cierre + fix post-ciclo)
 
 **Contexto:** S107 alcanzó QA 94/100. Pytest falla por dos causas confirmadas en ciclo de validación.
 
@@ -40,8 +40,13 @@
 - `_build_typed_retry_feedback(classified)`: genera feedback diferenciado por tipo — type_error menciona fix Pydantic Date, import_error menciona naming mismatch
 - Integrado en `update_test_retry()` antes de componer `new_feedback`
 
-**Suite:** test_s108.py — 21/21 PASS
+**Suite:** test_s108.py — 22/22 PASS (se agregó test_archivo_mixto_orm_pydantic_no_tocado post-ciclo)
 **Total:** **1869 passed** (0 regresiones, +21 respecto a S107/1848)
+
+**Fix post-ciclo S108-B (commit a2a57398a):**
+- Regresión detectada: `_fix_sqlalchemy_date_in_pydantic_schemas` removía `Date` del import en archivos ORM+Pydantic mixtos → `NameError: name 'Date' is not defined`
+- Guard agregado: `if re.search(r"Column\s*\(\s*Date\b", content): return content`
+- Ciclo S108: QA 60/100 (degradado por el NameError). S109 validará recovery.
 
 ---
 
@@ -82,13 +87,12 @@
 
 ## Próxima sesión
 
-**Primera tarea: Ciclo validación S108**
-- Limpiar workspace `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/` y lanzar ciclo fresco
-- Target: QA ≥ 95, pytest PASS sin retries, sin S79-C falso positivo
-- Verificar que S79-C no aparece cuando el FR dice "NO Oracle" (log `[S79-C]` ausente)
-- Verificar que S108-B elimina `Date` de SQLAlchemy en schemas Pydantic (log `[S108-B]`)
-- Verificar que S108-C elimina `service.py` residual (log `[S108-C]`)
-- Generar `INFORME_PRUEBA_S108.md` con métricas: QA score, pytest resultado, retries
+**Primera tarea: S109 — Ciclo validación con S108-B fix aplicado**
+- Limpiar workspace y lanzar ciclo fresco con el guard ORM+Pydantic activo
+- Target: QA ≥ 90, pytest sin collection errors, S79-C ausente
+- Verificar que `[S108-B]` aparece solo en archivos Pydantic puros (no en models.py mixto)
+- Si QA ≥ 90: sprint S109 puede enfocarse en nuevas features (S47-background task o S96-G tests)
+- `INFORME_PRUEBA_S108.md` generado — ver `docs/INFORME_PRUEBA_S108.md`
 
 ---
 
@@ -132,7 +136,7 @@
 | S104 | 078f18ca | **52** | P2: 2 retries | 27m 51s |
 | S105 | 69ba0b13 | **40** | P2: 2 retries | 21m 49s |
 | S107 | 0426dd25 | **94** ✅ | 1 retry (S79-C+Pydantic Date) | 13m 45s |
-| S108 | — | pendiente | — | — |
+| S108 | 3fbfc62d | **60** ❌ | 0 retries (NameError S108-B regresión) | 14m 50s |
 
 ---
 
