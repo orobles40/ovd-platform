@@ -1198,10 +1198,16 @@ def _fix_sqlalchemy_date_in_pydantic_schemas(content: str, rel_path: str) -> str
     """S108-B: reemplaza Date/DateTime de SQLAlchemy por date/datetime de Python en schemas Pydantic.
 
     Solo aplica a archivos que contienen BaseModel. En archivos ORM puros Date SA es correcto.
+    En archivos mixtos (ORM + Pydantic), si Date se usa en Column(Date) no se toca el import.
     """
     if "BaseModel" not in content:
         return content
     if not _SQLALCHEMY_DATE_IMPORT_RE.search(content):
+        return content
+    # S108-B fix: si Date se usa en Column(Date) → archivo mixto ORM+Pydantic.
+    # No remover Date del import SQLAlchemy para no romper definiciones ORM.
+    # El agente ya usa 'date' (Python) como anotación de tipo — Pydantic lo acepta.
+    if re.search(r"Column\s*\(\s*Date\b", content):
         return content
 
     types_replaced: list[str] = []

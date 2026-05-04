@@ -492,3 +492,40 @@ RAG no actualizado — engine DOWN. Re-indexar manualmente cuando el engine est�
 
 ### Notas
 RAG no actualizado — engine DOWN. Re-indexar cuando el engine esté activo (graph.py + code_postprocessor.py + templates modificados).
+
+---
+
+## S012 | 2026-05-04
+
+| Métrica | Valor |
+|---|---|
+| Inicio | — (sesión sin session-active.md) |
+| Cierre | ~final de sesión |
+| Duración | ~2h (estimado) |
+| Sprint | S108 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS
+- [x] pytest unit: 1869 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: SÍ | Fallos CI post-push: 0
+
+### Completado hoy
+- S108-A: fix S79-C falso positivo — S101-D negation-aware + oracle_involved en _verify_db_url_matches_fr
+- S108-B: _fix_sqlalchemy_date_in_pydantic_schemas + sección template ORM vs Pydantic
+- S108-C: _remove_duplicate_service_files (service.py residual → eliminado)
+- S108-D: _classify_pytest_failures + _build_typed_retry_feedback en update_test_retry
+- test_s108.py: 21/21 PASS | Suite total: 1869 PASS (0 regresiones)
+- Commit: 83b9164a8 | Push: orobles40 + codigonet-cloud
+
+### Notas
+Fricción menor: `re` no accessible directamente en graph.py (importado como `_re_top`) causó 5 fallos en TestPytestFailureClassifier — corregido con import local. Misma causa en analyze_fr (S108-A) — corregido con `_re_top`. Flujo de sesión fue continuación directa de sesión anterior compactada (sin session-active.md disponible).

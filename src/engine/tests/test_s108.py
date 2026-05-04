@@ -106,9 +106,10 @@ class TestPydanticDateFix:
     """S108-B: _fix_sqlalchemy_date_in_pydantic_schemas."""
 
     def test_date_sqlalchemy_en_schema_reemplazado(self):
-        """Date de SQLAlchemy en BaseModel → import datetime agregado, Date removido."""
+        """Date de SQLAlchemy en schema Pydantic puro → import datetime, Date removido del import SA."""
+        # Archivo solo con BaseModel (sin Column(Date)) → aplica el fix
         content = (
-            "from sqlalchemy import Column, Integer, Date\n"
+            "from sqlalchemy import Integer, Date\n"
             "from pydantic import BaseModel\n"
             "\n"
             "class ContratoCreate(BaseModel):\n"
@@ -116,16 +117,32 @@ class TestPydanticDateFix:
             "    nombre: str\n"
         )
         result = _fix_sqlalchemy_date_in_pydantic_schemas(
-            content, "src/contracts/models.py"
+            content, "src/contracts/schemas.py"
         )
         assert "from datetime import date" in result
-        # Date debe haberse removido del import SQLAlchemy o el import completo eliminado
-        # Verificar que no queda 'Date' huérfano en el import SQLAlchemy
-        assert "from sqlalchemy import Column, Integer\n" in result or (
-            "Date" not in result.split("from sqlalchemy")[1].split("\n")[0]
-            if "from sqlalchemy" in result
-            else True
+        # Date debe haberse removido del import SQLAlchemy
+        sa_import_line = [
+            l for l in result.splitlines() if "from sqlalchemy import" in l
+        ]
+        assert not sa_import_line or "Date" not in sa_import_line[0]
+
+    def test_archivo_mixto_orm_pydantic_no_tocado(self):
+        """Archivo con ORM (Column(Date)) + BaseModel → no se toca (Date en Column sigue siendo válido)."""
+        content = (
+            "from sqlalchemy import Column, Integer, Date\n"
+            "from pydantic import BaseModel\n"
+            "\n"
+            "class ContratoORM(Base):\n"
+            "    fecha_inicio: date = Column(Date, nullable=False)\n"
+            "\n"
+            "class ContratoCreate(BaseModel):\n"
+            "    fecha_inicio: date\n"
         )
+        result = _fix_sqlalchemy_date_in_pydantic_schemas(
+            content, "src/contracts/models.py"
+        )
+        # No debe modificar — Column(Date) protege el import
+        assert result == content
 
     def test_orm_date_no_tocado(self):
         """Archivo ORM puro (sin BaseModel) → Date de SQLAlchemy intacto."""
