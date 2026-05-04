@@ -612,6 +612,50 @@ class Contrato(BaseModel):
 
 ---
 
+## SEPARACIÓN CRÍTICA — ORM vs schemas Pydantic (S108-B)
+
+**REGLA ABSOLUTA: NUNCA usar tipos SQLAlchemy en schemas Pydantic (BaseModel).**
+
+Los tipos SQLAlchemy (`Date`, `DateTime`, `Boolean`, etc.) son para columnas ORM. En schemas
+Pydantic producen `TypeError: unknown type` en tiempo de ejecución.
+
+### En modelos ORM (`models.py`, clases que heredan de `Base`) — usa SQLAlchemy types:
+
+```python
+from sqlalchemy import Column, Integer, String, Date, DateTime, Boolean
+from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+
+class ContratoORM(Base):
+    __tablename__ = "contratos"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fecha_inicio: Mapped[date] = mapped_column(Date)   # Date de SQLAlchemy para columna ORM
+```
+
+### En schemas Pydantic (`schemas.py`, clases con `BaseModel`) — usa tipos Python nativos:
+
+```python
+from datetime import date, datetime   # ← SIEMPRE Python nativo, NUNCA sqlalchemy
+from pydantic import BaseModel
+
+class ContratoCreate(BaseModel):
+    fecha_inicio: date          # ← Python date (from datetime)
+    # ❌ PROHIBIDO: fecha_inicio: Date   (si Date viene de sqlalchemy import)
+    # ❌ PROHIBIDO: fecha_inicio: DateTime  (si DateTime viene de sqlalchemy import)
+```
+
+**Tabla de equivalencias obligatoria:**
+
+| SQLAlchemy (solo en ORM) | Python nativo (en Pydantic schemas) |
+|---|---|
+| `Date` | `date` (`from datetime import date`) |
+| `DateTime` | `datetime` (`from datetime import datetime`) |
+| `Boolean` | `bool` |
+| `Integer` | `int` |
+| `Float`, `Numeric` | `float` |
+| `String`, `Text` | `str` |
+
+---
+
 ## FastAPI + SQLAlchemy ORM + PostgreSQL (S83-C) — PRIORITARIO
 
 > **S83-C — REGLA ABSOLUTA:** Si el Feature Request menciona "PostgreSQL", "postgres" o "psycopg",

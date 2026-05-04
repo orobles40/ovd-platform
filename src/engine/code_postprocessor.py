@@ -9,6 +9,8 @@ S77-A: Elimina/corrige parámetros Oracle inválidos en create_engine (thick=Tru
 S77-B: Reordena @field_validator/@model_validator ANTES de @classmethod (Pydantic v2).
 S107-P2: Reemplaza imágenes Oracle por postgres:16-alpine en docker-compose.yml.
 S107-P3: Sincroniza imports service→router→tests post-fan-out (alias de nombres obvios).
+S108-B: Reemplaza Date/DateTime de SQLAlchemy por date/datetime en schemas Pydantic.
+S108-C: Elimina service.py residual cuando coexiste con services.py (canónico).
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -1129,6 +1131,8 @@ def sync_service_imports(work_dir: str) -> list[str]:
     existen en services.py (divergencia de naming cross-context). Este postprocesador
     aplica un mapa de alias determinístico para corregir las importaciones.
 
+    S108-C: limpia service.py residual antes de construir el mapa de alias.
+
     Retorna lista de correcciones aplicadas (para logging).
     """
     import pathlib
@@ -1136,6 +1140,9 @@ def sync_service_imports(work_dir: str) -> list[str]:
     base = pathlib.Path(work_dir)
     if not base.exists():
         return []
+
+    # S108-C: eliminar service.py duplicado/residual antes de construir el mapa
+    all_fixes = _remove_duplicate_service_files(work_dir)
 
     # 1. Recopilar funciones definidas en todos los services.py / service.py
     all_defined: set[str] = set()
@@ -1150,7 +1157,7 @@ def sync_service_imports(work_dir: str) -> list[str]:
     if not alias_map:
         return []
 
-    fixes: list[str] = []
+    fixes: list[str] = list(all_fixes)
 
     # 2. Corregir router.py y test_*.py que importen desde service(s).py
     for py_file in base.rglob("*.py"):
@@ -1173,6 +1180,119 @@ def sync_service_imports(work_dir: str) -> list[str]:
                 applied,
             )
 
+    return fixes
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# S108-B — Fix SQLAlchemy Date en schemas Pydantic
+# ---------------------------------------------------------------------------
+
+_SQLALCHEMY_DATE_IMPORT_RE = re.compile(
+    r"^(from\s+sqlalchemy(?:\s+import|\.\w+\s+import)[^\n]*)\b(Date(?:Time)?)\b([^\n]*)$",
+    re.MULTILINE,
+)
+
+
+def _fix_sqlalchemy_date_in_pydantic_schemas(content: str, rel_path: str) -> str:
+    """S108-B: reemplaza Date/DateTime de SQLAlchemy por date/datetime de Python en schemas Pydantic.
+
+    Solo aplica a archivos que contienen BaseModel. En archivos ORM puros Date SA es correcto.
+    """
+    if "BaseModel" not in content:
+        return content
+    if not _SQLALCHEMY_DATE_IMPORT_RE.search(content):
+        return content
+
+    types_replaced: list[str] = []
+
+    def _remove_date_types_from_sa_import(m: re.Match) -> str:
+        prefix = m.group(1)
+        date_type = m.group(2)
+        suffix = m.group(3)
+        # Reconstruir import sin Date/DateTime
+        full_imports_part = prefix.split("import", 1)
+        if len(full_imports_part) < 2:
+            return m.group(0)
+        import_kw_prefix = full_imports_part[0] + "import"
+        raw_names = full_imports_part[1] + date_type + suffix
+        names = [
+            n.strip().rstrip(",") for n in re.split(r",\s*", raw_names) if n.strip()
+        ]
+        names = [n for n in names if n not in ("Date", "DateTime")]
+        types_replaced.append(date_type)
+        if not names:
+            return ""
+        return import_kw_prefix + " " + ", ".join(names)
+
+    new_content = _SQLALCHEMY_DATE_IMPORT_RE.sub(
+        _remove_date_types_from_sa_import, content
+    )
+
+    if not types_replaced:
+        return content
+
+    # Agregar from datetime import date/datetime si falta
+    needs_date = "Date" in types_replaced and "from datetime import" not in new_content
+    needs_datetime = "DateTime" in types_replaced and "datetime" not in new_content
+    if needs_date and needs_datetime:
+        new_content = "from datetime import date, datetime\n" + new_content
+    elif needs_date:
+        new_content = "from datetime import date\n" + new_content
+    elif needs_datetime:
+        new_content = "from datetime import datetime\n" + new_content
+
+    log.warning(
+        "[S108-B] Pydantic Date→datetime fix aplicado en %s: %s",
+        rel_path,
+        types_replaced,
+    )
+    return new_content
+
+
+# ---------------------------------------------------------------------------
+# S108-C — Cleanup service.py / services.py coexistencia
+# ---------------------------------------------------------------------------
+
+
+def _remove_duplicate_service_files(work_dir: str) -> list[str]:
+    """S108-C: si service.py y services.py coexisten en el mismo directorio,
+    preserva services.py como canónico y elimina service.py.
+    """
+    import pathlib
+
+    fixes: list[str] = []
+    base = pathlib.Path(work_dir)
+    if not base.exists():
+        return fixes
+
+    for services_file in base.rglob("services.py"):
+        if "test" in services_file.name:
+            continue
+        service_file = services_file.parent / "service.py"
+        if not service_file.exists():
+            continue
+        try:
+            services_content = services_file.read_text(encoding="utf-8")
+            service_content = service_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        if services_content.strip() == service_content.strip():
+            service_file.unlink()
+            fixes.append(f"eliminado {service_file.name} (idéntico a services.py)")
+        elif len(service_content.strip()) < 50:
+            service_file.unlink()
+            fixes.append(f"eliminado {service_file.name} (stub vacío)")
+        else:
+            log.warning(
+                "[S108-C] %s y services.py difieren — preservando services.py como canónico",
+                service_file,
+            )
+            fixes.append(f"WARNING: {service_file.name} difiere de services.py")
+
+    if fixes:
+        log.warning("[S108-C] _remove_duplicate_service_files: %s", fixes)
     return fixes
 
 
@@ -1219,6 +1339,10 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
         content = _rename_functions(content)
 
     content = _fix_pydantic_v1(content)
+
+    # S108-B: reemplazar Date/DateTime de SQLAlchemy por date/datetime en schemas Pydantic
+    if not is_conftest:
+        content = _fix_sqlalchemy_date_in_pydantic_schemas(content, rel_path)
 
     # S77-B: reordenar decoradores Pydantic (field_validator ANTES de classmethod)
     if not is_conftest:

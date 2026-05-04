@@ -897,12 +897,21 @@ async def analyze_fr(state: OVDState) -> dict:
 
     _final_oracle_involved = False if _oracle_override else result.oracle_involved
 
-    # S101-D: si la FR menciona Oracle explícitamente, forzar oracle_involved=True
-    # aunque el LLM retorne False. Contrapartida de S97-D (que fuerza False para BDs no-Oracle).
-    if not _final_oracle_involved and "oracle" in fr_text.lower():
+    # S101-D: si la FR menciona Oracle explícitamente (sin negación), forzar oracle_involved=True
+    # S108-A: negation-aware — "NO Oracle", "sin Oracle", "NOT Oracle" NO activan el trigger.
+    _negation_oracle_re = _re_top.compile(
+        r"(?:no|sin|not|without)[^\w\n]{0,6}oracle",
+        _re_top.IGNORECASE,
+    )
+    _oracle_in_negative = bool(_negation_oracle_re.search(fr_text))
+    if (
+        not _final_oracle_involved
+        and "oracle" in fr_text.lower()
+        and not _oracle_in_negative
+    ):
         _final_oracle_involved = True
         log.info(
-            "analyze_fr: S101-D — oracle_involved forzado a True (FR menciona 'oracle' explícitamente)"
+            "analyze_fr: S101-D — oracle_involved forzado a True (FR menciona 'oracle' afirmativamente)"
         )
 
     analysis = {
@@ -2080,11 +2089,18 @@ def _verify_orm_class_names(work_dir: str) -> tuple[bool, str]:
     return False, _feedback
 
 
-def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
+def _verify_db_url_matches_fr(
+    work_dir: str,
+    fr_text: str,
+    oracle_involved: bool | None = None,
+) -> tuple[bool, str]:
     """S79-C: detecta inconsistencia entre la BD solicitada en el FR y la URL generada en database.py.
 
     Ej: FR menciona PostgreSQL pero database.py tiene oracle+oracledb://...
     Retorna (ok, feedback). Si ok=True, URL es coherente con el FR.
+
+    S108-A: oracle_involved (del fr_analysis resuelto por deepseek-r1:14b) tiene prioridad
+    sobre el keyword matching crudo del FR. Elimina el falso positivo con "NO Oracle".
     """
     if not work_dir or not fr_text:
         return True, ""
@@ -2099,7 +2115,14 @@ def _verify_db_url_matches_fr(work_dir: str, fr_text: str) -> tuple[bool, str]:
     _fr_wants_postgres = any(
         kw in _fr_lower for kw in ("postgresql", "postgres", "psycopg")
     )
-    _fr_wants_oracle = any(kw in _fr_lower for kw in ("oracle", "oracledb", "xepdb"))
+    if oracle_involved is not None:
+        # S108-A: usar decisión del analizador semántico (deepseek-r1:14b)
+        _fr_wants_oracle = oracle_involved
+    else:
+        # Fallback si oracle_involved no disponible en estado
+        _fr_wants_oracle = any(
+            kw in _fr_lower for kw in ("oracle", "oracledb", "xepdb")
+        )
 
     _has_oracle_url = "oracle" in _content.lower() or "oracledb" in _content.lower()
     _has_postgres_url = (
@@ -7024,10 +7047,16 @@ async def run_tests(state: OVDState) -> dict:
     # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR
     # S80-B: sin restricción retry_round==0 — correr en todas las rondas
     # S81-B: verificar independientemente del runner (runner=None no debe evadir la verificación)
+    # S108-A: pasar oracle_involved del fr_analysis para evitar falso positivo con "NO Oracle"
     _db_url_feedback_s79c = ""
     if work_dir:
         _fr_text = state.get("feature_request", "") or ""
-        _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(work_dir, _fr_text)
+        _oracle_involved_state = state.get("fr_analysis", {}).get(
+            "oracle_involved", None
+        )
+        _db_ok, _db_url_feedback_s79c = _verify_db_url_matches_fr(
+            work_dir, _fr_text, oracle_involved=_oracle_involved_state
+        )
         if not _db_ok:
             log.warning(
                 "run_tests: S79-C DATABASE_URL inconsistente con FR — agregando al retry_feedback"
@@ -7618,6 +7647,57 @@ def _build_module_contracts(agent_results: list[dict]) -> str:
     )
 
 
+def _classify_pytest_failures(output: str) -> dict[str, list[str]]:
+    """S108-D: clasifica errores de pytest por tipo para feedback diferenciado en retries."""
+    import re as _re
+
+    return {
+        "import_errors": _re.findall(
+            r"((?:ModuleNotFoundError|ImportError)[^\n]+)", output
+        ),
+        "type_errors": _re.findall(r"((?:TypeError|ValidationError)[^\n]+)", output),
+        "name_errors": _re.findall(r"((?:AttributeError|NameError)[^\n]+)", output),
+        "assertion_errors": _re.findall(r"((?:AssertionError)[^\n]+)", output),
+        "fixture_errors": _re.findall(r"(fixture\s+'[^']+'\s+not\s+found)", output),
+    }
+
+
+def _build_typed_retry_feedback(classified: dict[str, list[str]]) -> str:
+    """S108-D: construye feedback de retry con instrucción específica por tipo de error."""
+    sections: list[str] = []
+
+    if classified.get("type_errors"):
+        sections.append(
+            "## ERRORES DE TIPO — corregir PRIMERO\n"
+            "- Si ves `Date` de SQLAlchemy en un schema Pydantic → reemplazar por "
+            "`from datetime import date` y usar `date` como tipo de anotación.\n"
+            "- Si ves `DateTime` de SQLAlchemy → `from datetime import datetime`.\n"
+            f"Errores: {classified['type_errors'][:3]}"
+        )
+    if classified.get("import_errors"):
+        sections.append(
+            "## ERRORES DE IMPORT\n"
+            "- Verificar que el módulo importado existe en el workspace.\n"
+            "- Verificar que el nombre de la función coincide exactamente con services.py.\n"
+            f"Errores: {classified['import_errors'][:3]}"
+        )
+    if classified.get("name_errors"):
+        sections.append(
+            "## ERRORES DE NOMBRE (naming mismatch)\n"
+            "- Consultar el Architecture Contract VINCULANTE al inicio de este mensaje.\n"
+            "- NUNCA renombrar funciones entre services.py, router.py y tests.\n"
+            f"Errores: {classified['name_errors'][:3]}"
+        )
+    if classified.get("fixture_errors"):
+        sections.append(
+            "## ERRORES DE FIXTURE\n"
+            "- Verificar que conftest.py define el fixture mencionado.\n"
+            f"Errores: {classified['fixture_errors'][:3]}"
+        )
+
+    return "\n\n".join(sections)
+
+
 def update_test_retry(state: OVDState) -> dict | Command:
     """S22 — Incrementa el contador de retries de tests e inyecta feedback al retry loop."""
     tr = state.get("test_results", {})
@@ -7719,6 +7799,10 @@ def update_test_retry(state: OVDState) -> dict | Command:
             "update_test_retry: S53-C contrato de módulos inyectado en retry_feedback"
         )
 
+    # S108-D: clasificar tipos de fallo para feedback diferenciado
+    _classified = _classify_pytest_failures(test_output)
+    _typed_feedback = _build_typed_retry_feedback(_classified)
+
     # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
     _runner_for_msg = tr.get("runner", "")
     new_feedback = (
@@ -7727,6 +7811,7 @@ def update_test_retry(state: OVDState) -> dict | Command:
         f"runner: {tr.get('runner', '?')}\n"
         + module_contract_hint  # S53-C
         + (f"\n{duplicate_hint}\n" if duplicate_hint else "")  # S42-D
+        + (f"\n{_typed_feedback}\n\n" if _typed_feedback else "")  # S108-D
         + failed_block_section
         + output_section
         + "Corregir SOLO la implementación para que los tests pasen."
