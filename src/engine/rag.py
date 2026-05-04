@@ -335,10 +335,14 @@ def clear_project_chunks(project_id: str) -> int:
     Retorna el número de chunks eliminados. Usado por rag_bootstrap.py antes
     de un re-bootstrap completo para evitar duplicados obsoletos.
     """
-    db_url = _get_connection_string()
+    # psycopg3 usa postgresql:// nativo — NO el formato postgresql+psycopg2:// de SQLAlchemy
+    db_url = _DATABASE_URL
     if not db_url:
         log.warning("rag.clear_project_chunks: DATABASE_URL no definida")
         return 0
+    # Normalizar postgres:// → postgresql:// para psycopg3
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
     try:
         import psycopg
 
