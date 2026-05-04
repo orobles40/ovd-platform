@@ -165,6 +165,10 @@ El agente backend copiará el nombre exacto de la task description — si usas e
 ❌ PROHIBIDO en task descriptions: `validar_rut`, `calcular_imc`, `crear_contrato`, `es_primo`
 ✅ CORRECTO: `validate_rut`, `calculate_bmi`, `create_contract`, `is_prime`
 
+[S106-P2] NOMBRE CANÓNICO OBLIGATORIO: `def validate_rut(rut: str) -> bool:` en `src/utils/rut_validator.py`.
+❌ PROHIBIDO: `validate_rut_format`, `rut_is_valid`, `check_rut`, `is_valid_rut`, `validar_rut_formato`.
+Si el agente o los tests usan `validate_rut_format`, fallará con ImportError — el único nombre válido es `validate_rut`.
+
 Las descripciones y comentarios pueden estar en español — los **nombres de código** deben ser en inglés.
 
 ---
@@ -326,6 +330,49 @@ Un modelo desalineado causa `OperationalError: column does not exist` en runtime
 
 > Toda tarea de `models.py` en el SDD DEBE listar la correspondencia exacta SQL→ORM.
 > Sin esta tabla, el agente backend puede inventar nombres que no existen en el DDL.
+
+## Schemas Pydantic — OBLIGATORIO en models.py (S106-P1)
+
+Cuando el stack incluye **FastAPI**, la tarea de `models.py` DEBE generar **dos capas** en el mismo archivo:
+
+1. **Clases ORM** (SQLAlchemy) — para leer/escribir en la BD
+2. **Schemas Pydantic** — para validar JSON de entrada/salida en la API
+
+**Regla:** Por cada entidad del dominio (ej: `Contrato`, `Beneficio`, `User`), el agente backend DEBE incluir en `models.py`:
+
+```python
+# ORM
+class ContratoORM(Base):
+    __tablename__ = "contratos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ...
+
+# Pydantic schemas — OBLIGATORIO con FastAPI
+class ContratoCreate(BaseModel):
+    rut_contratista: str
+    ...
+
+class ContratoUpdate(BaseModel):
+    ...
+
+class ContratoResponse(BaseModel):
+    id: int
+    ...
+    model_config = ConfigDict(from_attributes=True)
+```
+
+**Instrucción OBLIGATORIA (S106-P1):** Al escribir la task de `models.py`, incluir en la descripción:
+
+```
+[S106-P1] SCHEMAS PYDANTIC OBLIGATORIOS: además de las clases ORM, incluir en models.py:
+- class {Entidad}Create(BaseModel)
+- class {Entidad}Update(BaseModel)
+- class {Entidad}Response(BaseModel)
+por cada entidad del dominio. Sin estos schemas, main.py y los tests no pueden importarlos.
+```
+
+> Sin los schemas Pydantic, `main.py` falla con `ImportError: cannot import name 'ContratoCreate'`
+> y los tests no pueden instanciar datos de prueba. Es la causa más frecuente de QA=0.
 
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto

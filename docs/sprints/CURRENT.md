@@ -1,22 +1,26 @@
-# Sprint activo — S102
+# Sprint activo — S106 (completado) / Validación pendiente
 
-> Última actualización: 2026-04-29 | Rama: `dev`
+> Última actualización: 2026-05-04 | Rama: `dev`
 > Skills Fase 1 implementados: session-start, session-close, run-tests, pre-push
 
 ## Estado del ciclo de validación
 
-| Ciclo | Sprint | QA | Security | Duración | Notas |
-|-------|--------|----|----------|----------|-------|
-| 1b359097 | S101 | **90** ✅ | 100 | 10m 41s | Primer QA PASS histórico |
-| 12c71de5 | S100 | 65 | 100 | 21m 1s | — |
-| S99 | S99 | 60 | 85 | 18m | — |
+| Ciclo | Sprint | QA | Duración | Notas |
+|-------|--------|----|----------|-------|
+| 9b9fd5cb | S104/S105 (engine) | — | — | 1801 unit tests PASS |
+| 69ba0b13 | S105 | **40** ❌ | 21m 49s | Naming mismatches + RAG Oracle |
+| 078f18ca | S104 | **52** ❌ | 27m 51s | 2 retries |
+| d2d92f15 | S103 | **90** ✅ | 10m 4s | 0 retries |
 
-**Hito S101:** QA 90/100 — primera vez `qa_passed: true` en ciclo Oracle fullstack.
+**S106 completado (2026-05-04):**
+- P1: Auto-generación schemas Pydantic (Create/Update/Response) en type contract
+- P2: Prohibición `validate_rut_format` en template + auto-corrección en disco
+- P3: Filtro infra Oracle (`xepdb1`, `:1521`, etc.) en `_strip_db_restrictions()`
+- P4: Guard devops en `_fix_sdd_agent_assignments()` — no reasignar sin output_file
+- P5: `_calc_naming_mismatch_penalty()` — -2 pts/mismatch en qa_review (S62-B)
+- P6: Auto-añadir `list_{entity}s(db: Session)` en type contract para service.py
 
-**Bloqueadores actuales S102:**
-- `contracts/router.py` importa `service.py` inexistente con `try/except: pass` (GAP-S101-1)
-- SDD tasks sin `output_file` → frontend no se genera (GAP-S101-2)
-- `database.py` DATABASE_URL hardcodeada — S101-C no activó (engine sin reiniciar)
+**Próximo paso:** Ciclo validación S106 — target QA ≥ 80
 
 ---
 

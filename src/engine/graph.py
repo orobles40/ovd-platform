@@ -1139,6 +1139,19 @@ _DB_RESTRICTION_KEYWORDS = (
     "oracle_home",
 )
 
+# S106-P3: strings de infraestructura Oracle que no siempre contienen la palabra "oracle"
+# pero son inequívocamente Oracle-específicos — filtrar cuando oracle_involved=False.
+_ORACLE_INFRA_KEYWORDS = (
+    "xepdb1",
+    ":1521",
+    "oracle+cx_oracle",
+    "oracle+oracledb",
+    "dockerfile.oracle",
+    "oracle-xe",
+    "oracle/database",
+    "thin_mode",
+)
+
 # S97-D: BDs que pueden aparecer explícitamente en la FR
 _BD_KEYWORDS_EXPLICIT: dict[str, str] = {
     "postgresql": "postgresql",
@@ -1181,6 +1194,13 @@ def _strip_db_restrictions(project_ctx: str, oracle_involved: bool = False) -> s
         if any(kw in lower for kw in _DB_RESTRICTION_KEYWORDS):
             log.warning(
                 "S56-C: omitiendo restricción de BD del project_ctx (oracle_involved=False): %s",
+                line.strip()[:80],
+            )
+            continue
+        # S106-P3: también filtrar strings de infraestructura Oracle inequívoca
+        if not oracle_involved and any(kw in lower for kw in _ORACLE_INFRA_KEYWORDS):
+            log.warning(
+                "S106-P3: omitiendo infra Oracle del context (oracle_involved=False): %s",
                 line.strip()[:80],
             )
             continue
@@ -1335,6 +1355,10 @@ def _fix_sdd_agent_assignments(tasks: list[dict]) -> list[dict]:
         # S103-P3: "frontend" eliminado de keywords — es sustantivo genérico que aparece en
         # docker-compose y configs devops como nombre de servicio, causando falsos positivos
         # (ciclo S102: CyclesExport.tsx generado en vez de docker-compose.yml).
+        # S106-P4: si el agente ya es devops y no tiene output_file, no reasignar — el agente
+        # sabe lo que hace (ej: docker-compose sin output_file asignado por S104-D).
+        if not output_file and current_agent == "devops":
+            continue
         if not output_file:
             _kw_text = " ".join(
                 [
@@ -2961,6 +2985,20 @@ _S103_BUILTINS = frozenset(
 )
 
 
+_S106_CLASS_IN_DESC_RE = _re_top.compile(
+    r"\bclass\s+([A-Z]\w+?)(?:ORM|Model|DB)?\s*[\(:]"
+)
+_S106_PASCAL_IN_DESC_RE = _re_top.compile(r"\b([A-Z][a-z]\w{2,})(?:ORM|Model|DB)\b")
+_S106_PYDANTIC_SUFFIXES = ("Create", "Update", "Response")
+_S106_NON_ENTITIES = frozenset(
+    "Base Column Integer String Float Boolean Date DateTime Text ForeignKey Mapped "
+    "Optional List Dict Union FastAPI SQLAlchemy PostgreSQL Oracle Depends Session "
+    "Router HTTPException Request Form File Schema Service Repository Manager "
+    "Controller Handler Helper Utils Config Settings Database Connection Engine "
+    "Metadata Create Update Delete Read Get Post Put Patch".split()
+)
+
+
 def _build_type_contract(sdd: dict) -> str:
     """S103-P1: tabla de nombres normalizados extraída del SDD para coordinación inter-agente.
 
@@ -2968,6 +3006,9 @@ def _build_type_contract(sdd: dict) -> str:
     firmas en backticks + listas de funciones) y los inyecta en cada prompt de agente.
     Previene divergencias de nombres entre agentes (ej: list_contracts inventada en tests
     pero ausente en services.py).
+
+    S106-P1: auto-genera schemas Pydantic (Create/Update/Response) para cada clase ORM
+    detectada en tareas de models.py, y funciones list_{entity}s para services.py.
     """
     by_module: dict[str, list[tuple[str, bool]]] = {}  # path → [(signature, is_s72a)]
 
@@ -3024,6 +3065,79 @@ def _build_type_contract(sdd: dict) -> str:
                 ):
                     entries.append((f"def {name}(...)", False))
                     seen_names.add(name)
+
+    # S106-P1: escanear tasks de models.py para detectar entidades ORM y
+    # auto-añadir schemas Pydantic canónicos (Create/Update/Response) al type contract.
+    # Funciona independientemente de la extracción S103-P1 anterior — no requiere
+    # que las clases ORM vengan en formato backtick/S72-A.
+    for task in sdd.get("tasks", []):
+        output_file = task.get("output_file", task.get("file", ""))
+        if not output_file.endswith("models.py"):
+            continue
+        raw = task.get("description", "") + " " + task.get("title", "")
+        # Recolectar nombres base de entidades — prioridad: class Xxx( > XxxORM literal
+        entity_names: set[str] = set()
+        for m in _S106_CLASS_IN_DESC_RE.finditer(raw):
+            entity_names.add(m.group(1))
+        for m in _S106_PASCAL_IN_DESC_RE.finditer(raw):
+            entity_names.add(m.group(1))
+        if not entity_names:
+            continue
+        entries = by_module.setdefault(output_file, [])
+        seen_names_mod = {
+            _re_top.match(r"(?:def|class)\s+(\w+)", sig).group(1)
+            for sig, _ in entries
+            if _re_top.match(r"(?:def|class)\s+(\w+)", sig)
+        }
+        for base_name in sorted(entity_names):
+            if base_name in _S106_NON_ENTITIES or base_name[0].islower():
+                continue
+            # ignorar si ya es un schema Pydantic (ej: ContratoCreate no genera ContratoCreateCreate)
+            if any(base_name.endswith(s) for s in _S106_PYDANTIC_SUFFIXES):
+                continue
+            for suffix in _S106_PYDANTIC_SUFFIXES:
+                schema_name = f"{base_name}{suffix}"
+                if schema_name not in seen_names_mod:
+                    entries.append((f"class {schema_name}(BaseModel)", True))
+                    seen_names_mod.add(schema_name)
+
+    # S106-P6: auto-añadir list_{entity}s(db: Session) para entidades detectadas en
+    # tareas de service.py / services.py — previene el patrón de test que importa
+    # list_contratos() antes de que el agente la defina explícitamente.
+    for task in sdd.get("tasks", []):
+        _svc_file = task.get("output_file", task.get("file", ""))
+        if not _svc_file or not _svc_file.endswith(("service.py", "services.py")):
+            continue
+        _svc_raw = task.get("description", "") + " " + task.get("title", "")
+        _svc_entities: set[str] = set()
+        for _m in _S106_CLASS_IN_DESC_RE.finditer(_svc_raw):
+            _svc_entities.add(_m.group(1))
+        for _m in _S106_PASCAL_IN_DESC_RE.finditer(_svc_raw):
+            _svc_entities.add(_m.group(1))
+        if not _svc_entities:
+            continue
+        _svc_entries = by_module.setdefault(_svc_file, [])
+        _seen_svc = {
+            _re_top.match(r"(?:def|class)\s+(\w+)", sig).group(1)
+            for sig, _ in _svc_entries
+            if _re_top.match(r"(?:def|class)\s+(\w+)", sig)
+        }
+        for _base in sorted(_svc_entities):
+            if _base in _S106_NON_ENTITIES or _base[0].islower():
+                continue
+            if any(_base.endswith(s) for s in _S106_PYDANTIC_SUFFIXES):
+                continue
+            # Strip ORM/Model/DB suffix para nombre de función
+            _clean = _base
+            for _orm_sfx in ("ORM", "Model", "DB"):
+                if _clean.endswith(_orm_sfx):
+                    _clean = _clean[: -len(_orm_sfx)]
+                    break
+            _entity_snake = _clean[0].lower() + _clean[1:]
+            _func_name = f"list_{_entity_snake}s"
+            if _func_name not in _seen_svc:
+                _svc_entries.append((f"def {_func_name}(db: Session)", False))
+                _seen_svc.add(_func_name)
 
     non_empty = {k: v for k, v in by_module.items() if v}
     if not non_empty:
@@ -5038,6 +5152,20 @@ async def qa_review(state: OVDState) -> dict:
     _test_retry_count = state.get("test_retry_count", 0)
     _qa_retry_count = state.get("qa_retry_count", 0)
     if _test_retry_count > 0 and _qa_retry_count == 0 and _prev_qa.get("score", 0) > 0:
+        # S106-P5: penalizar naming mismatches detectados por S103-P2 antes de devolver QA reutilizado
+        _last_err = state.get("last_test_error", "") or ""
+        _penalty = _calc_naming_mismatch_penalty(_last_err)
+        if _penalty > 0:
+            _raw_score = _prev_qa.get("score", 0)
+            _adj_score = max(0, _raw_score - _penalty)
+            _adj_qa = dict(_prev_qa, score=_adj_score, passed=_adj_score >= 70)
+            log.warning(
+                "qa_review: S106-P5 penalidad naming_mismatch: -%d pts (score: %d → %d)",
+                _penalty,
+                _raw_score,
+                _adj_score,
+            )
+            return {"qa_result": _adj_qa, "qa_passed": _adj_qa.get("passed", True)}
         log.info(
             "qa_review: S62-B test_retry_count=%d, qa_retry_count=%d — reutilizando QA previo (score=%d)",
             _test_retry_count,
@@ -5491,6 +5619,17 @@ def _check_fastapi_route_ordering(directory: str) -> list[str]:
 # S103-P2 — Helper: validación de nombres importados dentro de módulos locales
 # ---------------------------------------------------------------------------
 
+# S106-P2: aliases conocidos → nombre canónico. Cuando se detecta un import de un alias,
+# se auto-corrige el archivo en disco para evitar ImportError en el siguiente test run.
+_S106_P2_ALIASES: dict[str, str] = {
+    "validate_rut_format": "validate_rut",
+    "rut_is_valid": "validate_rut",
+    "check_rut": "validate_rut",
+    "is_valid_rut": "validate_rut",
+    "validar_rut": "validate_rut",
+    "validar_rut_formato": "validate_rut",
+}
+
 
 def _check_undefined_import_names(
     agent_results: list[dict],
@@ -5584,6 +5723,28 @@ def _check_undefined_import_names(
                 if name == "*":
                     continue
                 if name not in defined_in_mod:
+                    # S106-P2: si el nombre es un alias conocido y el canónico existe,
+                    # auto-corregir el archivo en disco.
+                    canonical = _S106_P2_ALIASES.get(name)
+                    if canonical and canonical in defined_in_mod:
+                        try:
+                            _src_text = full_path.read_text(
+                                encoding="utf-8", errors="replace"
+                            )
+                            _fixed = _src_text.replace(
+                                f"import {name}", f"import {canonical}"
+                            )
+                            if _fixed != _src_text:
+                                full_path.write_text(_fixed, encoding="utf-8")
+                                log.warning(
+                                    "[S106-P2] auto-corrección: %s: %s → %s",
+                                    path,
+                                    name,
+                                    canonical,
+                                )
+                        except OSError:
+                            pass
+                        continue  # corregido — no reportar como undefined
                     undefined.append(
                         f"  {path}: from {target_mod} import {name}"
                         f"  ← '{name}' no definido en {target_mod}"
@@ -5669,6 +5830,22 @@ def _classify_test_error(output: str) -> str:
     if "assertionerror" in lo:
         return "assertion_error"
     return "generic"
+
+
+def _calc_naming_mismatch_penalty(last_test_error: str) -> int:
+    """S106-P5: calcula la penalidad QA por naming mismatches detectados por S103-P2.
+
+    Retorna el número de puntos a restar al QA score (0 si no hay mismatches).
+    Máximo: 30 puntos. Cada mismatch distinto cuesta 2 pts.
+    """
+    if not last_test_error or "[S103-P2]" not in last_test_error:
+        return 0
+    mismatch_lines = [
+        line
+        for line in last_test_error.splitlines()
+        if "← '" in line and "no definido" in line
+    ]
+    return min(len(mismatch_lines) * 2, 30)
 
 
 # ---------------------------------------------------------------------------
