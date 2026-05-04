@@ -8,46 +8,45 @@
 
 ## Estado actual
 
-- **Sprint activo:** S106 (completado) / Ciclo validación pendiente
+- **Sprint activo:** S107 (completado) / Ciclo validación pendiente
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S106
-- **Tests:** 1801 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+- **Sprints completados:** S3 → S107
+- **Tests:** 1848 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
   *(5 pre-existentes siguen fallando: test_s31, test_s39, test_s47, test_s55, test_s63b)*
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-05-04 — S106)
+## Última sesión (2026-05-04 — S107)
 
-**Completado (S106-P1):**
-- Auto-generación schemas Pydantic (Create/Update/Response) en `_build_type_contract()` desde clases ORM en models.py
-- `_S106_CLASS_IN_DESC_RE` + `_S106_PASCAL_IN_DESC_RE` — detección de entidades ORM en task descriptions
-- `system_sdd.md` — nueva sección "Schemas Pydantic — OBLIGATORIO en models.py (S106-P1)"
+**Completado (S107-P1) — Architecture Gate:**
+- Nodo `generate_architecture_contract` — determinístico, corre DESPUÉS de `request_approval` y ANTES de `route_agents`
+- Extrae nombres canónicos de funciones del SDD (service.py tasks) y los formatea como JSON `[ARCHITECTURE CONTRACT — VINCULANTE]`
+- Inyectado al INICIO del HumanMessage de cada agente (JSON → el modelo lo procesa como datos, no como texto)
+- `route_after_approval` ahora devuelve `"generate_architecture_contract"` en lugar de `"route_agents"`
 
-**Completado (S106-P2):**
-- `system_sdd.md` — [S106-P2] prohíbe `validate_rut_format`, marca `validate_rut` como nombre canónico
-- `_S106_P2_ALIASES` dict + auto-corrección en disco en `_check_undefined_import_names()`
-- Cuando se detecta `validate_rut_format` importado y `validate_rut` existe → reescribe el archivo
+**Completado (S107-P2) — Oracle → PostgreSQL postprocesador:**
+- `postprocess_yaml_file(content, rel_path, oracle_involved)` — nuevo entry point para YAML
+- `_fix_oracle_in_docker_compose()` — reemplaza `gvenzl/oracle-xe`, `oracle/database` por `postgres:16-alpine`
+- `system_devops.md` — sección RESTRICCIÓN ABSOLUTA con imagen obligatoria y ejemplo correcto
+- `_write_artifacts` + `_run_agent_with_tools` pasan `oracle_involved` desde `fr_analysis`
 
-**Completado (S106-P3):**
-- `_ORACLE_INFRA_KEYWORDS` — filtra `xepdb1`, `:1521`, `oracle+cx_oracle`, `oracle-xe`, etc.
-- `_strip_db_restrictions()` extendido — aplica filtro infra Oracle cuando `oracle_involved=False`
+**Completado (S107-P3) — Sync service imports:**
+- `sync_service_imports(work_dir)` — AST walk post-fan-out, corrige imports de router.py y test_*.py
+- `_build_service_alias_map()` — mapea `deactivate_X→delete_X`, `get_Xs→list_Xs`, `calcular_X→calculate_X`
+- Llamado en `run_tests` antes de pytest
 
-**Completado (S106-P4):**
-- Guard en `_fix_sdd_agent_assignments()`: si `agent=devops` y no hay `output_file`, no aplica S102-B keywords
-- Previene que docker-compose sin output_file sea reasignado a frontend por mencionar "dashboard"
+**Completado (S107-P4) — Naming table en templates:**
+- `system_backend_python.md` — tabla REGLA DE NAMING CONSISTENTE: deactivate_X canónico, prohibe delete_X/remove_X
 
-**Completado (S106-P5):**
-- `_calc_naming_mismatch_penalty(last_test_error) -> int` — -2 pts por mismatch S103-P2, máx 30
-- Integrado en bloque S62-B de `qa_review` — ajusta score antes del early return
+**Completado (S107-P5) — QA verifica contract:**
+- En `qa_review`: parsea architecture contract JSON, verifica AST que funciones canónicas existen en services.py
+- Penalización -5pt por función ausente, lista de violaciones inyectada en QA HumanMessage
 
-**Completado (S106-P6):**
-- `_build_type_contract()` — escanea tareas de service.py/services.py y auto-añade `list_{entity}s(db: Session)`
-- Strip de sufijos ORM/Model/DB para nombre de función
+**Suite:** test_s107.py — 47/47 PASS
+**Total:** **1848 passed** (0 regresiones)
 
-**Suite:** test_s106.py — 43/43 PASS (15 P1 + 5 P2A + 3 P2B + 5 P3 + 3 P4 + 6 P5 + 6 P6)
-**Total:** **1801 passed** (0 regresiones)
-
+**Ciclo validación S106** (pendiente lanzar con S107)
 **Ciclo validación S104** (078f18ca): QA **52/100 ❌** (2 retries), 27m 51s
 **Ciclo validación S105** (69ba0b13): QA **40/100 ❌** (2 retries), 21m 49s
 
@@ -55,16 +54,12 @@
 
 ## Próxima sesión
 
-**Primera tarea: Ciclo validación S106**
+**Primera tarea: Ciclo validación S107**
 - Limpiar workspace `/Users/omarrobles/Workspace/mis-entregas/contratos-beneficios/` y lanzar ciclo fresco
 - Target: QA ≥ 80, 0 naming mismatches, docker-compose → devops con PostgreSQL (no Oracle XE)
-- Verificar que `validate_rut` (no `validate_rut_format`) se usa en todo el código generado
-- Si QA < 70: analizar causa raíz y proponer S107
-
-**Posibles S107 si QA sigue bajo:**
-- S107-P1: Inyección del type contract más temprano (antes del SDD, no solo en execute_agents)
-- S107-P2: Validación de schemas Pydantic en QA review (verificar que Create/Update/Response existen en models.py)
-- S107-P3: RAG filter by embedding score para chunks Oracle (threshold más alto para infraestructura)
+- Verificar que architecture contract se inyecta en los agentes (log `[S107-P1]`)
+- Verificar que sync_service_imports corrige imports antes de pytest (log `[S107-P3]`)
+- Generar `INFORME_PRUEBA_S107.md` con métricas: QA score, naming errors, docker image
 
 ---
 
@@ -107,7 +102,7 @@
 | S103 | d2d92f15 | **90** (PASS) | 0 retries | 10m 4s |
 | S104 | 078f18ca | **52** | P2: 2 retries | 27m 51s |
 | S105 | 69ba0b13 | **40** | P2: 2 retries | 21m 49s |
-| S106 | — | pendiente | — | — |
+| S107 | — | pendiente | — | — |
 
 ---
 
