@@ -330,3 +330,57 @@ def test_frontend_template_requires_hooks():
     content = open(template_path, encoding="utf-8").read()
     assert "hooks" in content.lower()
     assert "use[Entidad]" in content or "use" in content
+
+
+# ---------------------------------------------------------------------------
+# S111-B (ruta tool-calling): postprocessor aplicado a archivo ya en disco
+# ---------------------------------------------------------------------------
+
+
+def test_inject_cors_applied_to_disk_file(tmp_path):
+    """Simula la ruta tool-calling: main.py ya en disco sin CORS → debe quedar con CORS."""
+    main_py = tmp_path / "src" / "main.py"
+    main_py.parent.mkdir(parents=True)
+    original = (
+        "from fastapi import FastAPI\n"
+        "from src.auth.router import router as auth_router\n\n"
+        "app = FastAPI(title='Turnos')\n"
+        "app.include_router(auth_router, prefix='/auth')\n"
+    )
+    main_py.write_text(original, encoding="utf-8")
+
+    # Simular lo que el nuevo bloque en _run_agent_with_tools hace
+    from code_postprocessor import postprocess_python_file
+
+    processed = postprocess_python_file(original, "src/main.py", work_dir=str(tmp_path))
+    main_py.write_text(processed, encoding="utf-8")
+
+    result = main_py.read_text(encoding="utf-8")
+    assert "CORSMiddleware" in result
+    assert "from fastapi.middleware.cors import CORSMiddleware" in result
+
+
+# ---------------------------------------------------------------------------
+# S111-A (ruta tool-calling): ensure_frontend_scaffold sin guard "frontend" agent
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_frontend_scaffold_runs_with_src_components_tsx(tmp_path):
+    """tsx en src/components/ — sin package.json — scaffold debe crearse en raíz."""
+    components = tmp_path / "src" / "components"
+    components.mkdir(parents=True)
+    (components / "LoginForm.tsx").write_text(
+        "export default function LoginForm() { return null }", encoding="utf-8"
+    )
+    pages = tmp_path / "src" / "pages"
+    pages.mkdir(parents=True)
+    (pages / "Dashboard.tsx").write_text(
+        "export default function Dashboard() { return null }", encoding="utf-8"
+    )
+
+    created = ensure_frontend_scaffold(str(tmp_path))
+    assert any("package.json" in p for p in created)
+    assert (tmp_path / "package.json").exists()
+    assert (tmp_path / "vite.config.ts").exists()
+    assert (tmp_path / "index.html").exists()
+    assert (tmp_path / "src" / "main.tsx").exists()

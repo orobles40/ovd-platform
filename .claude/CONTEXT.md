@@ -8,7 +8,7 @@
 
 ## Estado actual
 
-- **Sprint activo:** S111 (completado)
+- **Sprint activo:** S111 (validado)
 - **Rama de trabajo:** `dev`
 - **Sprints completados:** S3 → S111
 - **Tests:** 1908 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
@@ -18,17 +18,19 @@
 
 ---
 
-## Última sesión (2026-05-04 — S111)
+## Última sesión (2026-05-05 — S111 ciclo validación + fix tool-calling bypass)
 
-**S111 — Frontend ejecutable + CORS + ORM safety — COMPLETADO:**
-- S111-A (OVD-FE-001+FE-002): `ensure_frontend_scaffold(work_dir)` en `code_postprocessor.py` — detecta `frontend/` con `.tsx` sin `package.json`, crea automáticamente `package.json`, `vite.config.ts` (Tailwind v4 + `@tailwindcss/vite`), `index.html`, `tsconfig.json/app/node`, `src/main.tsx`, `src/index.css`, `src/vite-env.d.ts`; actualiza v3→v4 si ya existe
-- S111-A: Llamado desde `deliver()` en `graph.py` cuando el agente frontend estuvo presente
-- S111-A: `system_frontend_react.md` actualizado con sección "Scaffolding obligatorio" + hooks de dominio
-- S111-B (OVD-BE-003): `_inject_cors_middleware(content, rel_path)` — inyecta `CORSMiddleware` en `main.py` si falta; template `system_backend_python.md` actualizado con nota S111-B obligatoria
-- S111-C (OVD-BE-004): `_fix_back_populates_orphan(content, rel_path, work_dir)` — elimina `, back_populates='X'` cuando `X` no existe en ningún `models.py` del workspace
-- S111-D (OVD-BE-005): template anti-stubs extendido a todos los routers (no solo auth)
-- Tests: `test_s111.py` — 24/24 PASS | Suite: **1908 passed** (0 regresiones)
-- Ciclo de validación S111 pendiente (lanzar con `/session-start` próxima sesión)
+**S111 ciclo validación — COMPLETADO:**
+- Fix tool-calling bypass: en `_run_agent_with_tools` (graph.py) — después de `_build_artifacts_from_files`, aplica `postprocess_python_file`/`postprocess_yaml_file` a cada `.py`/`.yml` escrito via tool calls. Antes, solo `_write_artifacts` (output-parsing) aplicaba los postprocessadores.
+- Fix S111-A `deliver()`: se eliminó el guard `any(r.get("agent") == "frontend" ...)` — `ensure_frontend_scaffold` se llama siempre que haya `directory`; la función devuelve `[]` si no detecta tsx.
+- 2 tests nuevos en `test_s111.py`: `test_inject_cors_applied_to_disk_file` + `test_ensure_frontend_scaffold_runs_with_src_components_tsx` → **26/26 PASS**
+- Ciclo validación thread `4721d06e` (2026-05-05): **S111-B ✅** CORSMiddleware inyectado en `src/main.py` a las 09:09. **S111-A ✅** 9 archivos scaffold creados (package.json, vite.config.ts Tailwind v4, index.html, src/main.tsx…). **S111-C ✅** sin orphan back_populates. QA: 50/100 (tests fallidos — independiente de S111).
+- Bug `auto_approve`: diagnosticado — el campo SÍ está en el checkpoint (confirmado en values_keys S48-D), el `/state` endpoint no lo expone. `request_approval` lo lee correctamente (log: `auto_approve=True` a las 09:08).
+- Engine requiere `.env` cargado al inicio (no hereda de nohup sin source) — arrancar con `python -c "import dotenv; dotenv.load_dotenv(); os.execv(uvicorn…)"`.
+
+---
+
+## Última sesión (2026-05-04 — S111)
 
 ---
 

@@ -529,3 +529,39 @@ RAG no actualizado — engine DOWN. Re-indexar cuando el engine esté activo (gr
 
 ### Notas
 Fricción menor: `re` no accessible directamente en graph.py (importado como `_re_top`) causó 5 fallos en TestPytestFailureClassifier — corregido con import local. Misma causa en analyze_fr (S108-A) — corregido con `_re_top`. Flujo de sesión fue continuación directa de sesión anterior compactada (sin session-active.md disponible).
+
+## S013 | 2026-05-04
+
+| Métrica | Valor |
+|---|---|
+| Inicio | — (sesión continuada desde contexto compactado) |
+| Cierre | ~fin de día |
+| Duración | ~2h estimado |
+| Sprint | S111 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start (implícito — sesión continuada)
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (auto-fix aplicado a 2 archivos)
+- [x] pytest unit: 1908 passed
+- [x] OVD conventions: PASS (sin nuevos os.environ.get en código S111)
+- Push ejecutado: NO (pendiente confirmación) | Fallos CI post-push: 0
+
+### Completado hoy
+- S111-A: ensure_frontend_scaffold() — crea package.json, vite.config.ts (Tailwind v4), index.html, tsconfig, src/main.tsx si el agente frontend no los generó; llamado desde deliver() en graph.py
+- S111-A: system_frontend_react.md actualizado con sección "Scaffolding obligatorio" + hooks de dominio
+- S111-B: _inject_cors_middleware() — inyecta CORSMiddleware en main.py si falta; template system_backend_python.md actualizado
+- S111-C: _fix_back_populates_orphan() — strip back_populates='X' cuando X no está en ningún models.py del workspace
+- S111-D: regla anti-stubs extendida a todos los routers en system_backend_python.md
+- test_s111.py: 24/24 PASS | Suite total: 1908 PASS (0 regresiones, +22 respecto a S110)
+- Commit: e11d80068
+
+### Notas
+Sesión continuada desde contexto compactado (sin session-active.md). La única fricción menor fue el test test_s79.py::TestS79D que encontraba "async def login(): pass" en el texto de ejemplo de S111-D antes que en la implementación real — corregido cambiando el ejemplo para no incluir esa cadena literal. Decisión técnica: usar Tailwind v4 (@tailwindcss/vite) en el scaffold determinístico ya que el LLM no genera shadcn/ui en la práctica y v4 elimina la necesidad de tailwind.config.ts.

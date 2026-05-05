@@ -4667,6 +4667,31 @@ async def _run_agent_with_tools(
     # Construir artefactos desde archivos escritos via tool calls
     artifacts = _build_artifacts_from_files(written_files, directory)
 
+    # S111-B/C: aplicar postprocessadores a archivos .py/.yml escritos via tool calls
+    # (los que van por _write_artifacts ya los aplican; los de tool calls se saltan)
+    if directory and written_files:
+        import pathlib as _pl
+
+        from code_postprocessor import postprocess_python_file, postprocess_yaml_file
+
+        for _rel in written_files:
+            _abs = _pl.Path(directory) / _rel
+            try:
+                _raw = _abs.read_text(encoding="utf-8")
+                if _rel.endswith(".py"):
+                    _processed = postprocess_python_file(_raw, _rel, work_dir=directory)
+                elif _rel.endswith((".yml", ".yaml")):
+                    _processed = postprocess_yaml_file(
+                        _raw, _rel, oracle_involved=oracle_involved
+                    )
+                else:
+                    continue
+                if _processed != _raw:
+                    _abs.write_text(_processed, encoding="utf-8")
+                    log.info("S111: postprocessor aplicado vía tool-call → %s", _rel)
+            except OSError:
+                pass
+
     # Si no se escribió nada via tools, intentar parsear del output del LLM
     if not artifacts and final_output:
         # S57-D: en rounds de retry, preservar archivos existentes con contenido válido
@@ -9014,8 +9039,9 @@ async def deliver(state: OVDState) -> dict:
             }
         )
 
-    # S111-A: scaffold Vite React TS si el agente frontend no generó package.json
-    if directory and any(r.get("agent") == "frontend" for r in _merged):
+    # S111-A: scaffold Vite React TS si falta package.json
+    # No restringir a agente "frontend" — detect_frontend_root lo decide internamente
+    if directory:
         try:
             from code_postprocessor import ensure_frontend_scaffold
 
