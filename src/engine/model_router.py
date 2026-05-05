@@ -61,6 +61,10 @@ _DEFAULT_OLLAMA_URL = _s.ollama_base_url
 _AGENT_PROVIDER = _s.ovd_agent_provider or _DEFAULT_PROVIDER
 _AGENT_MODEL = _s.ovd_agent_model or _DEFAULT_MODEL
 
+# S112-C7: OVD_ANALYSIS_PROVIDER — provider para roles analyzer/sdd/qa.
+# Vacío → hereda OVD_AGENT_PROVIDER. En DO no hay Ollama → ambos se setean a "claude".
+_ANALYSIS_PROVIDER = _s.ovd_analysis_provider or _AGENT_PROVIDER
+
 # Roles que usan el provider/modelo de agente (no el de análisis)
 _AGENT_ROLES = {"backend", "frontend", "database", "devops", "security_exec"}
 
@@ -324,16 +328,17 @@ async def resolve(
     if config is None:
         # Agentes de implementación usan OVD_AGENT_PROVIDER/OVD_AGENT_MODEL si están configurados.
         # S98-B: OVD_MODEL_{BACKEND,DATABASE,DEVOPS,FRONTEND} permiten override por rol específico.
+        # S112-C7: roles de análisis (analyzer/sdd/qa) usan _ANALYSIS_PROVIDER — en DO no hay Ollama.
         if agent_role in _AGENT_ROLES:
             provider = _AGENT_PROVIDER
             model = _ROLE_MODEL_OVERRIDES.get(agent_role) or _AGENT_MODEL
         else:
-            provider = _DEFAULT_PROVIDER
+            provider = _ANALYSIS_PROVIDER
             model = _ANALYSIS_ROLE_DEFAULTS.get(agent_role, _DEFAULT_MODEL)
         config = ResolvedConfig(
             provider=provider,
             model=model,
-            base_url=_DEFAULT_OLLAMA_URL,
+            base_url=_DEFAULT_OLLAMA_URL if provider == "ollama" else None,
             api_key_env=None,
             extra_instructions=None,
             constraints=None,

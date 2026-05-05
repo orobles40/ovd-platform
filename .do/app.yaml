@@ -5,10 +5,11 @@
 #   doctl apps create --spec .do/app.yaml
 #   doctl apps update <APP_ID> --spec .do/app.yaml
 #
-# Prerequisitos:
-#   1. Managed PostgreSQL creado en DO con extensión pgvector habilitada
-#   2. Dominio ovd.omarrobles.dev apuntando a este App
-#   3. Variables secretas configuradas en el panel DO (ANTHROPIC_API_KEY, etc.)
+# Prerequisitos (Bloque 3 — ejecuta el operador):
+#   1. Secrets configurados en panel DO antes del primer deploy:
+#      ANTHROPIC_API_KEY, OPENAI_API_KEY, OVD_ENGINE_SECRET, JWT_SECRET, OVD_ADMIN_PASSWORD
+#   2. Dominio ovd-platform.codigonet.cloud: CNAME en Route 53 → <APP_URL>.ondigitalocean.app
+#   3. Bootstrap RAG post-deploy (ver D5 en CURRENT.md)
 
 name: ovd-platform
 region: nyc
@@ -24,6 +25,16 @@ services:
       branch: main
       deploy_on_push: true
     http_port: 8001
+    # C10: rutas API explícitas — el engine no tiene ruta raíz.
+    # DO evalúa de más a menos específica; el dashboard captura el resto (/).
+    routes:
+      - path: /health
+      - path: /auth
+      - path: /session
+      - path: /orgs
+      - path: /projects
+      - path: /config
+      - path: /admin
     health_check:
       http_path: /health
       initial_delay_seconds: 60
@@ -37,24 +48,24 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         value: ${db.DATABASE_URL}
-      # NATS — hostname interno del worker en el mismo App
+      # NATS — hostname interno del servicio en el mismo App (C1)
       - key: NATS_URL
         scope: RUN_TIME
         value: nats://ovd-nats:4222
-      # LLM — Claude vía DO GenAI Platform (endpoint compatible Anthropic SDK)
+      # LLM — Claude vía DO GenAI Platform (A4: endpoint compatible Anthropic SDK)
       - key: ANTHROPIC_API_KEY
         scope: RUN_TIME
         type: SECRET
       - key: ANTHROPIC_BASE_URL
         scope: RUN_TIME
-        value: https://api.anthropic.com   # reemplazar por endpoint DO GenAI si disponible
-      # RAG embeddings — BGE-M3 vía DO GenAI Platform (compatible OpenAI SDK)
+        value: https://inference.do-ai.run
+      # RAG embeddings — BGE-M3 vía DO GenAI Platform (A4: compatible OpenAI SDK)
       - key: OPENAI_API_KEY
         scope: RUN_TIME
         type: SECRET
       - key: OPENAI_BASE_URL
         scope: RUN_TIME
-        value: https://api.openai.com      # reemplazar por endpoint DO GenAI
+        value: https://inference.do-ai.run/v1
       - key: OVD_RAG_EMBEDDING_PROVIDER
         scope: RUN_TIME
         value: openai
@@ -65,14 +76,29 @@ services:
       - key: OVD_ENGINE_SECRET
         scope: RUN_TIME
         type: SECRET
-      # CORS — dashboard web desde el mismo dominio
+      # C8: JWT_SECRET — requerido para POST /auth/login (sin esto retorna 500)
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      # C5: Password del admin demo — el entrypoint genera el hash argon2 en startup
+      - key: OVD_ADMIN_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+      # CORS — C6: dominio codigonet.cloud
       - key: OVD_CORS_ORIGINS
         scope: RUN_TIME
-        value: https://ovd.omarrobles.dev,https://ovd-platform-*.ondigitalocean.app
+        value: https://ovd-platform.codigonet.cloud,https://ovd-platform-*.ondigitalocean.app
       # Modelos LLM
       - key: OVD_MODEL
         scope: RUN_TIME
         value: claude-sonnet-4-6
+      - key: OVD_MODEL_CLAUDE
+        scope: RUN_TIME
+        value: claude-sonnet-4-6
+      # C7: provider para agentes de implementación y análisis (no hay Ollama en DO)
+      - key: OVD_AGENT_PROVIDER
+        scope: RUN_TIME
+        value: claude
       - key: OVD_LLM_TIMEOUT_SECS
         scope: RUN_TIME
         value: "300"
@@ -84,10 +110,10 @@ services:
         scope: RUN_TIME
         value: "false"
 
-# ---------------------------------------------------------------------------
-# NATS JetStream — worker interno (sin HTTP público)
-# ---------------------------------------------------------------------------
-workers:
+  # C1: NATS como service (no worker) — los workers en DO App Platform no tienen
+  # hostname interno ni pueden recibir conexiones TCP.
+  # http_port: 8222 → monitoring endpoint (health check DO)
+  # internal_ports: [4222] → client port NATS (solo accesible desde la red interna del App)
   - name: ovd-nats
     image:
       registry_type: DOCKER_HUB
@@ -95,6 +121,16 @@ workers:
       repository: nats
       tag: 2.10-alpine
     run_command: -js -m 8222
+    http_port: 8222
+    internal_ports:
+      - 4222
+    health_check:
+      http_path: /healthz
+      port: 8222
+      initial_delay_seconds: 10
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 3
     instance_count: 1
     instance_size_slug: basic-xxs   # 512 MiB RAM — ~$5/mes, suficiente para NATS
 
@@ -109,26 +145,30 @@ static_sites:
       branch: main
       deploy_on_push: true
     envs:
+      # C6: VITE_API_URL apunta al dominio de producción
       - key: VITE_API_URL
         scope: BUILD_TIME
-        value: https://ovd.omarrobles.dev
+        value: https://ovd-platform.codigonet.cloud
     routes:
       - path: /
 
 # ---------------------------------------------------------------------------
 # PostgreSQL 16 Managed (pgvector incluido nativamente en DO)
+# D2: production: false → single-node ($15/mes). Upgrade a HA sin downtime desde panel DO.
 # ---------------------------------------------------------------------------
 databases:
   - name: db
     engine: PG
     version: "16"
-    production: true
+    production: false
     cluster_name: ovd-postgres-prod
 
 # ---------------------------------------------------------------------------
-# Dominio personalizado
+# Dominio personalizado — C6
+# Prerequisito: CNAME en Route 53 apuntando a <APP>.ondigitalocean.app
+# DO emite TLS automáticamente al validar el CNAME.
 # ---------------------------------------------------------------------------
 domains:
-  - domain: ovd.omarrobles.dev
+  - domain: ovd-platform.codigonet.cloud
     type: PRIMARY
-    zone: omarrobles.dev
+    zone: codigonet.cloud

@@ -55,6 +55,9 @@ class OVDSettings(BaseSettings):
     ovd_vision_enabled: bool = True
     ovd_agent_provider: str = ""
     ovd_agent_model: str = ""
+    # S112-C7: provider para roles de análisis (analyzer, sdd, qa).
+    # Vacío → usa ovd_agent_provider. En DO: setear igual que ovd_agent_provider.
+    ovd_analysis_provider: str = ""
     # S98-B: modelo por rol específico (override sobre ovd_agent_model)
     ovd_model_backend: str = ""
     ovd_model_database: str = ""
