@@ -8,7 +8,7 @@
 
 ## Estado actual
 
-- **Sprint activo:** S111 (validado)
+- **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18)
 - **Rama de trabajo:** `dev`
 - **Sprints completados:** S3 → S111
 - **Tests:** 1908 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
@@ -130,10 +130,13 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S112 — Opciones:**
-1. **Ciclo validación S111**: confirmar que los 5 fixes (scaffolding, CORS, back_populates, stubs, hooks) resuelven los issues documentados en el ciclo c2aa9c6c
-2. **S96-I — OB-02**: indexar artefactos generados (código de cada agente) post-ciclo como doc_type=codebase
-3. **S112 — DigitalOcean deployment gaps** (para demo 2026-05-18)
+**S112 — Despliegue DigitalOcean (demo 2026-05-18)**
+
+Roadmap revisado el 2026-05-05. Ver `docs/sprints/CURRENT.md` para detalle completo.
+
+**Camino crítico:** C1 (NATS prod) → C2 (Alembic audit) → C3/C4 (infra fixes) → D1-D4 (deploy App Platform) → A3/A4 (seguridad + RAG) → S113 (dry run demo)
+
+**Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46 (Design Quality System)
 
 ---
 
