@@ -112,20 +112,32 @@ Cuando el SDD define múltiples módulos (auth, contracts, users, etc.), **DEBES
 
 ```python:src/main.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 # IMPORTA SOLO LOS ROUTERS QUE TÚ GENERAS EN ESTE CICLO
 # Ejemplo si el SDD tiene src/contracts/router.py y src/auth/router.py:
 from src.contracts.router import router as contracts_router
 from src.auth.router import router as auth_router  # solo si auth/router.py está en el SDD
 
 app = FastAPI(title="OVD API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 app.include_router(contracts_router, prefix="/contracts", tags=["contracts"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])  # solo si existe
 ```
 
+> **S111-B — CORS OBLIGATORIO:** `main.py` DEBE incluir `CORSMiddleware`. Sin él, el frontend (puerto 5173/5174) no puede comunicarse con la API. El ejemplo arriba ya lo incluye — NO lo omitas.
+
 **PASO 2 — Cada módulo exporta `APIRouter`, NO `FastAPI()`:**
 
-> **S78-A — PROHIBIDO: stubs en endpoints de autenticación.**
-> `async def login(): pass` o `async def login(): ...` NO son implementaciones válidas.
+> **S78-A / S111-D — PROHIBIDO: stubs en CUALQUIER router.**
+> Endpoints con cuerpo vacío (`pass`, `...`, `return {}`) o comentarios `# stub auto-generado` NO son implementaciones válidas.
+> TODO endpoint en CUALQUIER router.py DEBE estar completamente implementado.
+> Un router con stubs hace que la app arranque pero falle en runtime — peor que un ImportError.
 > El endpoint `/auth/login` DEBE implementarse completamente como se muestra abajo.
 
 ```python:src/auth/router.py

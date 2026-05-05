@@ -1,5 +1,5 @@
 # OVD Platform — Roadmap Completo
-**Última actualización:** 2026-04-26
+**Última actualización:** 2026-05-04
 **Versión actual:** v0.9.5-qa-contextual
 
 > **Nota de auditoría 2026-04-10:** Se verificó el estado real contra el código.
@@ -3532,11 +3532,253 @@ Nuevo FR: "Implementar sistema de gestión de licitaciones con autenticación RU
 
 ---
 
+#### Modo 5 — Corrección de issues en sistemas existentes (no implementado)
+
+**Registrado:** 2026-05-04
+**Prioridad:** Alta — caso de uso más frecuente en clientes con sistemas en producción
+
+OVD debe poder recibir un bug report o issue sobre código existente, leer el código afectado,
+entender el problema en contexto y generar el fix puntual — sin regenerar el sistema completo.
+
+```
+FR: "El endpoint /reservas/cancelar lanza 500 cuando el turno no existe"
+→ OVD lee el código de reservas/ (router, servicio, tests)
+→ Identifica el path no manejado (None check faltante)
+→ Genera fix puntual: solo modifica el archivo afectado
+→ Genera o actualiza el test que cubra el caso
+
+FR: "El módulo de liquidaciones de HHMM falla al calcular horas nocturnas"
+→ OVD lee liquidaciones/ + el DDL de las tablas relevantes
+→ Identifica el error en la lógica de cálculo de tramos horarios
+→ Genera el fix + test de regresión
+```
+
+**Diferencia con modo incremental:** en modo incremental se agregan features nuevas sin tocar lo
+existente. En corrección de issues, el objetivo es **modificar código existente** de forma
+quirúrgica para resolver un defecto, preservando el resto del sistema intacto.
+
+**Diferencia con `fr_type='bug'` actual:** hoy el tipo `bug` existe en `FRAnalysisOutput` pero
+el flujo no lee el código existente — genera todo desde cero igualmente. Este modo corrige eso.
+
+**Reglas del modo corrección:**
+
+| Regla | Descripción |
+|-------|-------------|
+| Scope acotado | Solo modificar archivos directamente relacionados con el bug |
+| Tests existentes deben pasar | `run_tests` ejecuta la suite existente — ningún test previo puede quebrarse |
+| Generar test de regresión | El fix siempre incluye al menos un test que reproduzca el bug y verifique la corrección |
+| No regenerar | `write_artifacts` usa política `merge-smart` — nunca sobreescribe el archivo completo |
+| Evidencia del fix | QA verifica que el FR describe el bug, el código generado lo corrige y el test falla sin el fix |
+
+**Trabajo técnico requerido:**
+
+- **Fase A (compartida con modos 2-4):** nodo `read_existing_codebase` — lee el directorio o repo
+- **Fase B:** detección de archivos relevantes para el bug — a partir del FR + contexto leído,
+  identificar qué archivos son el foco del fix (puede ser heurístico + LLM)
+- **Fase C:** `write_artifacts` en modo `merge-smart` — modifica solo las líneas afectadas,
+  no el archivo completo (puede usar diff/patch approach)
+- **Fase D:** `run_tests` ejecuta suite existente completa antes y después del fix
+- **Fase E:** QA evalúa con criterio diferenciado: ¿el fix es puntual? ¿los tests previos pasan?
+
+**Casos de uso reales identificados:**
+
+| Caso | Sistema | Descripción |
+|------|---------|-------------|
+| HHMM — cálculo horas nocturnas | Oracle 19c + Java | Bug en lógica PL/SQL de tramos horarios |
+| HHMM — liquidación feriados legales | Oracle 19c + Java | Error en tabla de feriados hard-codeados |
+| API contratos — validación RUT | FastAPI + PostgreSQL | 422 en RUTs con dígito verificador `K` |
+| Dashboard React — paginación | TypeScript + React 19 | Última página muestra registros duplicados |
+
+---
+
 #### Criterio de entrada a sprint
 
 Una épica entra a sprint cuando:
 1. Se completó la sesión de diseño técnico (prototipo en papel del flujo de nodos)
 2. Se identificaron los archivos a modificar y las funciones a crear
 3. Existe un FR de prueba que valida el modo (ej: FR de migración WL12→WL14 con proyecto real)
+
+---
+
+### ÉPICA-2 — Despliegue DigitalOcean + GenAI Platform
+
+**Registrada:** 2026-05-04
+**Prioridad:** Alta — objetivo: demo en vivo el 2026-05-18
+**Estado:** 💡 Diseño aprobado — pendiente implementación
+
+#### Contexto
+
+OVD debe ser accesible desde una URL pública para la presentación del 18 de mayo 2026.
+La investigación de DigitalOcean (2026-05-04) identificó tres opciones de arquitectura cloud.
+La propuesta recomendada elimina la dependencia de Ollama en producción usando el GenAI Platform
+de DigitalOcean como proveedor unificado para LLMs y embeddings.
+
+#### Productos DigitalOcean relevantes
+
+| Producto | Descripción | Precio |
+|----------|-------------|--------|
+| **App Platform** | PaaS container-based — deploya desde Dockerfile/GitHub. Workers persistentes. SSE y WebSockets sin restricciones documentadas. | $50/mes (2 vCPU / 4 GiB) |
+| **Managed PostgreSQL** | PostgreSQL 16-18 administrado. **pgvector + pgvectorscale incluidos nativamente**. | $30/mes (2 GiB) |
+| **GenAI Platform** | API unificada para modelos Anthropic, OpenAI, Meta, Mistral. Compatible con SDK de cada proveedor. Facturación consolidada DO. | Por token (ver tabla) |
+| **Functions** | FaaS Python 3.12/3.13. Timeout máx 15 min, payload 1 MB. **No recomendado** para ciclo principal — payload insuficiente. | Por invocación |
+| **GPU Droplets** | NVIDIA RTX 4000 Ada (20 GB VRAM) on-demand. Para self-hosting Ollama. | $0.76/hr |
+
+**Modelos disponibles en GenAI Platform:**
+
+| Modelo | Input | Output | Contexto | Uso en OVD |
+|--------|-------|--------|---------|-----------|
+| Claude Sonnet 4.6 | $3.00/1M | $15.00/1M | 200K | Agentes principales |
+| Claude Haiku 4.5 | $1.00/1M | $5.00/1M | — | FR analysis, QA rápida |
+| Claude Opus 4.7 | $5.00/1M | $25.00/1M | — | Ciclos críticos |
+| GPT-4o mini | $0.15/1M | $0.60/1M | — | Alternativa costo |
+| **BGE-M3** | $0.02/1M | — | — | **Embeddings RAG** |
+| all-mini-lm-l6-v2 | $0.009/1M | — | — | Embeddings ligeros |
+
+> Precios GenAI Platform = precios directos Anthropic/OpenAI. Ventaja: tráfico entre servicios
+> DO no genera costo de egress (red interna). Facturación unificada en una cuenta DO.
+
+#### Opciones de arquitectura
+
+---
+
+**Opción A — App Platform + GenAI Platform** *(recomendada para presentación 2026-05-18)*
+
+```
+[GitHub repo] → [DO App Platform]
+                   FastAPI + LangGraph
+                   2 vCPU / 4 GiB / $50/mes
+                        │
+                        ├── [DO Managed PostgreSQL]
+                        │    pgvector + pgvectorscale
+                        │    2 GiB / $30/mes
+                        │
+                        └── [DO GenAI Platform]
+                             Claude Sonnet 4.6 (agentes)
+                             BGE-M3 (embeddings RAG)
+                             Variable por uso
+```
+
+| Atributo | Valor |
+|----------|-------|
+| Costo fijo | ~$80/mes |
+| Costo variable | ~$5-15/ciclo (Claude Sonnet) + $0.01/bootstrap RAG |
+| DevOps | Cero — TLS automático, CI/CD desde GitHub, health checks |
+| Escalabilidad | Autoscale horizontal en App Platform (tier Dedicated) |
+| Ollama | Eliminado de producción |
+| Cambios en código | `OVD_RAG_EMBEDDING_PROVIDER=openai` + endpoint DO GenAI |
+
+**Pros:** Más rápida de desplegar, sin mantenimiento de servidor, TLS gestionado por DO.
+**Contras:** Menor control sobre el entorno, mismos precios de LLM que acceso directo.
+
+---
+
+**Opción B — Droplet 4GB + GenAI Platform** *(plan actual actualizado)*
+
+```
+[Droplet Basic 4GB / $24/mes]
+   FastAPI + LangGraph + Caddy TLS
+        │
+        ├── [DO Managed PostgreSQL / $30/mes]
+        │
+        └── [DO GenAI Platform]
+             Variable por uso
+```
+
+| Atributo | Valor |
+|----------|-------|
+| Costo fijo | ~$54/mes |
+| DevOps | Manual (Caddy, docker-compose.prod.yml, actualizaciones) |
+| Escalabilidad | Manual (resize Droplet) |
+
+**Pros:** Más barato en costo fijo, más control del entorno.
+**Contras:** Requiere DevOps, sin auto-scaling.
+
+---
+
+**Opción C — App Platform + GPU Droplet on-demand** *(para escala con modelos propios)*
+
+```
+[DO App Platform / $50/mes] + [DO Managed PostgreSQL / $30/mes]
+        └── [GPU Droplet RTX 4000 Ada / $0.76/hr on-demand]
+                   Ollama + Llama 4 / Qwen3
+```
+
+| Atributo | Valor |
+|----------|-------|
+| Costo fijo | $80/mes |
+| Costo LLM | $0 por token (self-hosted) |
+| GPU costo | $0.76/hr — solo cuando está activo |
+| Break-even vs GenAI | ~$550/mes de LLM usage |
+
+**Pros:** Cero costo por token si GPU está activa, control total de modelos.
+**Contras:** GPU idle = costo desperdiciado. Setup Ollama manual en cada Droplet.
+
+---
+
+#### Decisión recomendada
+
+**Opción A para el demo del 18 de mayo.** Razones:
+
+1. Tiempo de despliegue: 2-3 días vs 5-7 días (Opción B/C)
+2. Sin riesgo de configuración manual de TLS, firewall, docker
+3. GenAI Platform es compatible con SDK de Anthropic — **cero cambios en el código de agentes**
+4. Embeddings BGE-M3 ($0.02/1M) son comparables en calidad a `text-embedding-3-small` de OpenAI
+5. Si el volumen de LLM crece, migrar a Opción C es un cambio de variable de entorno
+
+**Cambio de código necesario para Opción A:**
+- `OVD_RAG_EMBEDDING_PROVIDER=openai` (ya soportado en `rag.py`)
+- `OVD_EMBED_MODEL=bge-m3` (o `all-mini-lm-l6-v2` para menor costo)
+- `OPENAI_API_KEY` → apunta al endpoint DO GenAI Platform en lugar de OpenAI directo
+- `ANTHROPIC_API_KEY` → apunta al endpoint DO GenAI Platform en lugar de Anthropic directo
+- `OVD_CORS_ORIGINS=https://ovd.omarrobles.dev`
+
+> **Nota:** DigitalOcean GenAI Platform usa endpoints compatibles con los SDKs oficiales.
+> Verificar la URL base exacta del endpoint en la documentación de DO al momento de configurar.
+
+#### Gaps a resolver antes del deploy (S112)
+
+**Críticos:**
+
+| Gap | Tarea |
+|-----|-------|
+| NATS ausente en docker-compose.prod.yml | Verificar si `task_checkout.py` funciona sin NATS (`USE_NATS=false`) o agregar servicio |
+| Alembic: migraciones hasta S109 | Auditar que todas las columnas nuevas están en las migraciones |
+| `infra/postgres/grant-readonly.sql` | Verificar existencia o crear el archivo referenciado |
+| `OVD_SECRET` vs `OVD_ENGINE_SECRET` | Verificar naming consistente en entrypoint vs código |
+| `seed_prod.sql` con datos HHMM | Reemplazar con proyecto demo neutro (ej: Sistema de Turnos) |
+| Dominio `ovd.omarrobles.dev` | Registrar y apuntar al App Platform o Droplet |
+
+**Altos:**
+
+| Gap | Tarea |
+|-----|-------|
+| ADR-004 contradicción | Actualizar ADR-004: Option D (Claude API) es la opción de producción |
+| ADR-005 inexistente | Crear ADR-005: decisión DigitalOcean vs alternativas (AWS, GCP, Fly.io) |
+| Password admin | Cambiar `ovd-dev-2026` antes de producción |
+| RAG en producción | Confirmar que BGE-M3 vía GenAI Platform reemplaza Ollama correctamente |
+
+#### Plan de sprints
+
+| Sprint | Contenido | Fecha objetivo |
+|--------|-----------|----------------|
+| **S111** | Nodo `read_existing_codebase` + Modo 5 básico (bug fixing sobre código existente) | 4-10 mayo |
+| **S112** | Resolver gaps DO críticos + despliegue en App Platform + dominio | 11-16 mayo |
+| **S113** | Dry run demo, seed demo neutro, guion presentación | 17 mayo |
+| **Demo** | Presentación cliente | 18 mayo |
+
+#### Scope del demo 2026-05-18
+
+Lo que se puede mostrar en vivo:
+
+| Demo | Modo | Estado al 18 mayo |
+|------|------|------------------|
+| Crear sistema de turnos desde cero | Greenfield | ✅ Ya funciona |
+| Corregir bug en endpoint existente | Modo 5 | ✅ Si S111 completa |
+| URL pública accesible por el cliente | DigitalOcean | ✅ Si S112 completa |
+
+Lo que se presenta como roadmap (no demo en vivo):
+- Modo 2 Incremental (agregar features sin romper lo existente)
+- Modo 3 Migración tecnológica (WebLogic 12→14, Oracle 12c→19c)
+- Modo 4 Reutilización de sistemas validados
 
 ---

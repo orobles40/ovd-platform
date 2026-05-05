@@ -8,13 +8,27 @@
 
 ## Estado actual
 
-- **Sprint activo:** S110 (en progreso — S96-H completado)
+- **Sprint activo:** S111 (completado)
 - **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S109
-- **Tests:** 1886 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
+- **Sprints completados:** S3 → S111
+- **Tests:** 1908 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
   *(suite 100% limpia — 0 fallos pre-existentes pendientes)*
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
+
+---
+
+## Última sesión (2026-05-04 — S111)
+
+**S111 — Frontend ejecutable + CORS + ORM safety — COMPLETADO:**
+- S111-A (OVD-FE-001+FE-002): `ensure_frontend_scaffold(work_dir)` en `code_postprocessor.py` — detecta `frontend/` con `.tsx` sin `package.json`, crea automáticamente `package.json`, `vite.config.ts` (Tailwind v4 + `@tailwindcss/vite`), `index.html`, `tsconfig.json/app/node`, `src/main.tsx`, `src/index.css`, `src/vite-env.d.ts`; actualiza v3→v4 si ya existe
+- S111-A: Llamado desde `deliver()` en `graph.py` cuando el agente frontend estuvo presente
+- S111-A: `system_frontend_react.md` actualizado con sección "Scaffolding obligatorio" + hooks de dominio
+- S111-B (OVD-BE-003): `_inject_cors_middleware(content, rel_path)` — inyecta `CORSMiddleware` en `main.py` si falta; template `system_backend_python.md` actualizado con nota S111-B obligatoria
+- S111-C (OVD-BE-004): `_fix_back_populates_orphan(content, rel_path, work_dir)` — elimina `, back_populates='X'` cuando `X` no existe en ningún `models.py` del workspace
+- S111-D (OVD-BE-005): template anti-stubs extendido a todos los routers (no solo auth)
+- Tests: `test_s111.py` — 24/24 PASS | Suite: **1908 passed** (0 regresiones)
+- Ciclo de validación S111 pendiente (lanzar con `/session-start` próxima sesión)
 
 ---
 
@@ -114,10 +128,10 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S111 — Opciones:**
-1. **Ciclo validación S110**: confirmar QA estable con S96-H activo (SDD indexado en cada ciclo)
+**S112 — Opciones:**
+1. **Ciclo validación S111**: confirmar que los 5 fixes (scaffolding, CORS, back_populates, stubs, hooks) resuelven los issues documentados en el ciclo c2aa9c6c
 2. **S96-I — OB-02**: indexar artefactos generados (código de cada agente) post-ciclo como doc_type=codebase
-3. **Feature roadmap**: revisar `docs/sprints/CURRENT.md` para próximo sprint de features
+3. **S112 — DigitalOcean deployment gaps** (para demo 2026-05-18)
 
 ---
 
@@ -143,6 +157,11 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 | `test_s63b_cleanup_in_retry_round_zero` | Suite no limpia | Pendiente | S96-D |
 | QA score ≤ 50 en ciclos con 2 agentes | Conflicto BD perfil/FR | Pendiente | S97-A |
 | devops sobrescribe tests del backend | write_artifacts sin protección | Pendiente | S97-B |
+| **OVD-FE-001** — Agente frontend no genera proyecto Vite completo | App no ejecutable sin scaffolding manual (`package.json`, `vite.config`, `main.tsx`, `index.html`) | ✅ RESUELTO S111-A | S111 |
+| **OVD-FE-002** — Hooks custom no generados | Componentes importan `useTurnos`, `useMedicos`, etc. que no existen en la entrega | ✅ RESUELTO S111-A | S111 |
+| **OVD-BE-003** — CORS no configurado en `main.py` | Frontend en distinto puerto falla con "Failed to fetch" | ✅ RESUELTO S111-B | S111 |
+| **OVD-BE-004** — `back_populates` ORM sin relación inversa | `TurnoORM` define `back_populates='turnos'` pero `PacienteORM`/`MedicoORM` no tienen esa propiedad — `InvalidRequestError` al instanciar | ✅ RESUELTO S111-C | S111 |
+| **OVD-BE-005** — Stubs S96-A no reemplazados | `auth/router.py` y `turnos/router.py` quedaron como `# stub auto-generado` — app no arranca | ✅ RESUELTO S111-D | S111 |
 
 ---
 

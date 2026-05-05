@@ -9014,6 +9014,20 @@ async def deliver(state: OVDState) -> dict:
             }
         )
 
+    # S111-A: scaffold Vite React TS si el agente frontend no generó package.json
+    if directory and any(r.get("agent") == "frontend" for r in _merged):
+        try:
+            from code_postprocessor import ensure_frontend_scaffold
+
+            _scaffold = ensure_frontend_scaffold(directory)
+            if _scaffold:
+                log.info(
+                    "deliver: S111-A scaffold frontend — %d archivos creados",
+                    len(_scaffold),
+                )
+        except Exception as _e:
+            log.warning("deliver: S111-A scaffold error — %s", _e)
+
     # S22 — Artefactos de documentación generados por generate_docs
     if directory:
         base_path = pathlib.Path(directory).expanduser().resolve()

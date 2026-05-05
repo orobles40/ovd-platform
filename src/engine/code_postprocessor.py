@@ -11,6 +11,9 @@ S107-P2: Reemplaza imágenes Oracle por postgres:16-alpine en docker-compose.yml
 S107-P3: Sincroniza imports service→router→tests post-fan-out (alias de nombres obvios).
 S108-B: Reemplaza Date/DateTime de SQLAlchemy por date/datetime en schemas Pydantic.
 S108-C: Elimina service.py residual cuando coexiste con services.py (canónico).
+S111-A: ensure_frontend_scaffold() — crea archivos Vite React TS si el agente no los generó.
+S111-B: _inject_cors_middleware() — inyecta CORSMiddleware en main.py si falta.
+S111-C: _fix_back_populates_orphan() — elimina back_populates cuando el atributo inverso no existe.
 
 Transformaciones aplicadas en _write_artifacts() antes de escribir al disco:
 - Renombra funciones de español a inglés (AST NodeTransformer + call sites)
@@ -1303,6 +1306,308 @@ def _remove_duplicate_service_files(work_dir: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# S111-B: inject CORS middleware en src/main.py
+# ---------------------------------------------------------------------------
+
+_CORS_IMPORT = "from fastapi.middleware.cors import CORSMiddleware"
+_CORS_MIDDLEWARE_BLOCK = (
+    "app.add_middleware(\n"
+    "    CORSMiddleware,\n"
+    '    allow_origins=["http://localhost:5173", "http://localhost:5174"],\n'
+    '    allow_methods=["*"],\n'
+    '    allow_headers=["*"],\n'
+    "    allow_credentials=True,\n"
+    ")\n"
+)
+
+
+def _inject_cors_middleware(content: str, rel_path: str) -> str:
+    """S111-B: inyecta CORSMiddleware en src/main.py si falta."""
+    basename = rel_path.replace("\\", "/").split("/")[-1]
+    if basename != "main.py":
+        return content
+    if "CORSMiddleware" in content:
+        return content
+    if not re.search(r"app\s*=\s*FastAPI\s*\(", content):
+        return content
+
+    if _CORS_IMPORT not in content:
+        content = re.sub(
+            r"(from fastapi import [^\n]+\n)",
+            r"\1" + _CORS_IMPORT + "\n",
+            content,
+            count=1,
+        )
+
+    # Insertar bloque después de app = FastAPI(...)
+    content = re.sub(
+        r"(app\s*=\s*FastAPI\s*\([^)]*\)\s*\n)",
+        r"\1" + _CORS_MIDDLEWARE_BLOCK,
+        content,
+        count=1,
+    )
+    log.warning("[S111-B] CORSMiddleware inyectado en %s", rel_path)
+    return content
+
+
+# ---------------------------------------------------------------------------
+# S111-C: fix back_populates huérfano en models.py
+# ---------------------------------------------------------------------------
+
+
+def _fix_back_populates_orphan(content: str, rel_path: str, work_dir: str) -> str:
+    """S111-C: elimina back_populates cuando el atributo inverso no existe en ningún modelo."""
+    import pathlib
+
+    basename = rel_path.replace("\\", "/").split("/")[-1]
+    if basename not in ("models.py", "model.py"):
+        return content
+    if "back_populates" not in content:
+        return content
+    if not work_dir:
+        return content
+
+    base_path = pathlib.Path(work_dir)
+    all_attrs: set[str] = set()
+    for model_file in list(base_path.rglob("models.py")) + list(
+        base_path.rglob("model.py")
+    ):
+        try:
+            m_content = model_file.read_text(encoding="utf-8", errors="ignore")
+            attrs = re.findall(
+                r"^\s{4}(\w+)\s*(?::|=)\s*(?:Column|relationship|mapped_column|Mapped)",
+                m_content,
+                re.MULTILINE,
+            )
+            all_attrs.update(attrs)
+        except OSError:
+            pass
+
+    if not all_attrs:
+        return content
+
+    def _strip_orphan(m: re.Match) -> str:
+        attr_name = m.group(1)
+        if attr_name in all_attrs:
+            return m.group(0)
+        log.warning(
+            "[S111-C] back_populates='%s' eliminado en %s — atributo inverso no encontrado",
+            attr_name,
+            rel_path,
+        )
+        return ""
+
+    return re.sub(
+        r""",\s*back_populates\s*=\s*['"](\w+)['"]\s*""",
+        _strip_orphan,
+        content,
+    )
+
+
+# ---------------------------------------------------------------------------
+# S111-A: ensure_frontend_scaffold — crea archivos Vite React TS si faltan
+# ---------------------------------------------------------------------------
+
+
+def _detect_frontend_root(base: "pathlib.Path") -> "pathlib.Path | None":
+    """Devuelve el directorio raíz del proyecto frontend o None."""
+    import pathlib  # noqa: F811
+
+    for name in ("frontend", "client", "ui", "web"):
+        candidate = base / name
+        if candidate.is_dir() and (
+            list(candidate.rglob("*.tsx")) or list(candidate.rglob("*.ts"))
+        ):
+            return candidate
+    # Fallback: tsx directamente bajo base/src
+    if list(base.glob("src/**/*.tsx")):
+        return base
+    return None
+
+
+def _vite_scaffold_files() -> dict[str, str]:
+    """Archivos de scaffolding Vite 6 React 19 TypeScript con Tailwind v4."""
+    return {
+        "package.json": (
+            "{\n"
+            '  "name": "ovd-frontend",\n'
+            '  "private": true,\n'
+            '  "version": "0.1.0",\n'
+            '  "type": "module",\n'
+            '  "scripts": {\n'
+            '    "dev": "vite",\n'
+            '    "build": "tsc -b && vite build",\n'
+            '    "preview": "vite preview"\n'
+            "  },\n"
+            '  "dependencies": {\n'
+            '    "react": "^19.0.0",\n'
+            '    "react-dom": "^19.0.0"\n'
+            "  },\n"
+            '  "devDependencies": {\n'
+            '    "@types/react": "^19.0.0",\n'
+            '    "@types/react-dom": "^19.0.0",\n'
+            '    "@tailwindcss/vite": "^4.0.0",\n'
+            '    "@vitejs/plugin-react": "^4.3.4",\n'
+            '    "tailwindcss": "^4.0.0",\n'
+            '    "typescript": "~5.7.2",\n'
+            '    "vite": "^6.2.0"\n'
+            "  }\n"
+            "}\n"
+        ),
+        "vite.config.ts": (
+            "import { defineConfig } from 'vite'\n"
+            "import react from '@vitejs/plugin-react'\n"
+            "import tailwindcss from '@tailwindcss/vite'\n\n"
+            "export default defineConfig({\n"
+            "  plugins: [react(), tailwindcss()],\n"
+            "  server: { port: 5174 },\n"
+            "})\n"
+        ),
+        "index.html": (
+            "<!doctype html>\n"
+            '<html lang="es">\n'
+            "  <head>\n"
+            '    <meta charset="UTF-8" />\n'
+            '    <link rel="icon" type="image/svg+xml" href="/vite.svg" />\n'
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n'
+            "    <title>OVD App</title>\n"
+            "  </head>\n"
+            "  <body>\n"
+            '    <div id="root"></div>\n'
+            '    <script type="module" src="/src/main.tsx"></script>\n'
+            "  </body>\n"
+            "</html>\n"
+        ),
+        "tsconfig.json": (
+            "{\n"
+            '  "files": [],\n'
+            '  "references": [\n'
+            '    { "path": "./tsconfig.app.json" },\n'
+            '    { "path": "./tsconfig.node.json" }\n'
+            "  ]\n"
+            "}\n"
+        ),
+        "tsconfig.app.json": (
+            "{\n"
+            '  "compilerOptions": {\n'
+            '    "target": "ES2020",\n'
+            '    "useDefineForClassFields": true,\n'
+            '    "lib": ["ES2020", "DOM", "DOM.Iterable"],\n'
+            '    "module": "ESNext",\n'
+            '    "skipLibCheck": true,\n'
+            '    "moduleResolution": "bundler",\n'
+            '    "allowImportingTsExtensions": true,\n'
+            '    "isolatedModules": true,\n'
+            '    "moduleDetection": "force",\n'
+            '    "noEmit": true,\n'
+            '    "jsx": "react-jsx",\n'
+            '    "strict": true,\n'
+            '    "noUnusedLocals": false,\n'
+            '    "noUnusedParameters": false,\n'
+            '    "noFallthroughCasesInSwitch": true\n'
+            "  },\n"
+            '  "include": ["src"]\n'
+            "}\n"
+        ),
+        "tsconfig.node.json": (
+            "{\n"
+            '  "compilerOptions": {\n'
+            '    "target": "ES2022",\n'
+            '    "lib": ["ES2023"],\n'
+            '    "module": "ESNext",\n'
+            '    "skipLibCheck": true,\n'
+            '    "moduleResolution": "bundler",\n'
+            '    "allowImportingTsExtensions": true,\n'
+            '    "isolatedModules": true,\n'
+            '    "moduleDetection": "force",\n'
+            '    "noEmit": true,\n'
+            '    "strict": true\n'
+            "  },\n"
+            '  "include": ["vite.config.ts"]\n'
+            "}\n"
+        ),
+        "src/main.tsx": (
+            "import { StrictMode } from 'react'\n"
+            "import { createRoot } from 'react-dom/client'\n"
+            "import './index.css'\n"
+            "import App from './App'\n\n"
+            "createRoot(document.getElementById('root')!).render(\n"
+            "  <StrictMode>\n"
+            "    <App />\n"
+            "  </StrictMode>,\n"
+            ")\n"
+        ),
+        "src/index.css": '@import "tailwindcss";\n',
+        "src/vite-env.d.ts": '/// <reference types="vite/client" />\n',
+    }
+
+
+def ensure_frontend_scaffold(work_dir: str) -> list[str]:
+    """S111-A: crea archivos de scaffolding Vite React TypeScript si el agente no los generó.
+
+    Detecta si hay archivos .tsx en un subdirectorio frontend (o en la raíz).
+    Si falta package.json, crea todos los archivos de infraestructura necesarios.
+    Retorna lista de rutas relativas creadas.
+    """
+    import pathlib
+
+    base = pathlib.Path(work_dir).expanduser().resolve()
+    if not base.exists():
+        return []
+
+    frontend_root = _detect_frontend_root(base)
+    if frontend_root is None:
+        return []
+
+    if (frontend_root / "package.json").exists():
+        return []  # ya tiene scaffolding — no intervenir
+
+    # Actualizar index.css de Tailwind v3 a v4 si existe con sintaxis antigua
+    index_css_path = frontend_root / "src" / "index.css"
+    if index_css_path.exists():
+        try:
+            css_content = index_css_path.read_text(encoding="utf-8", errors="ignore")
+            if "@tailwind base" in css_content or "@tailwind components" in css_content:
+                index_css_path.write_text('@import "tailwindcss";\n', encoding="utf-8")
+                log.warning("[S111-A] src/index.css actualizado de Tailwind v3 → v4")
+        except OSError:
+            pass
+
+    scaffold = _vite_scaffold_files()
+
+    # No sobrescribir App.tsx ni index.css si el agente los generó
+    if (frontend_root / "src" / "App.tsx").exists():
+        scaffold.pop("src/App.tsx", None)
+    if (frontend_root / "src" / "index.css").exists():
+        scaffold.pop("src/index.css", None)
+    if (frontend_root / "src" / "main.tsx").exists():
+        scaffold.pop("src/main.tsx", None)
+
+    created: list[str] = []
+    for rel_path, content in scaffold.items():
+        target = frontend_root / rel_path
+        if target.exists():
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            rel = str(target.relative_to(base))
+            created.append(rel)
+            log.info("[S111-A] scaffold creado: %s", rel)
+        except OSError as e:
+            log.warning("[S111-A] no se pudo crear %s: %s", rel_path, e)
+
+    if created:
+        log.warning(
+            "[S111-A] %d archivos de scaffold frontend creados en %s",
+            len(created),
+            frontend_root,
+        )
+
+    return created
+
+
+# ---------------------------------------------------------------------------
 # Entry point: postprocess_python_file / postprocess_yaml_file
 # ---------------------------------------------------------------------------
 
@@ -1408,6 +1713,14 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
 
     # S74-D: advertir secretos hardcoded (log only)
     _warn_hardcoded_secrets(content, rel_path)
+
+    # S111-B: inyectar CORSMiddleware en main.py si falta
+    if not is_conftest:
+        content = _inject_cors_middleware(content, rel_path)
+
+    # S111-C: eliminar back_populates huérfano en models.py
+    if not is_conftest:
+        content = _fix_back_populates_orphan(content, rel_path, work_dir)
 
     if content != original:
         log.warning(
