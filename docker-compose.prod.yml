@@ -57,6 +57,29 @@ services:
           memory: 256m
 
   # ---------------------------------------------------------------------------
+  # NATS JetStream
+  # ---------------------------------------------------------------------------
+  nats:
+    image: nats:2.10-alpine
+    container_name: ovd-nats
+    restart: always
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nats_data:/data
+    networks:
+      - ovd-internal
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+
+  # ---------------------------------------------------------------------------
   # OVD Engine (FastAPI + LangGraph)
   # El entrypoint ejecuta: alembic upgrade head → seed_prod.sql → uvicorn
   # ---------------------------------------------------------------------------
@@ -70,6 +93,7 @@ services:
     environment:
       # DATABASE_URL con PLACEHOLDER — el entrypoint sustituye con el secret
       DATABASE_URL: postgresql://ovd_prod:PLACEHOLDER@postgres:5432/ovd_prod
+      NATS_URL: nats://nats:4222
       OVD_ENGINE_SECRET: ""          # cargado desde secret por entrypoint
       ANTHROPIC_API_KEY: ""          # cargado desde secret por entrypoint
       # LLM
@@ -99,6 +123,8 @@ services:
       - ovd-internal
     depends_on:
       postgres:
+        condition: service_healthy
+      nats:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
@@ -236,6 +262,8 @@ secrets:
 
 volumes:
   postgres_data:
+    driver: local
+  nats_data:
     driver: local
   caddy_data:
     driver: local

@@ -1,0 +1,134 @@
+# OVD Platform — DigitalOcean App Platform Spec
+# Opción A: App Platform + Managed PostgreSQL + GenAI Platform
+#
+# Deploy:
+#   doctl apps create --spec .do/app.yaml
+#   doctl apps update <APP_ID> --spec .do/app.yaml
+#
+# Prerequisitos:
+#   1. Managed PostgreSQL creado en DO con extensión pgvector habilitada
+#   2. Dominio ovd.omarrobles.dev apuntando a este App
+#   3. Variables secretas configuradas en el panel DO (ANTHROPIC_API_KEY, etc.)
+
+name: ovd-platform
+region: nyc
+
+# ---------------------------------------------------------------------------
+# Engine — FastAPI + LangGraph
+# ---------------------------------------------------------------------------
+services:
+  - name: ovd-engine
+    dockerfile_path: src/engine/Dockerfile
+    github:
+      repo: orobles40/ovd-platform
+      branch: main
+      deploy_on_push: true
+    http_port: 8001
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 60
+      period_seconds: 15
+      timeout_seconds: 10
+      failure_threshold: 5
+    instance_count: 1
+    instance_size_slug: professional-xs   # 2 vCPU / 4 GiB RAM — $50/mes
+    envs:
+      # Base de datos — DO inyecta la URL del managed PostgreSQL
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      # NATS — hostname interno del worker en el mismo App
+      - key: NATS_URL
+        scope: RUN_TIME
+        value: nats://ovd-nats:4222
+      # LLM — Claude vía DO GenAI Platform (endpoint compatible Anthropic SDK)
+      - key: ANTHROPIC_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: ANTHROPIC_BASE_URL
+        scope: RUN_TIME
+        value: https://api.anthropic.com   # reemplazar por endpoint DO GenAI si disponible
+      # RAG embeddings — BGE-M3 vía DO GenAI Platform (compatible OpenAI SDK)
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: OPENAI_BASE_URL
+        scope: RUN_TIME
+        value: https://api.openai.com      # reemplazar por endpoint DO GenAI
+      - key: OVD_RAG_EMBEDDING_PROVIDER
+        scope: RUN_TIME
+        value: openai
+      - key: OVD_EMBED_MODEL
+        scope: RUN_TIME
+        value: bge-m3
+      # Seguridad
+      - key: OVD_ENGINE_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      # CORS — dashboard web desde el mismo dominio
+      - key: OVD_CORS_ORIGINS
+        scope: RUN_TIME
+        value: https://ovd.omarrobles.dev,https://ovd-platform-*.ondigitalocean.app
+      # Modelos LLM
+      - key: OVD_MODEL
+        scope: RUN_TIME
+        value: claude-sonnet-4-6
+      - key: OVD_LLM_TIMEOUT_SECS
+        scope: RUN_TIME
+        value: "300"
+      # Observabilidad
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        value: info
+      - key: LANGCHAIN_TRACING_V2
+        scope: RUN_TIME
+        value: "false"
+
+# ---------------------------------------------------------------------------
+# NATS JetStream — worker interno (sin HTTP público)
+# ---------------------------------------------------------------------------
+workers:
+  - name: ovd-nats
+    image:
+      registry_type: DOCKER_HUB
+      registry: library
+      repository: nats
+      tag: 2.10-alpine
+    run_command: -js -m 8222
+    instance_count: 1
+    instance_size_slug: basic-xxs   # 512 MiB RAM — ~$5/mes, suficiente para NATS
+
+# ---------------------------------------------------------------------------
+# Dashboard — React estático servido por nginx
+# ---------------------------------------------------------------------------
+static_sites:
+  - name: ovd-dashboard
+    dockerfile_path: src/dashboard/Dockerfile
+    github:
+      repo: orobles40/ovd-platform
+      branch: main
+      deploy_on_push: true
+    envs:
+      - key: VITE_API_URL
+        scope: BUILD_TIME
+        value: https://ovd.omarrobles.dev
+    routes:
+      - path: /
+
+# ---------------------------------------------------------------------------
+# PostgreSQL 16 Managed (pgvector incluido nativamente en DO)
+# ---------------------------------------------------------------------------
+databases:
+  - name: db
+    engine: PG
+    version: "16"
+    production: true
+    cluster_name: ovd-postgres-prod
+
+# ---------------------------------------------------------------------------
+# Dominio personalizado
+# ---------------------------------------------------------------------------
+domains:
+  - domain: ovd.omarrobles.dev
+    type: PRIMARY
+    zone: omarrobles.dev
