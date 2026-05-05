@@ -1,7 +1,7 @@
 # ADR-004 — Opciones de paralelismo real en el fan-out de agentes
 
-**Estado:** En análisis — pendiente evaluación cuantitativa  
-**Fecha:** 2026-04-29  
+**Estado:** Decisión tomada — Opción D adoptada en producción (S112)
+**Fecha análisis:** 2026-04-29 | **Fecha decisión:** 2026-05-05
 **Contexto:** Sprint S97 — observación de cuello de botella en fan-out de 8 agentes con Ollama local
 
 ---
@@ -100,11 +100,16 @@ Puerto 11436: qwen3-coder:8b  (devops, docs)
 
 ---
 
-### Opción D — Claude API para agentes en producción ~~DESCARTADA~~
+### Opción D — Claude API / DO GenAI Platform para agentes en producción ✅ ADOPTADA
 
-> **Decisión 2026-04-29:** Descartada por política. La plataforma debe operar íntegramente
-> con modelos locales vía Ollama. La infraestructura en el engine ya existe (`OVD_AGENT_PROVIDER=claude`)
-> pero no se activará. Ver PLAN_S98_PARALELISMO.md para el roadmap con Opciones A/B/C.
+> **Decisión 2026-05-05 (S112):** Adoptada como modelo de producción para el despliegue en
+> DigitalOcean App Platform. La plataforma opera con Ollama en desarrollo local (sin cambios)
+> y con DO GenAI Platform en producción vía `OVD_AGENT_PROVIDER=claude` (o `openai` según modelo).
+> Todos los roles — implementadores y análisis — usan DO GenAI. Ver C7 en S112.
+>
+> **Razón del cambio respecto a 2026-04-29:** El producto tiene cliente real (demo 2026-05-18).
+> El costo por ciclo (~$0.20-0.30 USD con Claude Sonnet 4.6) se justifica con el valor entregado.
+> La dependencia de Ollama en producción no es viable en App Platform (sin GPU, sin Ollama).
 
 **Descripción original:** Usar la API de Anthropic (Claude Sonnet 4.5/4.6) para los agentes en ciclos de producción. La API de Anthropic permite concurrencia real: múltiples requests simultáneos, cada uno procesado en infraestructura distribuida.
 

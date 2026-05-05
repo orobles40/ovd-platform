@@ -565,3 +565,39 @@ Fricción menor: `re` no accessible directamente en graph.py (importado como `_r
 
 ### Notas
 Sesión continuada desde contexto compactado (sin session-active.md). La única fricción menor fue el test test_s79.py::TestS79D que encontraba "async def login(): pass" en el texto de ejemplo de S111-D antes que en la implementación real — corregido cambiando el ejemplo para no incluir esa cadena literal. Decisión técnica: usar Tailwind v4 (@tailwindcss/vite) en el scaffold determinístico ya que el LLM no genera shadcn/ui en la práctica y v4 elimina la necesidad de tailwind.config.ts.
+
+---
+
+## S014 | 2026-05-05
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~08:30 |
+| Cierre | 10:34 |
+| Duración | ~2h |
+| Sprint | S111 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 4 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (157 archivos ya formateados)
+- [x] pytest unit: 1908 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: SÍ | Fallos CI post-push: 0
+
+### Completado hoy
+- Fix tool-calling bypass: `_run_agent_with_tools` ahora aplica postprocessors a archivos .py/.yml escritos via tool calls (S111-B/C)
+- Fix `deliver()`: eliminado guard `agent=="frontend"` — `ensure_frontend_scaffold` se llama siempre (S111-A)
+- 2 nuevos tests en `test_s111.py` → 26/26 PASS (suite total: 1908)
+- Ciclo validación `4721d06e`: S111-B ✅ CORS, S111-A ✅ scaffold 9 archivos, S111-C ✅ sin orphan back_populates. QA 50/100 (tests fallidos independientes)
+- Engine reiniciado con dotenv (fix: env $(grep ...) no maneja comentarios inline en .env)
+
+### Notas
+Sesión continuada desde compactación de contexto. Diagnóstico principal: engine arrancado sin --reload tenía código anterior — los postprocessors de S111 nunca corrieron en el primer ciclo. Segunda causa: guard innecesario en deliver() impedía scaffold cuando no había agente frontend explícito.

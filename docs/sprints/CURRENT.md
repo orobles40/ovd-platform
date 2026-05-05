@@ -35,12 +35,16 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 
 | ID | Tarea | Estado |
 |----|-------|--------|
-| C1 | NATS en producción: `nats:2.10-alpine` agregado a `docker-compose.prod.yml` + worker en `.do/app.yaml`. Engine conecta vía `nats://ovd-nats:4222` (hostname interno App Platform). | ✅ Resuelto |
+| C1 | NATS en producción: `nats:2.10-alpine` en `docker-compose.prod.yml` ✅. En `.do/app.yaml` debe declararse como **`service`** (no `worker`) — los workers en DO App Platform no tienen hostname interno ni pueden recibir conexiones TCP. Usar `http_port: 8222` (monitoring, para health check) + `internal_ports: [4222]` (client port, solo interno) + sin `routes` (no expuesto al exterior). El engine conecta igual vía `nats://ovd-nats:4222`. Costo sin cambio (`basic-xxs`). | ⬜ Pendiente |
 | C2 | Crear migración Alembic `0004_ovd_cycles_status.py`: columna `status TEXT NOT NULL DEFAULT 'started'` + índice único `idx_ovd_cycles_thread_id` en `ovd_cycles`. Ambos existen en dev (agregados manualmente en S47-B) pero no tienen migración formal. Sin esto la BD de prod arranca sin `status` y el engine falla al guardar ciclos. | ⬜ Pendiente |
-| C3 | Crear `infra/postgres/grant-readonly.sql`: `GRANT SELECT ON ALL TABLES/SEQUENCES IN SCHEMA public TO ovd_readonly` + `ALTER DEFAULT PRIVILEGES`. Agregar al `docker-entrypoint.sh` después de `alembic upgrade head`. El rol existe pero sin permisos de lectura el MCP PostgreSQL no puede consultar datos en producción. | ⬜ Pendiente |
+| C3 | Crear `src/engine/migrations/grant-readonly.sql` (dentro del build context del Dockerfile): `GRANT SELECT ON ALL TABLES/SEQUENCES IN SCHEMA public TO ovd_readonly` + `ALTER DEFAULT PRIVILEGES`. Agregar llamada en `docker-entrypoint.sh` después de `alembic upgrade head` apuntando a `/app/migrations/grant-readonly.sql`. Nota: `infra/postgres/` queda fuera del build context (`src/engine/`) — por eso el archivo va en `migrations/`. El rol `ovd_readonly` existe pero sin permisos de lectura el MCP PostgreSQL no puede consultar datos en producción. | ⬜ Pendiente |
 | C4 | `OVD_ENGINE_SECRET` — naming verificado consistente en entrypoint, settings.py y docker-compose.prod.yml. No requiere cambios. | ✅ Resuelto |
 | C5 | Reescribir `seed_prod.sql` con datos demo neutros: org "OVD Demo", usuario `admin@codigonet.cloud` (hash generado dinámicamente desde env var `OVD_ADMIN_PASSWORD` en el entrypoint), proyecto "Sistema de Turnos Médicos" (FastAPI + React + PostgreSQL, directorio `/srv/projects/turnos-demo`). Agregar `OVD_ADMIN_PASSWORD` como secret en `.do/app.yaml` y documentar en `docs/DEPLOY.md`. | ⬜ Pendiente |
 | C6 | Dominio `ovd-platform.codigonet.cloud` (registrado en AWS Route 53). Al crear el App en DO obtener URL `*.ondigitalocean.app` → crear CNAME en Route 53 apuntando a esa URL → DO emite TLS automáticamente. Actualizar `.do/app.yaml` y `OVD_CORS_ORIGINS` con el dominio correcto `codigonet.cloud`. | ⬜ Pendiente |
+| C8 | `JWT_SECRET` falta en `.do/app.yaml`: está declarado en `settings.py` como requerido en producción (`jwt_secret: str = ""`) pero no aparece en la sección `envs` del engine. Sin esta variable el endpoint `POST /auth/login` retorna 500 y el dashboard queda inutilizable. Agregar como `type: SECRET` en `app.yaml` y configurar en el panel DO antes del primer deploy. | ⬜ Pendiente |
+| C9 | `pg_trgm` falta en migración Alembic: la extensión existe en `infra/postgres/init_prod.sql` pero ese archivo no se ejecuta en DO Managed PostgreSQL (no hay `docker-entrypoint-initdb.d`). Si alguna consulta usa trigram similarity fallará silenciosamente en producción. Agregar `op.execute('CREATE EXTENSION IF NOT EXISTS pg_trgm')` a la migración `20260101_0000_initial_schema.py` junto a las extensiones `vector` y `uuid-ossp` ya presentes. | ⬜ Pendiente |
+| C10 | **Engine no accesible públicamente** — `ovd-engine` en `app.yaml` tiene `http_port: 8001` pero **sin `routes` definido**: el dashboard captura todo el tráfico en `/` y el engine solo existe en la red interna. El browser no puede alcanzar `/auth/login`, `/session`, etc. Fix: agregar sección `routes` al engine con los prefijos API: `/health`, `/auth`, `/session`, `/orgs`, `/projects`, `/config`, `/admin`. DO evalúa rutas de más a menos específica — el engine responde a sus prefijos, el dashboard captura el resto (`/`). Sin cambios en el código del engine. | ⬜ Pendiente |
+| C7 | **Provider configurable para roles de análisis** (`analyzer`, `sdd`, `qa`): hoy estos roles tienen `_DEFAULT_PROVIDER` hardcodeado a `"ollama"` en `model_router.py` — ignoran `OVD_AGENT_PROVIDER`. En DO no hay Ollama → el ciclo falla en `analyze_fr`. Fix: agregar `ovd_analysis_provider: str = ""` en `settings.py` + `_ANALYSIS_PROVIDER = ovd_analysis_provider or ovd_agent_provider or "ollama"` en `model_router.py`. Dev local: sin cambios (vacío → Ollama). Producción: setear `OVD_AGENT_PROVIDER=openai` (o `claude`) en `app.yaml` → todos los roles usan DO GenAI Platform. Permite además elegir modelo por rol vía `OVD_MODEL_ANALYZER`, `OVD_MODEL_SDD`, `OVD_MODEL_QA` en env vars. | ⬜ Pendiente |
 
 ### Gaps ALTOS (antes del go-live)
 
@@ -49,23 +53,23 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 | A1 | ADR-004: corregir contradicción — Option D (Claude API) es producción, no Option A | ⬜ Pendiente |
 | A2 | ADR-005: crear — decisión DigitalOcean vs AWS/GCP/Fly.io | ⬜ Pendiente |
 | A3 | Password admin: cubierta por C5 — `OVD_ADMIN_PASSWORD` se define como secret en DO antes del primer deploy. No hay password hardcodeada en git. | ✅ Resuelto por C5 |
-| A4 | RAG producción: confirmar BGE-M3 vía DO GenAI Platform reemplaza Ollama correctamente | ⬜ Pendiente |
+| A4 | RAG producción: BGE-M3 disponible en DO GenAI ($0.02/1M tokens). Sin cambios de código — `OpenAIEmbeddings` lee `OPENAI_BASE_URL` del entorno automáticamente. Solo actualizar en `app.yaml`: `OPENAI_BASE_URL=https://inference.do-ai.run/v1` (hoy apunta a `api.openai.com`). No hay problema de compatibilidad vectorial porque la BD de prod es nueva y pgvector crea la colección con la dimensión de BGE-M3 desde el inicio. | ⬜ Pendiente |
 
 ### Deploy
 
 | ID | Tarea | Estado |
 |----|-------|--------|
-| D1 | Crear App Platform en DO (2 vCPU / 4 GiB / $50/mes) conectado al repo GitHub | ⬜ Pendiente |
-| D2 | Crear Managed PostgreSQL 16 ($30/mes) con extensión pgvector habilitada | ⬜ Pendiente |
-| D3 | Configurar variables de entorno de producción en App Platform | ⬜ Pendiente |
-| D4 | Primer deploy — verificar health check `GET /health` desde URL pública | ⬜ Pendiente |
-| D5 | Bootstrap RAG producción con BGE-M3 (Sistema de Turnos como proyecto demo) | ⬜ Pendiente |
+| D1 | Crear App Platform: `doctl apps create --spec .do/app.yaml`. Prerequisito: repo GitHub `orobles40/ovd-platform` conectado a la cuenta DO (panel DO → Apps → GitHub). La BD Managed PostgreSQL se provisiona automáticamente desde la sección `databases:` del spec. pgvector y uuid-ossp se activan via Alembic migration 0000. | ⬜ Pendiente |
+| D2 | Se crea automáticamente como parte de D1. **Cambiar `production: false` en la sección `databases:` del `app.yaml`** — `production: true` provisiona cluster HA con réplica standby ($50/mes innecesario para demo). Con `false` queda single-node ($15/mes, ahorro $35/mes). Upgrade a producción real desde el panel DO sin downtime cuando haya clientes. Post-creación: crear rol `ovd_readonly` manualmente con psql si se necesita MCP PostgreSQL (no crítico para demo). | ⬜ Pendiente |
+| D3 | Configurar secrets en panel DO (App → Settings → Environment Variables) antes del primer deploy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OVD_ENGINE_SECRET`, `OVD_ADMIN_PASSWORD`, `JWT_SECRET` (cubierto por C8). Variables no-secretas ya están en `app.yaml`. | ⬜ Pendiente |
+| D4 | Orden: D1 → D3 → C6 (CNAME Route 53) → deploy automático. Verificar: `curl https://ovd-platform.codigonet.cloud/health`. Esperar mínimo 2 min (Alembic corre en startup, `initial_delay_seconds: 60` en health check). | ⬜ Pendiente |
+| D5 | Bootstrap RAG producción: ejecutar `rag_bootstrap.py` localmente contra la prod DB (DO Managed PostgreSQL permite conexiones externas agregando la IP local a fuentes confiables en el panel DO). Comando: `DATABASE_URL=<prod_url> OPENAI_API_KEY=<dop_token> OPENAI_BASE_URL=https://inference.do-ai.run/v1 OVD_RAG_EMBEDDING_PROVIDER=openai OVD_EMBED_MODEL=bge-m3 python scripts/rag_bootstrap.py --org-id ORG_OVD_DEMO --project-id ovd-platform --clear`. El `--clear` limpia vectores residuales del setup inicial. Indexar: `src/engine/` (codebase) + `docs/` (docs). | ⬜ Pendiente |
 
 ---
 
 ## Métricas objetivo S112
 
-- Engine respondiendo en `https://ovd.omarrobles.dev/health`
+- Engine respondiendo en `https://ovd-platform.codigonet.cloud/health`
 - Ciclo greenfield completo desde dashboard web en producción
 - QA ≥ 85 en ciclo de demo (mismo nivel que S109)
 - Costo por ciclo documentado (basado en tokens Claude Sonnet 4.6)
@@ -73,6 +77,15 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 ---
 
 ## Backlog post-demo (orden de prioridad sugerido)
+
+### Infraestructura — Pay-per-use
+
+DO App Platform (S112) es siempre-activo (~$70/mes fijo). Para operar en modo pay-per-use real post-demo, evaluar migración a **Fly.io**:
+- Scale-to-zero nativo: el engine duerme sin tráfico, despierta automáticamente en ~10s ante la primera petición
+- PostgreSQL en Fly Postgres o Neon (serverless) — $5–10/mes fijo
+- Costo estimado: $0 cuando inactivo, ~$0.02/hora cuando activo — vs $70/mes fijo en DO
+- Requiere `fly.toml` en lugar de `app.yaml`; código del engine sin cambios
+- Relevante cuando OVD tenga clientes reales y el uso sea esporádico entre demos
 
 ### Deuda técnica inmediata
 
