@@ -35,7 +35,7 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 
 | ID | Tarea | Estado |
 |----|-------|--------|
-| C1 | NATS en producción: verificar si `task_checkout.py` funciona con `USE_NATS=false` o agregar servicio en `docker-compose.prod.yml` | ⬜ Pendiente |
+| C1 | NATS en producción: desplegar `nats:2-alpine` como servicio adicional en DO App Platform (mismo App que el engine, hostname interno). NATS es parte del proyecto y debe estar presente. Verificar configuración `NATS_URL` en variables de entorno. | ⬜ Pendiente |
 | C2 | Alembic: auditar migraciones hasta S109 — verificar columnas nuevas tienen su migración | ⬜ Pendiente |
 | C3 | `infra/postgres/grant-readonly.sql` — verificar existencia o crear el archivo | ⬜ Pendiente |
 | C4 | `OVD_SECRET` vs `OVD_ENGINE_SECRET` — corregir naming inconsistente entrypoint/código | ⬜ Pendiente |
