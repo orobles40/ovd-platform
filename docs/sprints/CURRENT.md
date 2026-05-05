@@ -36,11 +36,11 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 | ID | Tarea | Estado |
 |----|-------|--------|
 | C1 | NATS en producción: `nats:2.10-alpine` agregado a `docker-compose.prod.yml` + worker en `.do/app.yaml`. Engine conecta vía `nats://ovd-nats:4222` (hostname interno App Platform). | ✅ Resuelto |
-| C2 | Alembic: auditar migraciones hasta S109 — verificar columnas nuevas tienen su migración | ⬜ Pendiente |
-| C3 | `infra/postgres/grant-readonly.sql` — verificar existencia o crear el archivo | ⬜ Pendiente |
+| C2 | Crear migración Alembic `0004_ovd_cycles_status.py`: columna `status TEXT NOT NULL DEFAULT 'started'` + índice único `idx_ovd_cycles_thread_id` en `ovd_cycles`. Ambos existen en dev (agregados manualmente en S47-B) pero no tienen migración formal. Sin esto la BD de prod arranca sin `status` y el engine falla al guardar ciclos. | ⬜ Pendiente |
+| C3 | Crear `infra/postgres/grant-readonly.sql`: `GRANT SELECT ON ALL TABLES/SEQUENCES IN SCHEMA public TO ovd_readonly` + `ALTER DEFAULT PRIVILEGES`. Agregar al `docker-entrypoint.sh` después de `alembic upgrade head`. El rol existe pero sin permisos de lectura el MCP PostgreSQL no puede consultar datos en producción. | ⬜ Pendiente |
 | C4 | `OVD_ENGINE_SECRET` — naming verificado consistente en entrypoint, settings.py y docker-compose.prod.yml. No requiere cambios. | ✅ Resuelto |
-| C5 | `seed_prod.sql` — reemplazar datos HHMM por proyecto demo neutro (Sistema de Turnos) | ⬜ Pendiente |
-| C6 | Dominio `ovd.omarrobles.dev` — registrar en DO y apuntar a App Platform | ⬜ Pendiente |
+| C5 | Reescribir `seed_prod.sql` con datos demo neutros: org "OVD Demo", usuario `admin@codigonet.cloud` (hash generado dinámicamente desde env var `OVD_ADMIN_PASSWORD` en el entrypoint), proyecto "Sistema de Turnos Médicos" (FastAPI + React + PostgreSQL, directorio `/srv/projects/turnos-demo`). Agregar `OVD_ADMIN_PASSWORD` como secret en `.do/app.yaml` y documentar en `docs/DEPLOY.md`. | ⬜ Pendiente |
+| C6 | Dominio `ovd-platform.codigonet.cloud` (registrado en AWS Route 53). Al crear el App en DO obtener URL `*.ondigitalocean.app` → crear CNAME en Route 53 apuntando a esa URL → DO emite TLS automáticamente. Actualizar `.do/app.yaml` y `OVD_CORS_ORIGINS` con el dominio correcto `codigonet.cloud`. | ⬜ Pendiente |
 
 ### Gaps ALTOS (antes del go-live)
 
@@ -48,7 +48,7 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 |----|-------|--------|
 | A1 | ADR-004: corregir contradicción — Option D (Claude API) es producción, no Option A | ⬜ Pendiente |
 | A2 | ADR-005: crear — decisión DigitalOcean vs AWS/GCP/Fly.io | ⬜ Pendiente |
-| A3 | Password admin: cambiar `ovd-dev-2026` antes de exponer URL pública | ⬜ Pendiente |
+| A3 | Password admin: cubierta por C5 — `OVD_ADMIN_PASSWORD` se define como secret en DO antes del primer deploy. No hay password hardcodeada en git. | ✅ Resuelto por C5 |
 | A4 | RAG producción: confirmar BGE-M3 vía DO GenAI Platform reemplaza Ollama correctamente | ⬜ Pendiente |
 
 ### Deploy
