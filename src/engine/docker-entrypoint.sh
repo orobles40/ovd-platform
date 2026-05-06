@@ -27,6 +27,12 @@ if [ -f /run/secrets/db_password ]; then
     export DATABASE_URL="${DATABASE_URL/PLACEHOLDER/$DB_PASS}"
 fi
 
+# S112-C9: PostgreSQL 15+ revocó CREATE en schema public por defecto.
+# doadmin es owner del schema en DO managed PG, por lo que puede concederse a sí mismo.
+if [ -n "$DATABASE_URL" ]; then
+    psql "$DATABASE_URL" -c "GRANT ALL ON SCHEMA public TO CURRENT_USER;" 2>/dev/null || true
+fi
+
 # Ejecutar migraciones Alembic antes de arrancar el engine
 # Si la migración falla, el container no arranca (set -e lo garantiza)
 echo "[entrypoint] Ejecutando migraciones Alembic..."
