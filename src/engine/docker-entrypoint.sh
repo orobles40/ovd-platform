@@ -28,11 +28,14 @@ if [ -f /run/secrets/db_password ]; then
 fi
 
 # S112-C9: PostgreSQL 15+ revocó CREATE en schema public por defecto.
+# DO hace REVOKE específico al rol 'db', por lo que GRANT a PUBLIC no basta.
+# Se requiere GRANT directo al usuario por nombre.
 if [ -n "$DATABASE_URL" ]; then
     echo "[entrypoint] Verificando permisos schema public..."
     python3 - << 'PYEOF'
 import asyncio, os, sys
 import psycopg
+from psycopg import sql
 
 async def main():
     url = os.environ.get('DATABASE_URL', '')
@@ -42,16 +45,27 @@ async def main():
         conn = await psycopg.AsyncConnection.connect(url)
         cur = await conn.execute(
             "SELECT current_user, current_database(), "
-            "has_schema_privilege(current_user, 'public', 'CREATE'), "
-            "has_schema_privilege(current_user, 'public', 'USAGE')"
+            "has_schema_privilege(current_user, 'public', 'CREATE')"
         )
         row = await cur.fetchone()
-        print(f'[entrypoint] user={row[0]} db={row[1]} can_create={row[2]} usage={row[3]}')
-        if not row[2]:
-            print('[entrypoint] Aplicando GRANT CREATE ON SCHEMA public...')
-            await conn.execute('GRANT CREATE ON SCHEMA public TO PUBLIC')
+        username, dbname, can_create = row
+        print(f'[entrypoint] user={username} db={dbname} can_create={can_create}')
+        if not can_create:
+            print(f'[entrypoint] GRANT CREATE directo a {username}...')
+            # GRANT por nombre explícito — supera el REVOKE específico de DO
+            grant_sql = sql.SQL('GRANT CREATE ON SCHEMA public TO {}').format(
+                sql.Identifier(username)
+            )
+            await conn.execute(grant_sql)
             await conn.commit()
-            print('[entrypoint] GRANT aplicado')
+            # Verificar que el GRANT aplicó
+            cur2 = await conn.execute(
+                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+            )
+            ok = (await cur2.fetchone())[0]
+            print(f'[entrypoint] post-GRANT can_create={ok}')
+            if not ok:
+                print('[entrypoint] ERROR: GRANT no aplicó — Alembic fallará', file=sys.stderr)
         await conn.close()
     except Exception as e:
         print(f'[entrypoint] WARN schema check: {e}', file=sys.stderr)
