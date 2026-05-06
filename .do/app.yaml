@@ -146,13 +146,17 @@ static_sites:
         value: https://ovd-platform.codigonet.cloud
 # ---------------------------------------------------------------------------
 # PostgreSQL 16 Managed (pgvector incluido nativamente en DO)
-# D2: production: false → single-node ($15/mes). Upgrade a HA sin downtime desde panel DO.
+# D2: production: true → cluster standalone ($15/mes, single-node).
+# Con production: false (dev DB interna), el usuario inyectado es 'db'
+# con REVOKE en schema public — no puede ejecutar Alembic.
+# Con production: true, DATABASE_URL usa doadmin con privilegios completos.
+# Upgrade a HA sin downtime desde panel DO.
 # ---------------------------------------------------------------------------
 databases:
   - name: db
     engine: PG
     version: "16"
-    production: false
+    production: true
     cluster_name: ovd-postgres-prod
 
 # ---------------------------------------------------------------------------
