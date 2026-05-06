@@ -188,7 +188,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
         )
 
-    log.error("DEBUG-S112: user FOUND id=%s active=%s hash_prefix=%s", user["id"], user["active"], user["password_hash"][:20])
+    log.error("DEBUG-S112: user FOUND id=%s active=%s hash_prefix=%s db_url=%s", user["id"], user["active"], user["password_hash"][:20], _DATABASE_URL[:50])
 
     if not user["active"]:
         raise HTTPException(
