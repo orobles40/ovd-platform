@@ -193,11 +193,6 @@ ingress:
       match:
         path:
           prefix: /admin
-    - component:
-        name: ovd-dashboard
-      match:
-        path:
-          prefix: /
 
 # ---------------------------------------------------------------------------
 # Dominio personalizado — C6
