@@ -23,55 +23,87 @@ load_secret ovd_admin_password   OVD_ADMIN_PASSWORD
 # Reconstruir DATABASE_URL con la password del secret
 if [ -f /run/secrets/db_password ]; then
     DB_PASS="$(cat /run/secrets/db_password)"
-    # Reemplaza "PLACEHOLDER" en DATABASE_URL con la password real
     export DATABASE_URL="${DATABASE_URL/PLACEHOLDER/$DB_PASS}"
 fi
 
-# S112-C9: PostgreSQL 15+ revocó CREATE en schema public por defecto.
-# DO hace REVOKE específico al rol 'db', por lo que GRANT a PUBLIC no basta.
-# Se requiere GRANT directo al usuario por nombre.
+# ---------------------------------------------------------------------------
+# S112-C9: Resolución de schema para PostgreSQL 15+
+#
+# DO App Platform crea el usuario 'db' con REVOKE específico en schema public.
+# No se puede otorgar CREATE en public desde dentro del app (sin GRANT OPTION).
+#
+# Estrategia:
+#   1. Si el usuario tiene CREATE en public → continuar normalmente (dev local)
+#   2. Si no, crear schema 'ovd' (el usuario es owner y tiene ALL PRIVILEGES)
+#      y fijar search_path=ovd,public en DATABASE_URL para todas las conexiones
+#   3. Si tampoco puede crear schema → fallo fatal con diagnóstico claro
+# ---------------------------------------------------------------------------
 if [ -n "$DATABASE_URL" ]; then
-    echo "[entrypoint] Verificando permisos schema public..."
+    echo "[entrypoint] Verificando privilegios de schema PostgreSQL..."
     python3 - << 'PYEOF'
 import asyncio, os, sys
 import psycopg
-from psycopg import sql
 
 async def main():
     url = os.environ.get('DATABASE_URL', '')
     if not url:
-        return
-    try:
-        conn = await psycopg.AsyncConnection.connect(url)
-        cur = await conn.execute(
-            "SELECT current_user, current_database(), "
-            "has_schema_privilege(current_user, 'public', 'CREATE')"
-        )
-        row = await cur.fetchone()
-        username, dbname, can_create = row
-        print(f'[entrypoint] user={username} db={dbname} can_create={can_create}')
-        if not can_create:
-            print(f'[entrypoint] GRANT CREATE directo a {username}...')
-            # GRANT por nombre explícito — supera el REVOKE específico de DO
-            grant_sql = sql.SQL('GRANT CREATE ON SCHEMA public TO {}').format(
-                sql.Identifier(username)
-            )
-            await conn.execute(grant_sql)
-            await conn.commit()
-            # Verificar que el GRANT aplicó
-            cur2 = await conn.execute(
-                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
-            )
-            ok = (await cur2.fetchone())[0]
-            print(f'[entrypoint] post-GRANT can_create={ok}')
-            if not ok:
-                print('[entrypoint] ERROR: GRANT no aplicó — Alembic fallará', file=sys.stderr)
+        sys.exit(0)
+
+    conn = await psycopg.AsyncConnection.connect(url)
+
+    cur = await conn.execute(
+        "SELECT current_user, current_database(), "
+        "has_schema_privilege(current_user, 'public', 'CREATE')"
+    )
+    row = await cur.fetchone()
+    username, dbname, can_create_public = row
+    print(f'[entrypoint] user={username} db={dbname} can_create_public={can_create_public}')
+
+    if can_create_public:
+        # Dev local o PG sin restricción — no necesita schema alternativo
         await conn.close()
+        sys.exit(0)
+
+    # Intentar crear schema propio (requiere CREATE ON DATABASE, no en schema)
+    try:
+        await conn.execute("CREATE SCHEMA IF NOT EXISTS ovd")
+        await conn.commit()
+
+        # Verificar que el schema existe y somos owner
+        cur2 = await conn.execute(
+            "SELECT schema_owner FROM information_schema.schemata "
+            "WHERE schema_name = 'ovd'"
+        )
+        row2 = await cur2.fetchone()
+        if row2:
+            print(f'[entrypoint] Schema ovd OK (owner={row2[0]})')
+        await conn.close()
+        sys.exit(2)  # señal: usar schema ovd
+
     except Exception as e:
-        print(f'[entrypoint] WARN schema check: {e}', file=sys.stderr)
+        print(f'[entrypoint] FATAL: no se puede crear schema ovd: {e}', file=sys.stderr)
+        await conn.close()
+        sys.exit(3)
 
 asyncio.run(main())
 PYEOF
+
+    SCHEMA_RESULT=$?
+
+    if [ "$SCHEMA_RESULT" = "2" ]; then
+        # Inyectar search_path=ovd,public en DATABASE_URL
+        # Todos los consumidores (Alembic, api.py, LangGraph) heredan este URL
+        if echo "$DATABASE_URL" | grep -q "?"; then
+            export DATABASE_URL="${DATABASE_URL}&options=-csearch_path%3Dovd%2Cpublic"
+        else
+            export DATABASE_URL="${DATABASE_URL}?options=-csearch_path%3Dovd%2Cpublic"
+        fi
+        echo "[entrypoint] DATABASE_URL → search_path=ovd,public"
+    elif [ "$SCHEMA_RESULT" = "3" ]; then
+        echo "[entrypoint] FATAL: usuario DB no puede escribir en public ni crear schemas" >&2
+        exit 1
+    fi
+    # SCHEMA_RESULT=0: public accesible, continuar sin modificar URL
 fi
 
 # Ejecutar migraciones Alembic antes de arrancar el engine
