@@ -19,7 +19,8 @@ region: nyc
 # ---------------------------------------------------------------------------
 services:
   - name: ovd-engine
-    dockerfile_path: src/engine/Dockerfile
+    source_dir: src/engine
+    dockerfile_path: Dockerfile
     github:
       repo: codigonet-cloud/ovd-platform
       branch: main
@@ -131,7 +132,8 @@ services:
 # ---------------------------------------------------------------------------
 static_sites:
   - name: ovd-dashboard
-    dockerfile_path: src/dashboard/Dockerfile
+    source_dir: src/dashboard
+    dockerfile_path: Dockerfile
     output_dir: /usr/share/nginx/html
     github:
       repo: codigonet-cloud/ovd-platform
