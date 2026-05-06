@@ -28,9 +28,15 @@ if [ -f /run/secrets/db_password ]; then
 fi
 
 # S112-C9: PostgreSQL 15+ revocó CREATE en schema public por defecto.
-# doadmin es owner del schema en DO managed PG, por lo que puede concederse a sí mismo.
+# Restaurar comportamiento pre-PG15 (GRANT CREATE a PUBLIC = todos los usuarios).
 if [ -n "$DATABASE_URL" ]; then
-    psql "$DATABASE_URL" -c "GRANT ALL ON SCHEMA public TO CURRENT_USER;" 2>/dev/null || true
+    echo "[entrypoint] DB user: $(psql "$DATABASE_URL" -t -c 'SELECT current_user;' 2>/dev/null | tr -d ' ')"
+    echo "[entrypoint] Aplicando GRANT CREATE en schema public..."
+    psql "$DATABASE_URL" -c "GRANT CREATE ON SCHEMA public TO PUBLIC;" \
+        && echo "[entrypoint] GRANT OK" \
+        || echo "[entrypoint] WARN: GRANT CREATE ON SCHEMA public falló — intentando GRANT a CURRENT_USER..."
+    psql "$DATABASE_URL" -c "GRANT ALL ON SCHEMA public TO CURRENT_USER;" 2>&1 \
+        || echo "[entrypoint] WARN: GRANT a CURRENT_USER también falló"
 fi
 
 # Ejecutar migraciones Alembic antes de arrancar el engine
