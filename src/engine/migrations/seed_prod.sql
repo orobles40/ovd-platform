@@ -37,7 +37,9 @@ VALUES (
     'admin',
     TRUE
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    password_hash = EXCLUDED.password_hash
+WHERE ovd_users.password_hash = 'CHANGE_ME_BEFORE_USE';
 
 -- ---------------------------------------------------------------------------
 -- Proyecto demo — Sistema de Turnos Médicos

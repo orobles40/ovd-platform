@@ -115,7 +115,8 @@ def check_env() -> CheckResult:
                 )
 
     # Validacion especial: al menos un provider LLM debe estar configurado
-    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-"))
+    # ANTHROPIC_API_KEY acepta tanto sk-ant- (Anthropic directo) como dop_v1_ (DO GenAI Platform)
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
     has_ollama = bool(os.environ.get("OLLAMA_BASE_URL"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     if not (has_anthropic or has_ollama or has_openai):

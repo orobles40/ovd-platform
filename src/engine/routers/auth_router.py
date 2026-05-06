@@ -183,12 +183,9 @@ async def login(body: LoginRequest, request: Request, response: Response):
     """
     user = await _get_user_by_email(body.email)
     if not user:
-        log.error("DEBUG-S112: user NOT FOUND for email=%s db_url_prefix=%s", body.email, _DATABASE_URL[:30])
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
         )
-
-    log.error("DEBUG-S112: user FOUND id=%s active=%s hash_prefix=%s db_url=%s", user["id"], user["active"], user["password_hash"][:20], _DATABASE_URL[:50])
 
     if not user["active"]:
         raise HTTPException(
@@ -198,17 +195,13 @@ async def login(body: LoginRequest, request: Request, response: Response):
     # Verificar contraseña (argon2id o bcrypt según hash almacenado)
     try:
         pwd_ok = _argon2_hash.verify(body.password, user["password_hash"])
-        log.error("DEBUG-S112: argon2.verify=%s", pwd_ok)
-    except Exception as _e:
-        log.error("DEBUG-S112: argon2.verify EXCEPTION: %s", _e)
+    except Exception:
         # Fallback: bcrypt si el hash no es argon2
         try:
             from passlib.hash import bcrypt as _bcrypt
 
             pwd_ok = _bcrypt.verify(body.password, user["password_hash"])
-            log.error("DEBUG-S112: bcrypt fallback=%s", pwd_ok)
-        except Exception as _e2:
-            log.error("DEBUG-S112: bcrypt EXCEPTION: %s", _e2)
+        except Exception:
             pwd_ok = False
 
     if not pwd_ok:
