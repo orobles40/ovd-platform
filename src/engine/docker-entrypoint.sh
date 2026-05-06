@@ -28,15 +28,36 @@ if [ -f /run/secrets/db_password ]; then
 fi
 
 # S112-C9: PostgreSQL 15+ revocó CREATE en schema public por defecto.
-# Restaurar comportamiento pre-PG15 (GRANT CREATE a PUBLIC = todos los usuarios).
 if [ -n "$DATABASE_URL" ]; then
-    echo "[entrypoint] DB user: $(psql "$DATABASE_URL" -t -c 'SELECT current_user;' 2>/dev/null | tr -d ' ')"
-    echo "[entrypoint] Aplicando GRANT CREATE en schema public..."
-    psql "$DATABASE_URL" -c "GRANT CREATE ON SCHEMA public TO PUBLIC;" \
-        && echo "[entrypoint] GRANT OK" \
-        || echo "[entrypoint] WARN: GRANT CREATE ON SCHEMA public falló — intentando GRANT a CURRENT_USER..."
-    psql "$DATABASE_URL" -c "GRANT ALL ON SCHEMA public TO CURRENT_USER;" 2>&1 \
-        || echo "[entrypoint] WARN: GRANT a CURRENT_USER también falló"
+    echo "[entrypoint] Verificando permisos schema public..."
+    python3 - << 'PYEOF'
+import asyncio, os, sys
+import psycopg
+
+async def main():
+    url = os.environ.get('DATABASE_URL', '')
+    if not url:
+        return
+    try:
+        conn = await psycopg.AsyncConnection.connect(url)
+        cur = await conn.execute(
+            "SELECT current_user, current_database(), "
+            "has_schema_privilege(current_user, 'public', 'CREATE'), "
+            "has_schema_privilege(current_user, 'public', 'USAGE')"
+        )
+        row = await cur.fetchone()
+        print(f'[entrypoint] user={row[0]} db={row[1]} can_create={row[2]} usage={row[3]}')
+        if not row[2]:
+            print('[entrypoint] Aplicando GRANT CREATE ON SCHEMA public...')
+            await conn.execute('GRANT CREATE ON SCHEMA public TO PUBLIC')
+            await conn.commit()
+            print('[entrypoint] GRANT aplicado')
+        await conn.close()
+    except Exception as e:
+        print(f'[entrypoint] WARN schema check: {e}', file=sys.stderr)
+
+asyncio.run(main())
+PYEOF
 fi
 
 # Ejecutar migraciones Alembic antes de arrancar el engine
