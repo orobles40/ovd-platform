@@ -111,9 +111,11 @@ services:
       repository: nats
       tag: 2.10-alpine
     run_command: -js -m 8222
-    http_port: 8222
+    # Sin http_port → sin ruta HTTP pública, sin conflicto en ingress.
+    # internal_ports expone 4222 (NATS protocol) y 8222 (monitoring) solo internamente.
     internal_ports:
       - 4222
+      - 8222
     health_check:
       http_path: /healthz
       port: 8222
