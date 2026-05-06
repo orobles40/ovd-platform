@@ -140,6 +140,7 @@ services:
 static_sites:
   - name: ovd-dashboard
     dockerfile_path: src/dashboard/Dockerfile
+    output_dir: /usr/share/nginx/html
     github:
       repo: codigonet-cloud/ovd-platform
       branch: main
