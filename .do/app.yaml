@@ -25,16 +25,6 @@ services:
       branch: main
       deploy_on_push: true
     http_port: 8001
-    # C10: rutas API explícitas — el engine no tiene ruta raíz.
-    # DO evalúa de más a menos específica; el dashboard captura el resto (/).
-    routes:
-      - path: /health
-      - path: /auth
-      - path: /session
-      - path: /orgs
-      - path: /projects
-      - path: /config
-      - path: /admin
     health_check:
       http_path: /health
       initial_delay_seconds: 60
@@ -150,9 +140,6 @@ static_sites:
       - key: VITE_API_URL
         scope: BUILD_TIME
         value: https://ovd-platform.codigonet.cloud
-    routes:
-      - path: /
-
 # ---------------------------------------------------------------------------
 # PostgreSQL 16 Managed (pgvector incluido nativamente en DO)
 # D2: production: false → single-node ($15/mes). Upgrade a HA sin downtime desde panel DO.
@@ -163,6 +150,54 @@ databases:
     version: "16"
     production: false
     cluster_name: ovd-postgres-prod
+
+# ---------------------------------------------------------------------------
+# Ingress — C10: routing centralizado (formato DO App Platform)
+# El engine responde a sus prefijos API; el dashboard captura el resto (/).
+# DO evalúa de más a menos específica — el prefijo más largo tiene prioridad.
+# ---------------------------------------------------------------------------
+ingress:
+  rules:
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /health
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /auth
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /session
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /orgs
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /projects
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /config
+    - component:
+        name: ovd-engine
+      match:
+        path:
+          prefix: /admin
+    - component:
+        name: ovd-dashboard
+      match:
+        path:
+          prefix: /
 
 # ---------------------------------------------------------------------------
 # Dominio personalizado — C6
