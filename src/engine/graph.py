@@ -167,9 +167,7 @@ class SecurityAuditOutput(BaseModel):
         description="True si no se encontraron vulnerabilidades criticas o altas",
     )
     score: int = Field(
-        ge=0,
-        le=100,
-        description="Score de seguridad de 0 a 100",
+        description="Score de seguridad de 0 a 100 (entero, rango 0-100)",
     )
     severity: str = Field(
         description="Severidad maxima encontrada: 'none', 'low', 'medium', 'high', 'critical'",
@@ -281,9 +279,7 @@ class QAReviewOutput(BaseModel):
         description="True si el resultado pasa todos los criterios de calidad",
     )
     score: int = Field(
-        ge=0,
-        le=100,
-        description="Score de calidad de 0 a 100",
+        description="Score de calidad de 0 a 100 (entero, rango 0-100)",
     )
     issues: list[str] = Field(
         default_factory=list,
@@ -4864,9 +4860,13 @@ def _parse_security_fallback(raw: str) -> SecurityAuditOutput:
             parsed_score = int(data.get("score", 75))
             parsed_vulns = list(data.get("vulnerabilities", []))
             parsed_secrets = list(data.get("secrets_found", []))
+            # Clamping explícito: ge/le removidos del modelo Pydantic por incompatibilidad
+            # con el gateway DO AI (rechaza min/max en integer schemas). Se clampea aquí.
+            if parsed_score < 0:
+                parsed_score = 75  # negativo = modelo no concluyente
+            elif parsed_score > 100:
+                parsed_score = 100
             # BUG-04: score=0 sin vulnerabilidades ni secrets = fallo de parsing del modelo.
-            # Un modelo que no siguió el schema suele emitir score=0 como valor por defecto.
-            # Si hay vulnerabilidades concretas, respetamos el score (puede ser 0 legítimo).
             if parsed_score == 0 and not parsed_vulns and not parsed_secrets:
                 parsed_score = 75
             return SecurityAuditOutput(
@@ -4942,6 +4942,11 @@ def _parse_qa_fallback(raw: str) -> QAReviewOutput:
         try:
             data = _json3.loads(json_match.group(0))
             parsed_score = int(data.get("score", 70))
+            # Clamping explícito (ge/le removidos de QAReviewOutput por incompatibilidad DO AI)
+            if parsed_score < 0:
+                parsed_score = 70
+            elif parsed_score > 100:
+                parsed_score = 100
             if parsed_score == 0 and not data.get("issues"):
                 parsed_score = 70
             return QAReviewOutput(
