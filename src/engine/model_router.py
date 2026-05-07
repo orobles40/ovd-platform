@@ -505,11 +505,25 @@ def _apply_stack_routing(config: ResolvedConfig, stack_routing: str) -> Resolved
     - "auto": no hace nada (el Bridge / defaults del sistema deciden)
     - Si la config ya tiene un provider que coincide: no-op para evitar
       sobrescribir la config detallada del Bridge (model, base_url, etc.)
+    - Si stack_routing="ollama" pero OVD_AGENT_PROVIDER/OVD_ANALYSIS_PROVIDER
+      es distinto de "ollama": ignorar el override (evita fallo en DO/cloud
+      donde Ollama no está disponible). El proyecto puede tener stack_routing=ollama
+      del dev local pero en prod se usa el provider configurado.
     """
     if stack_routing == "auto" or stack_routing not in _STACK_ROUTING_DEFAULTS:
         return config
 
     target_provider, target_model = _STACK_ROUTING_DEFAULTS[stack_routing]
+
+    # Si el stack_routing quiere Ollama pero el sistema no tiene Ollama como provider,
+    # ignorar el override — el provider configurado tiene precedencia sobre el default local.
+    if target_provider == "ollama" and _AGENT_PROVIDER != "ollama":
+        log.debug(
+            "stack_routing=%s quiere ollama pero OVD_AGENT_PROVIDER=%s — ignorando override",
+            stack_routing,
+            _AGENT_PROVIDER,
+        )
+        return config
 
     # Si el Bridge ya configuró el mismo provider, respetar su config (model, base_url, etc.)
     if config.provider == target_provider and config.resolved_from != "default":
