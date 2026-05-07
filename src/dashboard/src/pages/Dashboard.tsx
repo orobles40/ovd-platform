@@ -28,7 +28,9 @@ export default function Dashboard() {
     enabled: !!orgId,
   })
 
-  const maxDaily = stats ? Math.max(...stats.daily_cycles.map((d) => d.count), 1) : 1
+  const maxDaily = stats?.daily_cycles?.length
+    ? Math.max(...stats.daily_cycles.map((d) => d.count), 1)
+    : 1
 
   return (
     <div className="space-y-6">
