@@ -300,27 +300,47 @@ async def upsert_stack_profile(
         if not await row.fetchone():
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
 
-        # Desactivar profiles existentes
+        # Desactivar profiles existentes en ambas tablas
         await conn.execute(
             "UPDATE ovd_stack_profiles SET active = false WHERE project_id = %s",
             (project_id,),
         )
+        await conn.execute(
+            "UPDATE ovd_project_profiles SET active = false WHERE project_id = %s",
+            (project_id,),
+        )
 
-        # Insertar nuevo profile activo — columnas según schema real de ovd_stack_profiles
         profile_id = str(uuid.uuid4()).replace("-", "").upper()[:26]
 
+        # Insertar en ovd_project_profiles (tabla completa — usada por la API REST)
         await conn.execute(
             """
-            INSERT INTO ovd_stack_profiles
-              (id, project_id, language, framework, database, active)
-            VALUES (%s, %s, %s, %s, %s, true)
+            INSERT INTO ovd_project_profiles
+              (id, org_id, project_id, language, framework, db_engine, runtime,
+               additional_stack, legacy_stack, external_integrations, qa_tools,
+               ci_cd, constraints, code_style, project_description, team_size,
+               active, time_created, time_updated)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s)
             """,
             (
                 profile_id,
+                org_id,
                 project_id,
                 body.language,
                 body.framework,
                 body.db_engine,
+                body.runtime,
+                json.dumps(body.additional_stack),
+                body.legacy_stack,
+                body.external_integrations,
+                body.qa_tools,
+                body.ci_cd,
+                body.constraints,
+                body.code_style,
+                body.project_description,
+                body.team_size,
+                now,
+                now,
             ),
         )
         await conn.commit()
