@@ -18,6 +18,24 @@
 
 ---
 
+## Última sesión (2026-05-07 — S112: S112-D fix directorio DO + SDD→deepseek + ZIP download)
+
+**S112 — Deploy DigitalOcean — EN PROGRESO:**
+
+3 mejoras completadas en esta sesión:
+
+1. **S112-D fix directorio** (`api.py`): `_ws.mkdir(parents=True, exist_ok=True)` en `session_create` — DO App Platform no pre-crea `/srv/projects/{id}/`. Sin esto `run_tests` fallaba con `[Errno 2] No such file or directory`.
+2. **OVD_MODEL_SDD=deepseek-v4-pro** (`do_app_spec.yaml`): qwen3-coder-flash agota los 8192 completion tokens en modo thinking al generar el SDD estructurado. deepseek-v4-pro: 15.9s vs 260s anterior (16× más rápido), sin `LengthFinishReasonError`.
+3. **S112-E ZIP download** (`api.py` + `ovd.ts` + `FrLauncher.tsx`): nuevo endpoint `GET /session/{thread_id}/artifacts/download` + botón "Descargar código" en estado `phase=done` del Lanzador FR.
+
+**Primer deliver exitoso en DO**: ciclo `180baa45` completó todos los nodos incluyendo `deliver`. Código generado: 10 archivos (turnos-demo/Sistema de Turnos Médicos).
+
+**Bloqueante pendiente**: Merge `dev→main` para deploy en DO (o `doctl apps update`). D3 (secrets en panel DO) ya estaba cubierto por `app.yaml` con tokens DO GenAI.
+
+**Commit**: `2a5c724fb` — feat(s112): ZIP download de artefactos generados desde Lanzador de FR
+
+---
+
 ## Última sesión (2026-05-06 — S112 deploy DO: 4 blockers resueltos, DB prod operativa)
 
 **S112 — Deploy DigitalOcean App Platform — EN PROGRESO:**
@@ -157,18 +175,13 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 **S112 — Despliegue DigitalOcean (demo 2026-05-18)**
 
-**Acción inmediata (usuario):** Configurar secrets en panel DO antes de continuar:
-- `ANTHROPIC_API_KEY` — DO GenAI Platform token (o Anthropic directo)
-- `OPENAI_API_KEY` — mismo token DO GenAI Platform
-- `OVD_ENGINE_SECRET` — secret interno del engine (ver `src/engine/.env`)
-- `JWT_SECRET` — secret para JWT tokens
-- `OVD_ADMIN_PASSWORD` — password del admin demo
+**Acciones inmediatas:**
+1. Merge `dev→main` — activa deploy automático en DO (S112-D + S112-E + OVD_MODEL_SDD)
+2. **D4**: verificar `curl https://ovd-platform.codigonet.cloud/health` tras el deploy
+3. **D5**: RAG bootstrap contra BD prod — `DATABASE_URL=<prod_url> ... python scripts/rag_bootstrap.py --org-id ORG_OVD_DEMO --project-id ovd-platform --clear`
+4. Lanzar ciclo demo "Sistema de Turnos" desde dashboard web y verificar que el botón "Descargar código" entrega el ZIP
 
-Después de secrets → verificar `curl https://ovd-platform.codigonet.cloud/health` → si responde, continuar con C6 (CNAME Route 53) y D5 (RAG bootstrap).
-
-Ver `docs/sprints/CURRENT.md` para estado completo de tareas D1–D5.
-
-**Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46 (Design Quality System)
+**Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46 (Design Quality System), S113 (dry run + guion presentación)
 
 ---
 

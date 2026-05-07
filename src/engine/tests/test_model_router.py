@@ -240,6 +240,7 @@ class TestResolveTemperature:
     def test_qa_claude_tiene_temperature_structured(self):
         """role='qa' con provider='claude' → temperature=ovd_llm_temperature_structured (S115: configurable)."""
         from settings import get_settings
+
         temp = _resolve_temperature("qa", "claude")
         assert temp == get_settings().ovd_llm_temperature_structured
 
@@ -251,6 +252,7 @@ class TestResolveTemperature:
     def test_backend_claude_tiene_temperatura_structured(self):
         """role='backend' con provider='claude' → temperature=ovd_llm_temperature_structured (S115: configurable)."""
         from settings import get_settings
+
         temp = _resolve_temperature("backend", "claude")
         assert temp == get_settings().ovd_llm_temperature_structured
 
