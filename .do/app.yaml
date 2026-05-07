@@ -43,16 +43,17 @@ services:
       - key: NATS_URL
         scope: RUN_TIME
         value: nats://ovd-nats:4222
-      # LLM — Claude vía DO GenAI Platform (A4: endpoint compatible Anthropic SDK)
-      # ANTHROPIC_API_KEY se configura como App-Level en panel DO (no component-level)
-      - key: ANTHROPIC_BASE_URL
-        scope: RUN_TIME
-        value: https://inference.do-ai.run
-      # RAG embeddings — BGE-M3 vía DO GenAI Platform (A4: compatible OpenAI SDK)
-      # OPENAI_API_KEY se configura como App-Level en panel DO (no component-level)
+      # LLM — DO GenAI Platform usa protocolo OpenAI-compatible (/v1/chat/completions).
+      # Los modelos Claude en DO usan el prefijo "anthropic-" en el nombre.
+      # OPENAI_API_KEY = dop_v1_... (token DO) se configura como App-Level en panel DO.
       - key: OPENAI_BASE_URL
         scope: RUN_TIME
         value: https://inference.do-ai.run/v1
+      # S112-fix: openai_base_url en settings.py para que ChatOpenAI use el endpoint DO explícitamente
+      - key: OVD_OPENAI_BASE_URL
+        scope: RUN_TIME
+        value: https://inference.do-ai.run/v1
+      # RAG embeddings — BGE-M3 vía DO GenAI Platform (mismo endpoint OpenAI-compatible)
       - key: OVD_RAG_EMBEDDING_PROVIDER
         scope: RUN_TIME
         value: openai
@@ -65,17 +66,16 @@ services:
       - key: OVD_CORS_ORIGINS
         scope: RUN_TIME
         value: https://ovd-platform.codigonet.cloud,https://ovd-platform-*.ondigitalocean.app
-      # Modelos LLM
+      # Modelos LLM — nombres DO (prefijo anthropic- / openai- / llama3.3- etc.)
+      # Ver catálogo completo: GET https://inference.do-ai.run/v1/models
       - key: OVD_MODEL
         scope: RUN_TIME
-        value: claude-sonnet-4-6
-      - key: OVD_MODEL_CLAUDE
-        scope: RUN_TIME
-        value: claude-sonnet-4-6
-      # C7: provider para agentes de implementación y análisis (no hay Ollama en DO)
+        value: anthropic-claude-4.6-sonnet
+      # S112-fix: provider openai (ChatOpenAI) en lugar de claude (ChatAnthropic)
+      # DO GenAI Platform NO soporta protocolo Anthropic nativo — solo OpenAI-compatible
       - key: OVD_AGENT_PROVIDER
         scope: RUN_TIME
-        value: claude
+        value: openai
       - key: OVD_LLM_TIMEOUT_SECS
         scope: RUN_TIME
         value: "300"

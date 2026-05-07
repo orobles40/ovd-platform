@@ -64,6 +64,12 @@ class OVDSettings(BaseSettings):
     ovd_model_devops: str = ""
     ovd_model_frontend: str = ""
 
+    # ── OpenAI / compatible (DO GenAI, Groq, Together, etc.) ──────────────────
+    # OVD_OPENAI_BASE_URL — leído por model_router para pasar base_url explícitamente a ChatOpenAI.
+    # Si vacío, ChatOpenAI también lee OPENAI_BASE_URL del env (openai SDK estándar).
+    # En DO: https://inference.do-ai.run/v1
+    ovd_openai_base_url: str = ""
+
     # ── Ollama ─────────────────────────────────────────────────────────────────
     ollama_base_url: str = "http://localhost:11434"
     ovd_vision_ollama_url: str = ""  # fallback a ollama_base_url si vacío

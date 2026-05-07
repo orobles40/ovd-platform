@@ -398,9 +398,14 @@ def build_llm(config: ResolvedConfig) -> Any:
         )
 
     if config.provider == "openai":
+        # base_url: OVD_OPENAI_BASE_URL (settings) > env OPENAI_BASE_URL (openai SDK auto)
+        # En DO GenAI Platform usar https://inference.do-ai.run/v1 — protocolo OpenAI-compatible.
+        # Los modelos DO llevan prefijo: anthropic-claude-4.6-sonnet, llama3.3-70b-instruct, etc.
+        _oai_base = get_settings().ovd_openai_base_url or None
         return ChatOpenAI(
             model=config.model,
             api_key=api_key or get_settings().openai_api_key,
+            base_url=_oai_base,
             max_tokens=8192,
             temperature=config.temperature,
             request_timeout=_LLM_TIMEOUT,
