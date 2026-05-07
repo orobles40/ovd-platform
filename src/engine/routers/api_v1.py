@@ -673,7 +673,7 @@ async def get_telemetry(
               AND tokens_by_agent IS NOT NULL
               AND tokens_by_agent != 'null'::jsonb
             GROUP BY agent_key
-            ORDER BY tokens_in + tokens_out DESC
+            ORDER BY SUM((agent_val->>'input')::int) + SUM((agent_val->>'output')::int) DESC
             """,
             (org_id, days),
         )
@@ -1129,45 +1129,54 @@ async def get_knowledge_status(
     """S17.D — Estadísticas de chunks RAG indexados para el org/proyecto."""
     _assert_org_access(current_user, org_id)
 
-    async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
-        if project_id:
-            collection_name = f"ovd_project_{project_id}"
-            row = await conn.execute(
+    try:
+        async with await psycopg.AsyncConnection.connect(_DATABASE_URL) as conn:
+            if project_id:
+                collection_name = f"ovd_project_{project_id}"
+                row = await conn.execute(
+                    """
+                    SELECT COUNT(e.id)
+                    FROM langchain_pg_collection c
+                    JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
+                    WHERE c.name = %s
+                    """,
+                    (collection_name,),
+                )
+            else:
+                row = await conn.execute(
+                    """
+                    SELECT COUNT(e.id)
+                    FROM langchain_pg_collection c
+                    JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
+                    WHERE c.name LIKE 'ovd_project_%%'
+                    """,
+                )
+            total = (await row.fetchone())[0]
+
+            # Desglose por proyecto/colección
+            breakdown_rows = await conn.execute(
                 """
-                SELECT COUNT(e.id)
-                FROM langchain_pg_collection c
-                JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
-                WHERE c.name = %s
-                """,
-                (collection_name,),
-            )
-        else:
-            row = await conn.execute(
-                """
-                SELECT COUNT(e.id)
+                SELECT c.name, COUNT(e.id) AS chunks
                 FROM langchain_pg_collection c
                 JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
                 WHERE c.name LIKE 'ovd_project_%%'
+                GROUP BY c.name
+                ORDER BY chunks DESC
                 """,
             )
-        total = (await row.fetchone())[0]
-
-        # Desglose por proyecto/colección
-        breakdown_rows = await conn.execute(
-            """
-            SELECT c.name, COUNT(e.id) AS chunks
-            FROM langchain_pg_collection c
-            JOIN langchain_pg_embedding e ON e.collection_id = c.uuid
-            WHERE c.name LIKE 'ovd_project_%%'
-            GROUP BY c.name
-            ORDER BY chunks DESC
-            """,
-        )
-        breakdown = await breakdown_rows.fetchall()
+            breakdown = await breakdown_rows.fetchall()
+    except Exception:
+        # RAG no bootstrapped todavía — langchain_pg_collection no existe
+        return {
+            "total_chunks": 0,
+            "by_project": [],
+            "rag_enabled": False,
+        }
 
     return {
         "total_chunks": int(total),
         "by_project": [{"collection": r[0], "chunks": int(r[1])} for r in breakdown],
+        "rag_enabled": True,
     }
 
 
