@@ -44,7 +44,7 @@ Genera una lista de requisitos con los campos exactos:
    ```
 2. **Rutas de importación exactas** — qué importa cada agente de quién. Ejemplo:
    ```
-   tests/ importa de: src.auth.models.User, src.auth.service.verify_password
+   tests/ importa de: src.auth.models.User, src.auth.services.verify_password
    frontend importa de: src.auth.models (mismas clases)
    ```
 3. **Regla:** Si el agente de tests espera `User`, el agente de backend DEBE crear `class User`. No puede haber nombres distintos para el mismo concepto.
@@ -85,7 +85,7 @@ Este campo determina qué agente ejecuta la tarea. Sin él, el sistema asigna to
 | Dockerfile | `Dockerfile` | devops |
 | docker-compose | `docker-compose.yml` | devops |
 | GitHub Actions | `.github/workflows/ci.yml` | devops |
-| Módulo Python | `src/contracts/service.py` | backend |
+| Módulo Python | `src/contracts/services.py` | backend |
 | Tests Python | `tests/test_contracts.py` | backend |
 
 ❌ INCORRECTO — sin output_file:
@@ -124,7 +124,7 @@ Este campo determina qué agente ejecuta la tarea. Sin él, el sistema asigna to
 
 ✅ CORRECTO — descripción con ruta explícita:
 - TASK-001: "Crear `src/imc/models.py` con ImcRequest(weight_kg, height_m) e ImcResponse(bmi, category)"
-- TASK-002: "Crear `src/imc/service.py` con función `calculate_bmi(weight_kg: float, height_m: float) -> tuple[float, str]`"
+- TASK-002: "Crear `src/imc/services.py` con función `calculate_bmi(weight_kg: float, height_m: float) -> tuple[float, str]`"
 - TASK-003: "Crear `src/main.py` con FastAPI app y endpoint POST /imc"
 - TASK-004: "Crear `tests/test_imc.py` con pytest: casos happy path, peso negativo, altura cero, categorías"
 
@@ -158,9 +158,9 @@ El agente backend copiará el nombre exacto de la task description — si usas e
 | Validar RUT | `validate_rut(rut: str) -> bool` | `src/utils/rut_validator.py` |
 | Limpiar RUT | `clean_rut(rut: str) -> str` | `src/utils/rut_validator.py` |
 | Es número primo | `is_prime(n: int) -> bool` | `src/utils/prime_validator.py` |
-| Crear contrato | `create_contract(data, user)` | `src/contracts/service.py` |
-| Obtener por ID | `get_contract_by_id(id, user)` | `src/contracts/service.py` |
-| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/calculadora/service.py` |
+| Crear contrato | `create_contract(data, user)` | `src/contracts/services.py` |
+| Obtener por ID | `get_contract_by_id(id, user)` | `src/contracts/services.py` |
+| Calcular IMC | `calculate_bmi(weight_kg, height_m)` | `src/calculadora/services.py` |
 
 ❌ PROHIBIDO en task descriptions: `validar_rut`, `calcular_imc`, `crear_contrato`, `es_primo`
 ✅ CORRECTO: `validate_rut`, `calculate_bmi`, `create_contract`, `is_prime`
@@ -287,7 +287,7 @@ Sin estas tareas, el agente backend generará imports a módulos inexistentes �
 
 ❌ INCORRECTO — FastAPI sin infraestructura:
 ```
-TASK-001: src/contracts/service.py   ← importa get_db que no existe
+TASK-001: src/contracts/services.py  ← importa get_db que no existe
 TASK-002: src/main.py                ← importa get_current_user que no existe
 ```
 
@@ -295,7 +295,7 @@ TASK-002: src/main.py                ← importa get_current_user que no existe
 ```
 TASK-001: src/database.py            ← define get_db, SessionLocal, Base
 TASK-002: src/auth/dependencies.py   ← define get_current_user
-TASK-003: src/contracts/service.py   ← puede importar de TASK-001 y TASK-002
+TASK-003: src/contracts/services.py  ← puede importar de TASK-001 y TASK-002
 TASK-004: src/main.py                ← puede importar de todos los anteriores
 ```
 

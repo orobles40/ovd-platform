@@ -18,11 +18,18 @@ Solo después de estos archivos escribe el código de negocio.
 
 **PROHIBIDO: NUNCA generes `__init__.py` en la RAÍZ del proyecto.** Convierte el workspace en paquete, rompiendo pytest y los imports.
 
+**REGLA DE NAMING — módulo de servicios (S113-A):**
+El archivo de lógica de negocio siempre se llama **`services.py`** (plural con 's').
+❌ PROHIBIDO: `service.py` (singular sin 's')
+✅ CORRECTO: `src/contratos/services.py`, `src/turnos/services.py`, `src/auth/services.py`
+Los tests deben importar `from src.<paquete>.services import ...` — nunca `from src.<paquete>.service import ...`
+
 **CHECKLIST antes de entregar:**
 - [ ] `requirements.txt` con todas las dependencias usadas en el código
 - [ ] Cada módulo importado por otros fue generado en esta entrega
 - [ ] No hay `from x import y` donde `x` es un archivo que no creaste
 - [ ] `conftest.py` con `sys.path.insert(0, "src")`
+- [ ] El archivo de servicios se llama `services.py` (plural), no `service.py`
 
 ### Estructura válida vs inválida
 

@@ -3092,7 +3092,11 @@ def _build_architecture_contract_text(sdd: dict) -> str:
             continue
 
         module_path = output_file.replace("\\", "/")
-        # Inferir módulo de import: src/contracts/service.py → src.contracts.service
+        # S113-A: normalizar service.py → services.py en el contrato para que el agente
+        # genere el archivo con el nombre canónico desde el inicio (sin requerir S101-A).
+        if module_path.endswith("/service.py"):
+            module_path = module_path[:-len("service.py")] + "services.py"
+        # Inferir módulo de import: src/contracts/services.py → src.contracts.services
         import_module = module_path.removesuffix(".py").replace("/", ".")
 
         entities.append(
