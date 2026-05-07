@@ -644,6 +644,9 @@ async def start_session(
 
         _ws = _Path_c(resolved_directory)
 
+        # S112-D: crear el directorio del proyecto si no existe (DO App Platform no lo pre-crea)
+        _ws.mkdir(parents=True, exist_ok=True)
+
         # S104-C: eliminar __pycache__ para evitar bytecode residual
         for _cache_dir in _ws.rglob("__pycache__"):
             try:
