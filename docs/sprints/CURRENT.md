@@ -1,6 +1,6 @@
 # Sprint activo — S112 (Despliegue DigitalOcean)
 
-> Última actualización: 2026-05-05 | Rama: `dev`
+> Última actualización: 2026-05-06 | Rama: `dev`
 > Skills Fase 1 activos: session-start, session-close, run-tests, pre-push
 
 ---
@@ -59,10 +59,10 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 
 | ID | Tarea | Estado |
 |----|-------|--------|
-| D1 | Crear App Platform: `doctl apps create --spec .do/app.yaml`. Prerequisito: repo GitHub `orobles40/ovd-platform` conectado a la cuenta DO (panel DO → Apps → GitHub). La BD Managed PostgreSQL se provisiona automáticamente desde la sección `databases:` del spec. pgvector y uuid-ossp se activan via Alembic migration 0000. | ⬜ Pendiente |
-| D2 | Se crea automáticamente como parte de D1. **Cambiar `production: false` en la sección `databases:` del `app.yaml`** — `production: true` provisiona cluster HA con réplica standby ($50/mes innecesario para demo). Con `false` queda single-node ($15/mes, ahorro $35/mes). Upgrade a producción real desde el panel DO sin downtime cuando haya clientes. Post-creación: crear rol `ovd_readonly` manualmente con psql si se necesita MCP PostgreSQL (no crítico para demo). | ⬜ Pendiente |
-| D3 | Configurar secrets en panel DO (App → Settings → Environment Variables) antes del primer deploy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OVD_ENGINE_SECRET`, `OVD_ADMIN_PASSWORD`, `JWT_SECRET` (cubierto por C8). Variables no-secretas ya están en `app.yaml`. | ⬜ Pendiente |
-| D4 | Orden: D1 → D3 → C6 (CNAME Route 53) → deploy automático. Verificar: `curl https://ovd-platform.codigonet.cloud/health`. Esperar mínimo 2 min (Alembic corre en startup, `initial_delay_seconds: 60` en health check). | ⬜ Pendiente |
+| D1 | Crear App Platform: `doctl apps create --spec .do/app.yaml`. App creada: ID `f8d2207e-8229-4647-b9ad-5c14dcba4246`. NOTA: la BD Managed PostgreSQL NO se provisiona automáticamente — requiere cluster pre-existente con `production: true` + `cluster_name`. pgvector y uuid-ossp activados via Alembic migration 0000. | ✅ Resuelto |
+| D2 | Cluster standalone `ovd-postgres-prod` creado via `doctl databases create --engine pg --version 16 --region nyc3 --num-nodes 1 --size db-s-1vcpu-1gb` (ID: `f047cf82-6af0-4d3e-8ae7-15c6e96d785a`, nyc3, online). `production: true` en `app.yaml`. Usuario `doadmin`, `can_create_public=True`, migraciones Alembic completadas ✅, seed aplicado ✅. NOTA: con `production: false` (BD interna DO), el usuario `db` tiene USAGE en public pero NO CREATE — REVOKE a nivel plataforma, sin workaround vía GRANT. | ✅ Resuelto |
+| D3 | **⚠ BLOQUEANTE ACTUAL** — Configurar 5 secrets en panel DO (App → Settings → Environment Variables): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OVD_ENGINE_SECRET`, `OVD_ADMIN_PASSWORD`, `JWT_SECRET`. Sin estos el engine arranca, corre Alembic y seed, luego falla en validación startup: `[REQUIRED] Sin provider LLM`. Último deploy `cae0c11f` falló en este punto (9/11). | 🔴 Pendiente (usuario) |
+| D4 | Después de D3: verificar `curl https://ovd-platform.codigonet.cloud/health`. Esperar mínimo 2 min (Alembic corre en startup, `initial_delay_seconds: 60` en health check). C6 (CNAME Route 53) debe estar configurado antes de probar el dominio. | ⬜ Pendiente |
 | D5 | Bootstrap RAG producción: ejecutar `rag_bootstrap.py` localmente contra la prod DB (DO Managed PostgreSQL permite conexiones externas agregando la IP local a fuentes confiables en el panel DO). Comando: `DATABASE_URL=<prod_url> OPENAI_API_KEY=<dop_token> OPENAI_BASE_URL=https://inference.do-ai.run/v1 OVD_RAG_EMBEDDING_PROVIDER=openai OVD_EMBED_MODEL=bge-m3 python scripts/rag_bootstrap.py --org-id ORG_OVD_DEMO --project-id ovd-platform --clear`. El `--clear` limpia vectores residuales del setup inicial. Indexar: `src/engine/` (codebase) + `docs/` (docs). | ⬜ Pendiente |
 
 ---
@@ -113,6 +113,27 @@ basado en ciclo S103 QA=90 (Reutilización).
 
 **Fases de implementación:** A (config proyecto + UI) → B (selector modo en FR) →
 C (`read_existing_codebase`) → D (agentes migración) → E (`write_artifacts` selectivo)
+
+### S114 — Model Selector: configuración de modelos por agente desde dashboard
+
+> Referencia completa: `docs/ROADMAP.md` → Sprint S114 (al final de ÉPICA-2)
+
+**Qué resuelve:** hoy los modelos por agente solo se pueden cambiar via env vars + redeploy.
+Con S114, el operador selecciona el modelo de cada agente desde la UI sin tocar infraestructura.
+
+**Fase 1 (6.5h — post-demo):**
+- `GET /api/v1/catalog/models` — catálogo DO en tiempo real
+- `GET/PUT /api/v1/orgs/{org_id}/model-config` — leer/escribir config en memoria
+- `_RUNTIME_OVERRIDES` dict en model_router.py — override sin restart
+- `ModelDashboard.tsx` — Tab "Configuración" con dropdowns + Tab "Fine-tuning" (existente)
+
+**Fase 2 (3.5h — post Fase 1):**
+- Tabla BD `ovd_model_config` — persistencia real por org/proyecto/rol
+- model_router.py — jerarquía BD > env vars > default
+
+**Catálogo DO verificado (2026-05-07):** 60 modelos disponibles incluyendo
+`anthropic-claude-4.6-sonnet`, `anthropic-claude-haiku-4.5`, `llama3.3-70b-instruct`,
+`qwen3-coder-flash`, `deepseek-r1-distill-llama-70b`.
 
 ### Calidad del engine
 

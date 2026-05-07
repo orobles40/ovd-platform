@@ -3782,3 +3782,174 @@ Lo que se presenta como roadmap (no demo en vivo):
 - Modo 4 Reutilización de sistemas validados
 
 ---
+
+### Sprint S114 — Model Selector: configuración de modelos por agente desde el dashboard
+
+**Registrado:** 2026-05-07
+**Prioridad:** Alta post-demo
+**Estado:** ⬜ Pendiente — propuesta aprobada para implementar post S113
+**Prerequisito:** S112 y S113 completados (plataforma DO operativa)
+
+#### Contexto y motivación
+
+Con S112 se estableció que DO GenAI Platform expone 60+ modelos bajo un endpoint
+OpenAI-compatible (`https://inference.do-ai.run/v1`). El engine ya tiene toda la lógica
+de routing por rol en `model_router.py` (variables `OVD_MODEL_BACKEND`, `OVD_MODEL_ANALYZER`,
+etc.), pero la configuración solo es posible vía variables de entorno — requiere redeploy.
+
+El objetivo de este sprint es exponer esa configuración en el dashboard para que el
+operador pueda cambiar qué modelo usa cada agente sin tocar infraestructura.
+
+#### Catálogo de modelos DO relevantes (verificado 2026-05-07)
+
+| Modelo DO | Equivalente | Caso de uso |
+|-----------|-------------|-------------|
+| `anthropic-claude-4.6-sonnet` | Claude Sonnet 4.6 | Default todos los agentes — mejor calidad |
+| `anthropic-claude-4.5-sonnet` | Claude Sonnet 4.5 | Alternativa económica |
+| `anthropic-claude-haiku-4.5` | Claude Haiku 4.5 | Agentes rápidos / análisis liviano |
+| `anthropic-claude-opus-4.7` | Claude Opus 4.7 | Máxima calidad en análisis complejos |
+| `llama3.3-70b-instruct` | LLaMA 3.3 70B | Open source, codegen general |
+| `deepseek-r1-distill-llama-70b` | DeepSeek R1 | Razonamiento / FRs complejos |
+| `qwen3-coder-flash` | Qwen3 Coder | Codegen rápido, bajo costo |
+| `bge-m3` | BGE-M3 | **Embeddings RAG — no cambiar** |
+
+API para obtener catálogo actualizado:
+```bash
+GET https://inference.do-ai.run/v1/models
+Authorization: Bearer <OPENAI_API_KEY>
+```
+
+#### Roles del engine y sus variables actuales
+
+| Rol | Grupo | Variable env override |
+|-----|-------|----------------------|
+| `analyzer` | Análisis | `OVD_MODEL_ANALYZER` |
+| `sdd` | Análisis | `OVD_MODEL_SDD` |
+| `qa` | Análisis | `OVD_MODEL_QA` |
+| `backend` | Implementación | `OVD_MODEL_BACKEND` |
+| `frontend` | Implementación | `OVD_MODEL_FRONTEND` |
+| `database` | Implementación | `OVD_MODEL_DATABASE` |
+| `devops` | Implementación | `OVD_MODEL_DEVOPS` |
+| `security_exec` | Implementación | — (hereda global) |
+| *(global)* | — | `OVD_MODEL` + `OVD_AGENT_PROVIDER` |
+
+#### Fase 1 — Configuración en memoria, sin DB (demo / MVP)
+
+Implementar sin nueva tabla de BD. La config se aplica al proceso activo hasta el
+próximo restart. Suficiente para demo y operación inicial.
+
+**A. `api_v1.py` — 2 endpoints nuevos**
+
+```
+GET  /api/v1/catalog/models
+     → llama inference.do-ai.run/v1/models, filtra modelos de texto (excluye imagen/TTS/embedding)
+     → retorna [{id, display_name, family, recommended_roles}]
+
+GET  /api/v1/orgs/{org_id}/model-config
+     → retorna config activa en el proceso (env vars resueltos por model_router)
+     → formato: {global_model, global_provider, by_role: {backend: {...}, analyzer: {...}, ...}}
+
+PUT  /api/v1/orgs/{org_id}/model-config
+     → actualiza variables en memoria del model_router (sin reinicio, sin DB)
+     → body: {role: "backend", provider: "openai", model: "qwen3-coder-flash"}
+     → aplica hasta próximo restart del engine
+```
+
+**B. `model_router.py` — soporte de override en memoria**
+
+Agregar dict `_RUNTIME_OVERRIDES: dict[str, tuple[str, str]]` (role → (provider, model))
+que la función `resolve()` consulta antes de las env vars.
+
+El endpoint PUT escribe en este dict. Se limpia al reiniciar el proceso.
+
+**C. `ModelDashboard.tsx` — reemplazar por dos tabs**
+
+- **Tab "Configuración"** (nuevo):
+  - Tabla con una fila por rol
+  - Cada fila tiene un dropdown de modelo poblado desde `GET /catalog/models`
+  - Botón "Guardar" llama `PUT /model-config`
+  - Badge "en memoria / hasta próximo deploy" para que el operador sepa que no persiste
+
+- **Tab "Fine-tuning"** (existente):
+  - Todo el contenido actual de `ModelDashboard.tsx` se mueve aquí sin cambios
+
+**D. `ovd.ts` — 3 métodos nuevos**
+
+```typescript
+getCatalogModels(): Promise<ModelEntry[]>
+getModelConfig(orgId: string): Promise<ModelConfig>
+updateModelConfig(orgId: string, role: string, provider: string, model: string): Promise<void>
+```
+
+#### Fase 2 — Persistencia en BD (post-demo, sprint independiente)
+
+**E. Migración `20260601_0006_ovd_model_config.py`**
+
+```sql
+CREATE TABLE ovd_model_config (
+  id           TEXT PRIMARY KEY,
+  org_id       TEXT NOT NULL,
+  project_id   TEXT,                    -- NULL = nivel org
+  agent_role   TEXT NOT NULL,           -- 'backend' | 'analyzer' | '_global' | etc.
+  provider     TEXT NOT NULL DEFAULT 'openai',
+  model        TEXT NOT NULL,
+  active       BOOLEAN NOT NULL DEFAULT true,
+  time_created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  time_updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX idx_ovd_model_config_unique
+  ON ovd_model_config (org_id, COALESCE(project_id,''), agent_role)
+  WHERE active = true;
+```
+
+**F. `model_router.resolve()` — consultar BD antes de env vars**
+
+Nueva jerarquía:
+```
+1. BD: config (org_id + project_id + agent_role)   ← más específica
+2. BD: config (org_id + NULL + agent_role)          ← nivel org
+3. Env vars: OVD_MODEL_*, OVD_AGENT_PROVIDER
+4. System default: openai + anthropic-claude-4.6-sonnet
+```
+
+**G. `PUT /api/v1/orgs/{org_id}/projects/{project_id}/model-config`**
+Persiste en BD. Reemplaza el PUT en memoria de Fase 1.
+
+#### Estimación de trabajo
+
+| Fase | Componente | Esfuerzo estimado |
+|------|-----------|-------------------|
+| 1-A | api_v1.py (3 endpoints) | 2h |
+| 1-B | model_router.py (_RUNTIME_OVERRIDES) | 1h |
+| 1-C | ModelDashboard.tsx (2 tabs + form) | 3h |
+| 1-D | ovd.ts (3 métodos) | 0.5h |
+| **Total Fase 1** | | **~6.5h** |
+| 2-E | Migración BD | 0.5h |
+| 2-F | model_router.py (BD lookup) | 2h |
+| 2-G | endpoint PUT persistente | 1h |
+| **Total Fase 2** | | **~3.5h** |
+
+#### Wireframe UI (Tab Configuración)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Modelo                  [Configuración]  [Fine-tuning]         │
+│─────────────────────────────────────────────────────────────────│
+│  ⚠ Cambios en memoria — se aplican hasta el próximo deploy      │
+│                                                                 │
+│  Rol              Modelo activo                                 │
+│  ─────────────────────────────────────────────────────          │
+│  Global (default) [anthropic-claude-4.6-sonnet         ▼]      │
+│  Análisis FR/SDD  [anthropic-claude-4.6-sonnet         ▼]      │
+│  QA Review        [anthropic-claude-4.6-sonnet         ▼]      │
+│  Backend          [qwen3-coder-flash                   ▼]      │
+│  Frontend         [anthropic-claude-4.6-sonnet         ▼]      │
+│  Database         [llama3.3-70b-instruct               ▼]      │
+│  DevOps           [anthropic-claude-haiku-4.5          ▼]      │
+│                                                                 │
+│  Dropdowns se cargan desde DO GenAI Platform en tiempo real     │
+│                                                    [Guardar]    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
