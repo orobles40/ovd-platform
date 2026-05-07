@@ -40,8 +40,8 @@ class TestCheckEnv:
         valid_env(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "openai-sk-wrong")
         result = check_env()
-        assert result.ok is False
-        assert any("ANTHROPIC_API_KEY" in e for e in result.errors)
+        # ANTHROPIC_API_KEY es opcional — prefijo inválido genera warning, no error (S112)
+        assert any("ANTHROPIC_API_KEY" in w for w in result.warnings)
 
     def test_falla_sin_database_url(self, monkeypatch):
         valid_env(monkeypatch)

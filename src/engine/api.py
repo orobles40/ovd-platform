@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import psycopg
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -205,9 +205,33 @@ app.include_router(api_v1_router)
 OVD_SECRET = _cfg.ovd_engine_secret
 
 
-def verify_secret(x_ovd_secret: str | None = Header(default=None)) -> None:
+def verify_secret(
+    x_ovd_secret: str | None = Header(default=None, alias="X-OVD-Secret"),
+    authorization: str | None = Header(default=None),
+) -> None:
+    """FastAPI Dependency: acepta JWT válido (dashboard) O X-OVD-Secret válido (TUI/CLI).
+
+    Usar via Depends(verify_secret) en cada endpoint protegido.
+    Si viene un JWT Bearer válido, se omite el check del secret — el dashboard
+    no debe incluir el secret en el bundle JS (evita exposición en cliente).
+    Si no hay JWT, se exige X-OVD-Secret (autenticación TUI/CLI server-to-server).
+    """
     # SEC MEDIUM-01: usar compare_digest para evitar timing attacks
-    if OVD_SECRET and not hmac.compare_digest(x_ovd_secret or "", OVD_SECRET):
+    if not OVD_SECRET:
+        return  # sin secret configurado, no hay restricción (dev/test)
+
+    # Bypass via JWT válido — el dashboard solo envía Authorization: Bearer
+    if authorization and authorization.startswith("Bearer "):
+        from auth import verify_access_token
+
+        try:
+            verify_access_token(authorization[7:])
+            return  # JWT válido → no se requiere X-OVD-Secret
+        except Exception:
+            pass  # JWT inválido/expirado → continúa a check de secret
+
+    # Sin JWT válido → exigir X-OVD-Secret (TUI/CLI)
+    if not hmac.compare_digest(x_ovd_secret or "", OVD_SECRET):
         raise HTTPException(status_code=401, detail="X-OVD-Secret invalido")
 
 
@@ -484,9 +508,8 @@ async def health():
 async def start_session(
     body: StartSessionRequest,
     request: Request,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
-    verify_secret(x_ovd_secret)
     thread_id = body.parent_thread_id or str(uuid.uuid4())
     session_id = body.session_id or thread_id  # dashboard no genera session_id propio
 
@@ -1026,7 +1049,7 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
 async def stream_session(
     thread_id: str,
     request: Request,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     S47-A: SSE que lee de una queue. El grafo corre en background.
@@ -1034,7 +1057,6 @@ async def stream_session(
     Si el cliente desconecta, el grafo CONTINÚA ejecutándose.
     Si el cliente reconecta, consume los eventos acumulados en la queue.
     """
-    verify_secret(x_ovd_secret)
     config = {"configurable": {"thread_id": thread_id}}
 
     # Inicializar queue y done_event para este thread si no existen
@@ -1124,13 +1146,12 @@ async def _heartbeat(request: Request):
 @app.get("/session/{thread_id}/state")
 async def get_session_state(
     thread_id: str,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     Devuelve el estado actual del ciclo incluyendo el SDD completo.
     Usado por el TUI para poblar la pantalla de revisión iterativa del SDD.
     """
-    verify_secret(x_ovd_secret)
     if not _graph:
         raise HTTPException(503, detail="Engine no inicializado")
 
@@ -1154,13 +1175,12 @@ async def get_session_state(
 async def get_session_delivery(
     thread_id: str,
     org_id: str,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     S16T.C — Devuelve los entregables completos del ciclo una vez finalizado.
     Incluye: artefactos por agente (con lista de archivos escritos), informe, scores.
     """
-    verify_secret(x_ovd_secret)
     if not _graph:
         raise HTTPException(503, detail="Engine no inicializado")
 
@@ -1223,9 +1243,8 @@ async def get_session_delivery(
 async def approve_session(
     thread_id: str,
     body: ApproveRequest,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
-    verify_secret(x_ovd_secret)
     if not _graph:
         raise HTTPException(503, detail="Engine no inicializado")
 
@@ -1262,9 +1281,8 @@ async def approve_session(
 async def escalate_session(
     thread_id: str,
     body: EscalateRequest,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
-    verify_secret(x_ovd_secret)
     if not _graph:
         raise HTTPException(503, detail="Engine no inicializado")
 
@@ -1296,7 +1314,7 @@ class ResearchRequest(BaseModel):
 @app.post("/research/run")
 async def run_research(
     body: ResearchRequest,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     Ejecuta el Research Agent para un proyecto (GAP-009).
@@ -1311,7 +1329,6 @@ async def run_research(
       - summary: resumen ejecutivo
       - cve_count / deprecation_count: contadores por tipo
     """
-    verify_secret(x_ovd_secret)
 
     bridge = body.bridge_url or os.environ.get(
         "OVD_BRIDGE_URL", "http://localhost:3000"
@@ -1346,7 +1363,7 @@ class WebResearchRequest(BaseModel):
 @app.post("/research/ask")
 async def research_ask(
     body: WebResearchRequest,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     Ejecuta el Web Researcher para consultas ad-hoc (Sprint 11 — S11.D).
@@ -1360,7 +1377,6 @@ async def research_ask(
       - indexed: documentos indexados en RAG org-level
       - queries: queries ejecutadas (puede diferir del input por límite máximo)
     """
-    verify_secret(x_ovd_secret)
 
     bridge = body.bridge_url or os.environ.get(
         "OVD_BRIDGE_URL", "http://localhost:3000"
@@ -1399,13 +1415,13 @@ from auth import verify_access_token  # noqa: E402
 @app.post("/admin/nightly-research/run")
 async def admin_nightly_run(
     request: Request,
-    x_ovd_secret: str | None = Header(default=None),
+    _: None = Depends(verify_secret),
 ):
     """
     Dispara el job de investigación nightly manualmente (S11.G).
 
-    Requiere X-OVD-Secret válido. Si se incluye Authorization Bearer, verifica
-    que el token tenga rol admin.
+    Requiere X-OVD-Secret válido o JWT admin. Si se incluye Authorization Bearer,
+    verifica que el token tenga rol admin.
     Útil para pruebas y para forzar un ciclo de investigación fuera de hora.
 
     Response:
@@ -1414,8 +1430,6 @@ async def admin_nightly_run(
       - alerts_sent: alertas CVE publicadas en NATS
       - errors: lista de errores no fatales
     """
-    verify_secret(x_ovd_secret)
-
     # Si viene JWT, verificar rol admin
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.removeprefix("Bearer ").strip()

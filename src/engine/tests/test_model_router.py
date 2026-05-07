@@ -237,10 +237,11 @@ class TestResolveTemperature:
         temp = _resolve_temperature("qa", "ollama")
         assert temp == 0.0
 
-    def test_qa_claude_tiene_temperature_mas_alta_que_zero(self):
-        """role='qa' con provider='claude' → temperature > 0.0."""
+    def test_qa_claude_tiene_temperature_structured(self):
+        """role='qa' con provider='claude' → temperature=ovd_llm_temperature_structured (S115: configurable)."""
+        from settings import get_settings
         temp = _resolve_temperature("qa", "claude")
-        assert temp > 0.0
+        assert temp == get_settings().ovd_llm_temperature_structured
 
     def test_backend_ollama_tiene_temperature_cero(self):
         """role='backend' con provider='ollama' → temperature=0.0 (S104-A: structured role)."""
@@ -248,9 +249,10 @@ class TestResolveTemperature:
         assert temp == 0.0
 
     def test_backend_claude_tiene_temperatura_structured(self):
-        """role='backend' con provider='claude' → temperature=0.2 (S104-A: structured role)."""
+        """role='backend' con provider='claude' → temperature=ovd_llm_temperature_structured (S115: configurable)."""
+        from settings import get_settings
         temp = _resolve_temperature("backend", "claude")
-        assert temp == 0.2
+        assert temp == get_settings().ovd_llm_temperature_structured
 
     def test_analyzer_es_structured_role(self):
         """role='analyzer' → temperatura structured (igual a backend, ambos son structured desde S104-A)."""
