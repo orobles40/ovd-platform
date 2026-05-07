@@ -171,30 +171,16 @@ ingress:
       match:
         path:
           prefix: /session
+    # S112-fix: /orgs, /projects, /config eliminados — no hay rutas engine en esos prefijos
+    # (todas las rutas API van por /api/v1/). Evita secuestrar rutas SPA React.
+    # /admin reducido a ruta específica del engine (nightly research).
+    # /admin/users y /admin/skills son rutas SPA — deben llegar al catch-all dashboard.
     - component:
         name: ovd-engine
         preserve_path_prefix: true
       match:
         path:
-          prefix: /orgs
-    - component:
-        name: ovd-engine
-        preserve_path_prefix: true
-      match:
-        path:
-          prefix: /projects
-    - component:
-        name: ovd-engine
-        preserve_path_prefix: true
-      match:
-        path:
-          prefix: /config
-    - component:
-        name: ovd-engine
-        preserve_path_prefix: true
-      match:
-        path:
-          prefix: /admin
+          prefix: /admin/nightly-research
     # API REST v1 — rutas /api/v1/... → engine (S112: fix ingress faltante)
     - component:
         name: ovd-engine
