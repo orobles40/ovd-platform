@@ -178,4 +178,9 @@ export const ovdApi = {
     api.get<{ status: string; sdd: unknown; fr_analysis: unknown; feature_request: string }>(
       `/session/${threadId}/state`
     ).then((r) => r.data),
+
+  // S112-E: descargar código generado como ZIP
+  downloadArtifacts: (threadId: string): Promise<Blob> =>
+    api.get(`/session/${threadId}/artifacts/download`, { responseType: 'blob' })
+      .then((r) => r.data as Blob),
 }

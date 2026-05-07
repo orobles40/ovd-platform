@@ -118,6 +118,7 @@ export default function FrLauncher() {
   const [sddExpanded, setSddExpanded] = useState(false)
   const [finalStatus, setFinalStatus] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [downloading, setDownloading] = useState(false)
 
   // Fase 1 — estados de aprobación ampliados
   const [feedbackText, setFeedbackText] = useState('')
@@ -559,6 +560,24 @@ export default function FrLauncher() {
     }
   }
 
+  async function handleDownloadArtifacts() {
+    if (!sessionId) return
+    setDownloading(true)
+    try {
+      const blob = await ovdApi.downloadArtifacts(sessionId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ovd-${sessionId.slice(0, 8)}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      pushLog('✗ Error al descargar artefactos')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -927,16 +946,26 @@ export default function FrLauncher() {
                   <CheckCircle size={14} />
                   Ciclo completado — {finalStatus}
                 </div>
-                <button
-                  onClick={() => {
-                    setPhase('form')
-                    setFrText('')
-                    setSessionId(null)
-                  }}
-                  className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors"
-                >
-                  Nuevo FR <ChevronRight size={14} />
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleDownloadArtifacts}
+                    disabled={downloading}
+                    className="flex items-center gap-1.5 text-sm text-violet-400 hover:text-violet-300 disabled:opacity-40 transition-colors"
+                  >
+                    <Download size={14} />
+                    {downloading ? 'Descargando...' : 'Descargar código'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPhase('form')
+                      setFrText('')
+                      setSessionId(null)
+                    }}
+                    className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors"
+                  >
+                    Nuevo FR <ChevronRight size={14} />
+                  </button>
+                </div>
               </div>
             )}
 

@@ -36,7 +36,7 @@ from typing import AsyncIterator
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -1249,6 +1249,50 @@ async def get_session_delivery(
         "tokens_out": total_out,
         "elapsed_secs": round(elapsed, 1),
     }
+
+
+@app.get("/session/{thread_id}/artifacts/download")
+async def download_session_artifacts(
+    thread_id: str,
+    _: None = Depends(verify_secret),
+):
+    """S112-E: descarga el código generado por el ciclo como ZIP."""
+    import io
+    import zipfile
+    from pathlib import Path as _ArtPath
+
+    if not _graph:
+        raise HTTPException(503, detail="Engine no inicializado")
+
+    config = {"configurable": {"thread_id": thread_id}}
+    state = await _graph.aget_state(config)
+    if not state or not state.values:
+        raise HTTPException(404, detail="Thread no encontrado")
+
+    v = state.values
+    directory = v.get("directory", "")
+    session_id = v.get("session_id", thread_id)
+
+    if not directory:
+        raise HTTPException(404, detail="Directorio de entregables no configurado")
+
+    ws = _ArtPath(directory)
+    if not ws.exists():
+        raise HTTPException(404, detail=f"Directorio no encontrado: {directory}")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in ws.rglob("*"):
+            if f.is_file() and "__pycache__" not in str(f) and ".git" not in str(f):
+                zf.write(f, f.relative_to(ws))
+    buf.seek(0)
+
+    filename = f"ovd-{session_id[:8]}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.post("/session/{thread_id}/approve")
