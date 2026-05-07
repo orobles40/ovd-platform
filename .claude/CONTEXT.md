@@ -18,6 +18,31 @@
 
 ---
 
+## Última sesión (2026-05-06 — S112 deploy DO: 4 blockers resueltos, DB prod operativa)
+
+**S112 — Deploy DigitalOcean App Platform — EN PROGRESO:**
+
+Infraestructura DO creada y configurada. 4 blockers de build/startup resueltos iterativamente:
+
+1. **`dockerfile_path` relativo al repo raíz** (no a `source_dir`): `Dockerfile` → `src/engine/Dockerfile` y `src/dashboard/Dockerfile`.
+2. **`infisical-python` sin wheel Linux x86_64**: eliminado de `pyproject.toml` + `uv.lock` regenerado. El paquete nunca fue importado en Python (solo `httpx` vía `InfisicalAdapter`).
+3. **NATS `run_command` incompleto**: `run_command: -js -m 8222` → `run_command: nats-server -js -m 8222` (DO usa `run_command` como exec completo, no como args del entrypoint).
+4. **PostgreSQL `db` user sin privilegios CREATE** (`production: false` = BD interna con usuario severamente restringido, REVOKE a nivel plataforma DO — no hay workaround vía GRANT). Fix definitivo: `production: true` + cluster standalone `ovd-postgres-prod` creado via `doctl databases create`. Usuario `doadmin`, `can_create_public=True` ✅, migraciones Alembic completadas ✅, seed aplicado ✅.
+
+**Infraestructura DO activa:**
+- App: `ovd-platform` (ID: `f8d2207e-8229-4647-b9ad-5c14dcba4246`)
+- PostgreSQL: `ovd-postgres-prod` (ID: `f047cf82-6af0-4d3e-8ae7-15c6e96d785a`, nyc3, online)
+- Último deploy: `cae0c11f` — 9/11 ERROR
+
+**Bloqueante actual:** `ANTHROPIC_API_KEY` (tipo SECRET en `app.yaml`) no configurada en panel DO. Engine arranca, corre Alembic y seed, luego valida settings y falla:
+```
+[REQUIRED] Sin provider LLM — define ANTHROPIC_API_KEY, OLLAMA_BASE_URL u OPENAI_API_KEY
+Application startup failed. Exiting.
+```
+**Acción requerida del usuario:** Ir a panel DO → Apps → ovd-platform → Settings → Environment Variables → configurar los 5 secrets: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OVD_ENGINE_SECRET`, `JWT_SECRET`, `OVD_ADMIN_PASSWORD`.
+
+---
+
 ## Última sesión (2026-05-05 — S111 ciclo validación + fix tool-calling bypass)
 
 **S111 ciclo validación — COMPLETADO:**
@@ -132,9 +157,16 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 **S112 — Despliegue DigitalOcean (demo 2026-05-18)**
 
-Roadmap revisado el 2026-05-05. Ver `docs/sprints/CURRENT.md` para detalle completo.
+**Acción inmediata (usuario):** Configurar secrets en panel DO antes de continuar:
+- `ANTHROPIC_API_KEY` — DO GenAI Platform token (o Anthropic directo)
+- `OPENAI_API_KEY` — mismo token DO GenAI Platform
+- `OVD_ENGINE_SECRET` — secret interno del engine (ver `src/engine/.env`)
+- `JWT_SECRET` — secret para JWT tokens
+- `OVD_ADMIN_PASSWORD` — password del admin demo
 
-**Camino crítico:** C1 (NATS prod) → C2 (Alembic audit) → C3/C4 (infra fixes) → D1-D4 (deploy App Platform) → A3/A4 (seguridad + RAG) → S113 (dry run demo)
+Después de secrets → verificar `curl https://ovd-platform.codigonet.cloud/health` → si responde, continuar con C6 (CNAME Route 53) y D5 (RAG bootstrap).
+
+Ver `docs/sprints/CURRENT.md` para estado completo de tareas D1–D5.
 
 **Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46 (Design Quality System)
 

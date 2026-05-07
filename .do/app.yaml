@@ -76,6 +76,39 @@ services:
       - key: OVD_AGENT_PROVIDER
         scope: RUN_TIME
         value: openai
+      # S112: provider de análisis (analyzer/sdd/qa) — igual que agent provider en DO
+      - key: OVD_ANALYSIS_PROVIDER
+        scope: RUN_TIME
+        value: openai
+      # S112: modelos por rol — analyzer usa DeepSeek V4 Pro; resto usa Qwen3 Coder Flash
+      - key: OVD_MODEL_ANALYZER
+        scope: RUN_TIME
+        value: deepseek-v4-pro
+      - key: OVD_MODEL_SDD
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_QA
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_BACKEND
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_FRONTEND
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_DATABASE
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_DEVOPS
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      - key: OVD_MODEL_SECURITY
+        scope: RUN_TIME
+        value: qwen3-coder-flash
+      # S115: parámetros LLM configurables — max_tokens 16384 para DeepSeek/Qwen
+      - key: OVD_LLM_MAX_TOKENS
+        scope: RUN_TIME
+        value: "16384"
       - key: OVD_LLM_TIMEOUT_SECS
         scope: RUN_TIME
         value: "300"

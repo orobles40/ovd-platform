@@ -3953,3 +3953,104 @@ Persiste en BD. Reemplaza el PUT en memoria de Fase 1.
 ```
 
 ---
+
+### Sprint S115 — Parámetros LLM configurables (eliminar hardcoding)
+
+**Motivación:** Los parámetros `max_tokens`, `temperature` y otros estaban hardcodeados en `model_router.py`. Cualquier ajuste requería un redeploy. El objetivo es que todo parámetro LLM sea configurable desde variables de entorno sin cambiar código.
+
+**Prioridad:** Alta post-demo | **Dependencias:** S112, S114-Fase 1
+
+---
+
+#### Contexto y hallazgos (investigación 2026-05-07)
+
+Durante S112 se identificaron los siguientes parámetros hardcodeados:
+
+| Parámetro | Valor anterior | Env var S115 | Relevancia |
+|---|---|---|---|
+| `max_tokens` | `8192` (todos los providers) | `OVD_LLM_MAX_TOKENS` | DeepSeek V4 Pro soporta hasta 1M output; Qwen3 Flash 65,536 |
+| `temperature` structured | `0.0` (Ollama/OpenAI) | `OVD_LLM_TEMPERATURE_STRUCTURED` | Roles: analyzer, sdd, qa, security, router, implementadores |
+| `temperature` generation | `0.3` (Ollama/OpenAI) | `OVD_LLM_TEMPERATURE_GENERATION` | Roles: todos los demás |
+| `temperature` claude structured | `0.2` (Claude) | hardcoded por diseño (Claude API) | Bajo control |
+| `num_ctx` Ollama | `32768` | pendiente S115-A | Ventana de contexto local |
+| `seed` Ollama | `42` | pendiente S115-A | Determinismo en dev |
+| `request_timeout` | `ovd_llm_timeout_secs` | ya configurable | OK |
+
+**Cambios aplicados en S112 (base para S115):**
+
+En `settings.py`:
+```python
+ovd_llm_max_tokens: int = 8192                    # env: OVD_LLM_MAX_TOKENS
+ovd_llm_temperature_structured: float = 0.0       # env: OVD_LLM_TEMPERATURE_STRUCTURED
+ovd_llm_temperature_generation: float = 0.3       # env: OVD_LLM_TEMPERATURE_GENERATION
+```
+
+En `model_router.py`:
+- `max_tokens` → `get_settings().ovd_llm_max_tokens` en todos los providers (claude, openai, custom, ollama, fallback)
+- `_resolve_temperature()` → usa `ovd_llm_temperature_structured` / `ovd_llm_temperature_generation`
+- `security_exec` agregado a `_ROLE_MODEL_OVERRIDES` con `ovd_model_security`
+
+En `.do/app.yaml` (producción):
+- `OVD_LLM_MAX_TOKENS=16384` (sube de 8192 a 16384 para DeepSeek V4 Pro y Qwen3 Coder Flash)
+
+---
+
+#### Trabajo pendiente en S115
+
+**A. Parámetros Ollama aún hardcodeados**
+
+| Parámetro | Valor | Env var propuesta |
+|---|---|---|
+| `num_ctx` | `32768` | `OVD_LLM_NUM_CTX` (default: 32768) |
+| `seed` | `42` | `OVD_LLM_SEED` (default: 42, 0 = desactivar) |
+| `reasoning` | `False` | `OVD_LLM_REASONING_ENABLED` (default: False) |
+
+**B. Temperature por rol (granularidad fina)**
+
+Actualmente hay dos grupos: structured y generation. Para mayor control:
+
+```bash
+OVD_LLM_TEMPERATURE_ANALYZER=0.0
+OVD_LLM_TEMPERATURE_SDD=0.0
+OVD_LLM_TEMPERATURE_QA=0.0
+OVD_LLM_TEMPERATURE_BACKEND=0.3
+```
+
+Requiere refactor de `_resolve_temperature()` para lookup por rol antes de caer al grupo.
+
+**C. Parámetros por provider**
+
+- `extra_body={"think": False}` en Ollama fallback — debería ser `OVD_LLM_DISABLE_THINKING=true`
+- `num_predict` (Ollama) vs `max_tokens` (OpenAI) — actualmente ambos usan `ovd_llm_max_tokens`
+
+**D. Interfaz en dashboard (S114 + S115 integrados)**
+
+La tab "Configuración" de S114 puede extenderse con una sección "Parámetros avanzados":
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Parámetros avanzados                               │
+│  ─────────────────────────────────────────────────  │
+│  Max tokens              [16384          ]          │
+│  Temperature structured  [0.0            ]          │
+│  Temperature generation  [0.3            ]          │
+│  Context window (Ollama) [32768          ]          │
+└─────────────────────────────────────────────────────┘
+```
+
+Aplicados vía `PUT /api/v1/config/llm-params` → `_RUNTIME_OVERRIDES` (S114 Fase 1 en memoria).
+
+---
+
+#### Estimación de trabajo
+
+| Tarea | Esfuerzo |
+|---|---|
+| A. Parámetros Ollama en settings.py | 0.5h |
+| B. Temperature por rol (settings + router) | 2h |
+| C. extra_body think configurable | 0.5h |
+| D. Endpoint + UI params avanzados (integración S114) | 2h |
+| Tests (unit + integración) | 1h |
+| **Total** | **~6h** |
+
+---

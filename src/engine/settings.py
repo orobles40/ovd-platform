@@ -63,6 +63,15 @@ class OVDSettings(BaseSettings):
     ovd_model_database: str = ""
     ovd_model_devops: str = ""
     ovd_model_frontend: str = ""
+    ovd_model_security: str = ""  # override para security_exec
+
+    # ── Parámetros LLM configurables (S115) ───────────────────────────────────
+    # S115: eliminar hardcoding — todos los parámetros LLM configurables via env.
+    # max_tokens: 8192 default; subir a 16384+ para modelos con ventanas grandes.
+    ovd_llm_max_tokens: int = 8192
+    # temperature por grupo: structured (analyzer/sdd/qa) vs generación (backend/frontend/etc.)
+    ovd_llm_temperature_structured: float = 0.0
+    ovd_llm_temperature_generation: float = 0.3
 
     # ── OpenAI / compatible (DO GenAI, Groq, Together, etc.) ──────────────────
     # OVD_OPENAI_BASE_URL — leído por model_router para pasar base_url explícitamente a ChatOpenAI.

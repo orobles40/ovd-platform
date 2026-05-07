@@ -78,6 +78,7 @@ _ROLE_MODEL_OVERRIDES: dict[str, str] = {
         "database": _s.ovd_model_database,
         "devops": _s.ovd_model_devops,
         "frontend": _s.ovd_model_frontend,
+        "security_exec": _s.ovd_model_security,
     }.items()
     if model  # excluir vacíos — fallback a _AGENT_MODEL
 }
@@ -191,13 +192,18 @@ def _warn_if_small_model(model: str, role: str) -> None:
 
 
 # P2.C — Temperature por uso y provider
-# Structured: Claude=0.2, Ollama=0.0 | Generación: Claude=0.5, Ollama=0.3
+# S115: valores configurables via OVD_LLM_TEMPERATURE_STRUCTURED / OVD_LLM_TEMPERATURE_GENERATION
 def _resolve_temperature(role: str, provider: str) -> float:
+    _settings = get_settings()
     is_structured = role in _STRUCTURED_ROLES
     if provider == "claude":
-        return 0.2 if is_structured else 0.5
+        return _settings.ovd_llm_temperature_structured if is_structured else 0.5
     # ollama / openai / custom
-    return 0.0 if is_structured else 0.3
+    return (
+        _settings.ovd_llm_temperature_structured
+        if is_structured
+        else _settings.ovd_llm_temperature_generation
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -388,11 +394,13 @@ def build_llm(config: ResolvedConfig) -> Any:
     if config.api_key_env:
         api_key = os.environ.get(config.api_key_env)
 
+    _max_tokens = get_settings().ovd_llm_max_tokens
+
     if config.provider == "claude":
         return ChatAnthropic(
             model=config.model,
             api_key=api_key or get_settings().anthropic_api_key,
-            max_tokens=8192,
+            max_tokens=_max_tokens,
             temperature=config.temperature,
             timeout=_LLM_TIMEOUT,
         )
@@ -406,7 +414,7 @@ def build_llm(config: ResolvedConfig) -> Any:
             model=config.model,
             api_key=api_key or get_settings().openai_api_key,
             base_url=_oai_base,
-            max_tokens=8192,
+            max_tokens=_max_tokens,
             temperature=config.temperature,
             request_timeout=_LLM_TIMEOUT,
         )
@@ -420,7 +428,7 @@ def build_llm(config: ResolvedConfig) -> Any:
         return ChatOllama(
             model=config.model,
             base_url=base_url,
-            num_predict=8192,
+            num_predict=_max_tokens,
             num_ctx=32768,  # S52-A: ventana explícita — sin esto Ollama puede usar default 2048 y truncar tareas tardías
             temperature=config.temperature,
             reasoning=False,  # S97-F: param correcto en langchain-ollama (think= era ignorado silenciosamente)
@@ -436,7 +444,7 @@ def build_llm(config: ResolvedConfig) -> Any:
             model=config.model,
             base_url=base_url,
             api_key=api_key or "ollama",
-            max_tokens=8192,
+            max_tokens=_max_tokens,
             temperature=config.temperature,
             request_timeout=_LLM_TIMEOUT,
         )
@@ -450,7 +458,7 @@ def build_llm(config: ResolvedConfig) -> Any:
         model=_DEFAULT_MODEL,
         base_url=f"{_DEFAULT_OLLAMA_URL}/v1",
         api_key="ollama",
-        max_tokens=8192,
+        max_tokens=_max_tokens,
         temperature=0.0,
         request_timeout=_LLM_TIMEOUT,
         extra_body={"think": False},  # Deshabilita thinking mode en modelos Qwen3+
