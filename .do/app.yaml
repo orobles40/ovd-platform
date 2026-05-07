@@ -44,16 +44,12 @@ services:
         scope: RUN_TIME
         value: nats://ovd-nats:4222
       # LLM — Claude vía DO GenAI Platform (A4: endpoint compatible Anthropic SDK)
-      - key: ANTHROPIC_API_KEY
-        scope: RUN_TIME
-        type: SECRET
+      # ANTHROPIC_API_KEY se configura como App-Level en panel DO (no component-level)
       - key: ANTHROPIC_BASE_URL
         scope: RUN_TIME
         value: https://inference.do-ai.run
       # RAG embeddings — BGE-M3 vía DO GenAI Platform (A4: compatible OpenAI SDK)
-      - key: OPENAI_API_KEY
-        scope: RUN_TIME
-        type: SECRET
+      # OPENAI_API_KEY se configura como App-Level en panel DO (no component-level)
       - key: OPENAI_BASE_URL
         scope: RUN_TIME
         value: https://inference.do-ai.run/v1
@@ -63,18 +59,8 @@ services:
       - key: OVD_EMBED_MODEL
         scope: RUN_TIME
         value: bge-m3
-      # Seguridad
-      - key: OVD_ENGINE_SECRET
-        scope: RUN_TIME
-        type: SECRET
-      # C8: JWT_SECRET — requerido para POST /auth/login (sin esto retorna 500)
-      - key: JWT_SECRET
-        scope: RUN_TIME
-        type: SECRET
-      # C5: Password del admin demo — el entrypoint genera el hash argon2 en startup
-      - key: OVD_ADMIN_PASSWORD
-        scope: RUN_TIME
-        type: SECRET
+      # Seguridad — OVD_ENGINE_SECRET, JWT_SECRET, OVD_ADMIN_PASSWORD
+      # se configuran como App-Level en panel DO (no component-level)
       # CORS — C6: dominio codigonet.cloud
       - key: OVD_CORS_ORIGINS
         scope: RUN_TIME
@@ -135,6 +121,7 @@ static_sites:
     source_dir: src/dashboard
     dockerfile_path: src/dashboard/Dockerfile
     output_dir: /usr/share/nginx/html
+    catchall_document: index.html
     github:
       repo: codigonet-cloud/ovd-platform
       branch: main
@@ -168,39 +155,59 @@ ingress:
   rules:
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /health
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /auth
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /session
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /orgs
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /projects
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /config
     - component:
         name: ovd-engine
+        preserve_path_prefix: true
       match:
         path:
           prefix: /admin
+    # API REST v1 — rutas /api/v1/... → engine (S112: fix ingress faltante)
+    - component:
+        name: ovd-engine
+        preserve_path_prefix: true
+      match:
+        path:
+          prefix: /api
+    # Catch-all: todo lo que no matchea el engine va al dashboard (SPA React)
+    - component:
+        name: ovd-dashboard
+      match:
+        path:
+          prefix: /
 
 # ---------------------------------------------------------------------------
 # Dominio personalizado — C6
