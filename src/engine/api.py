@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -208,24 +208,33 @@ OVD_SECRET = _cfg.ovd_engine_secret
 def verify_secret(
     x_ovd_secret: str | None = Header(default=None, alias="X-OVD-Secret"),
     authorization: str | None = Header(default=None),
+    token: str | None = Query(
+        default=None
+    ),  # EventSource no soporta headers — usa ?token=
 ) -> None:
     """FastAPI Dependency: acepta JWT válido (dashboard) O X-OVD-Secret válido (TUI/CLI).
 
     Usar via Depends(verify_secret) en cada endpoint protegido.
-    Si viene un JWT Bearer válido, se omite el check del secret — el dashboard
-    no debe incluir el secret en el bundle JS (evita exposición en cliente).
+    Si viene un JWT Bearer válido (header o query ?token=), se omite el check del secret.
+    EventSource del browser no soporta headers — usa ?token=<jwt> para el stream SSE.
     Si no hay JWT, se exige X-OVD-Secret (autenticación TUI/CLI server-to-server).
     """
     # SEC MEDIUM-01: usar compare_digest para evitar timing attacks
     if not OVD_SECRET:
         return  # sin secret configurado, no hay restricción (dev/test)
 
-    # Bypass via JWT válido — el dashboard solo envía Authorization: Bearer
+    # Extraer JWT: desde Authorization: Bearer <token> O desde ?token=<jwt>
+    jwt_token: str | None = None
     if authorization and authorization.startswith("Bearer "):
+        jwt_token = authorization[7:]
+    elif token:
+        jwt_token = token
+
+    if jwt_token:
         from auth import verify_access_token
 
         try:
-            verify_access_token(authorization[7:])
+            verify_access_token(jwt_token)
             return  # JWT válido → no se requiere X-OVD-Secret
         except Exception:
             pass  # JWT inválido/expirado → continúa a check de secret
