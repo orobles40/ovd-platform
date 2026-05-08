@@ -344,6 +344,58 @@ environment:
 
 ---
 
+### D4 — SQLAlchemy 2.x async: transacciones ACID y SELECT FOR UPDATE (S117-E)
+
+Cuando el FR requiera operaciones concurrentes (reservas, asignaciones de turnos, inventario), usa `async with db.begin()` + `.with_for_update()` para garantizar atomicidad y evitar race conditions.
+
+```python
+# ✅ CORRECTO — SQLAlchemy 2.x async, transacción ACID con row lock
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select
+from fastapi import Depends
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+async def reservar_turno(turno_id: int, paciente_id: int, db: AsyncSession) -> Turno:
+    async with db.begin():                          # BEGIN + COMMIT/ROLLBACK automático
+        stmt = (
+            select(Turno)
+            .where(Turno.id == turno_id)
+            .with_for_update()                      # SELECT FOR UPDATE → lock de fila
+        )
+        result = await db.execute(stmt)
+        turno = result.scalar_one_or_none()
+        if turno is None:
+            raise HTTPException(404, "Turno no encontrado")
+        if turno.estado != "disponible":
+            raise HTTPException(409, "Turno ya reservado")
+        turno.estado = "reservado"
+        turno.paciente_id = paciente_id
+    return turno                                    # COMMIT ya ejecutado al salir del with
+```
+
+**Reglas obligatorias:**
+- **NUNCA** uses `session.execute()` sin `async with db.begin()` para operaciones de escritura
+- **NUNCA** uses `db.commit()` / `db.rollback()` manual si ya usas `async with db.begin()`
+- `expire_on_commit=False` es necesario para acceder a atributos después del COMMIT
+- Para reads sin lock: `async with db` (sin `.begin()`) + `await db.execute(select(...))`
+- Para operaciones en batch: un solo `async with db.begin()` que envuelva todas las writes
+
+```python
+# ❌ PROHIBIDO — sin transacción explícita en writes concurrentes:
+result = await db.execute(select(Turno).where(Turno.id == turno_id))
+turno = result.scalar_one()
+turno.estado = "reservado"
+await db.commit()  # race condition: otro proceso puede modificar entre select y commit
+```
+
+---
+
 ### Formato de tests pytest — Ejemplo obligatorio (S52-B)
 
 Cuando el SDD incluya una tarea de tests, el archivo `tests/test_<paquete>.py` DEBE seguir este patrón:

@@ -95,6 +95,18 @@ _NODE_TIMEOUT: float = float(os.getenv("OVD_NODE_TIMEOUT_SECS", "120"))
 #   LLM livianos (analyze, sdd, docs): 300-600s   — salida estructurada, contexto menor
 #   I/O puro (tests, deliver):         120-300s    — sin LLM, solo filesystem/subprocess
 _AGENTS_TIMEOUT: float = float(os.getenv("OVD_AGENTS_TIMEOUT_SECS", str(_NODE_TIMEOUT)))
+
+
+def _get_task_timeout(retry_round: int) -> float:
+    """S117-D: escalar timeout por ronda de retry.
+
+    En cada retry el prompt crece ~2-3× (feedback acumulado 0→5K→10K chars).
+    El LLM tarda proporcionalmente más para tareas complejas (ej. services.py).
+    Ronda 0: 120s | Retry #1: 180s | Retry #2+: 240s
+    """
+    scale = [1.0, 1.5, 2.0]
+    factor = scale[min(retry_round, len(scale) - 1)]
+    return _AGENTS_TIMEOUT * factor
 _SECURITY_TIMEOUT: float = float(os.getenv("OVD_SECURITY_TIMEOUT_SECS", "1800"))
 _QA_TIMEOUT: float = float(os.getenv("OVD_QA_TIMEOUT_SECS", "1200"))
 _ANALYZE_TIMEOUT: float = float(os.getenv("OVD_ANALYZE_TIMEOUT_SECS", "300"))  # S41P.A
@@ -471,6 +483,10 @@ class OVDState(TypedDict):
     qa_result: Annotated[
         dict, _keep_best_qa
     ]  # S57-A: preserva el mejor score del ciclo
+
+    # S117-B: resultado del round QA actual (sin reducer → last-write-wins)
+    # update_qa_retry DEBE leer de aquí, no de qa_result (que puede ser stale por _keep_best_qa)
+    qa_result_current: dict
 
     # GAP-005: contadores de reintentos (max 3 antes de escalar)
     security_retry_count: int  # reintentos de security_audit → execute_agents
@@ -3720,6 +3736,9 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         "stack_language", ""
     )  # S42-E: lenguaje del stack del proyecto
     rag_context = state.get("rag_context", "")  # RAG-03: contexto de entregas previas
+    # S117-D: timeout escalado por ronda de retry (120s → 180s → 240s)
+    _retry_round = state.get("qa_retry_count", 0) + state.get("security_retry_count", 0)
+    _task_timeout = _get_task_timeout(_retry_round)
 
     # PP-01: verificar presupuesto de tokens del ciclo antes de invocar el agente
     if _CYCLE_BUDGET_TOKENS > 0:
@@ -3974,7 +3993,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             stack_routing=state.get("stack_routing", "auto"),  # S49-C
                             oracle_involved=_oracle_involved_agent,  # S107-P2
                         ),
-                        timeout=_AGENTS_TIMEOUT,  # S41P.A
+                        timeout=_task_timeout,  # S117-D: escalado por retry round
                     )
                 else:
                     task_result = await asyncio.wait_for(
@@ -3988,7 +4007,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             rag_context,
                             stack_language=stack_language,
                         ),
-                        timeout=_AGENTS_TIMEOUT,  # S41P.A
+                        timeout=_task_timeout,  # S117-D: escalado por retry round
                     )
             except asyncio.TimeoutError:
                 log.error(
@@ -4085,7 +4104,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             stack_routing=state.get("stack_routing", "auto"),
                             oracle_involved=_oracle_involved_agent,  # S107-P2
                         ),
-                        timeout=_AGENTS_TIMEOUT,
+                        timeout=_task_timeout,  # S117-D: escalado por retry round
                     )
                 else:
                     _s51_result = await asyncio.wait_for(
@@ -4099,7 +4118,7 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                             rag_context,
                             stack_language=stack_language,
                         ),
-                        timeout=_AGENTS_TIMEOUT,
+                        timeout=_task_timeout,  # S117-D: escalado por retry round
                     )
                 all_artifacts.extend(_s51_result.get("artifacts", []))
                 if _s51_result.get("output"):
@@ -4240,17 +4259,17 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         # S20 — GAP-R1 / S41P.A: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
         try:
             result = await asyncio.wait_for(
-                _invoke_agent_logic(), timeout=_AGENTS_TIMEOUT
+                _invoke_agent_logic(), timeout=_task_timeout  # S117-D: escalado por retry round
             )
         except asyncio.TimeoutError:
             log.error(
                 "agent_executor: TIMEOUT en nodo '%s' tras %.0fs — retornando resultado de error",
                 agent_name,
-                _AGENTS_TIMEOUT,
+                _task_timeout,
             )
             result = {
                 "agent": agent_name,
-                "output": f"[Timeout: el agente '{agent_name}' no respondió en {_AGENTS_TIMEOUT:.0f}s. Revisa el estado del LLM.]",
+                "output": f"[Timeout: el agente '{agent_name}' no respondió en {_task_timeout:.0f}s. Revisa el estado del LLM.]",
                 "artifacts": [],
                 "uncertainties": [],
                 "tokens": {"input": 0, "output": 0},
@@ -5366,14 +5385,14 @@ async def qa_review(state: OVDState) -> dict:
                 _raw_score,
                 _adj_score,
             )
-            return {"qa_result": _adj_qa, "qa_passed": _adj_qa.get("passed", True)}
+            return {"qa_result": _adj_qa, "qa_result_current": _adj_qa, "qa_passed": _adj_qa.get("passed", True)}
         log.info(
             "qa_review: S62-B test_retry_count=%d, qa_retry_count=%d — reutilizando QA previo (score=%d)",
             _test_retry_count,
             _qa_retry_count,
             _prev_qa.get("score", 0),
         )
-        return {"qa_result": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
+        return {"qa_result": _prev_qa, "qa_result_current": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
 
     project_ctx = state.get("project_context", "")
     llm = await model_router.get_llm_with_context(
@@ -5416,11 +5435,32 @@ async def qa_review(state: OVDState) -> dict:
             "venv",
             ".mypy_cache",
         }
+        # S117-C: orden de prioridad QA — archivos con más issues van primero para no quedar
+        # truncados. En S116: workspace 115KB truncado a 20K → 83% ciego → varianza 55→12→68.
+        _QA_PRIORITY_KEYWORDS = [
+            "services",  # lógica de negocio — más issues QA
+            "models",    # ORM, validators
+            "router",    # endpoints CRUD
+            "routers",
+            "main",      # startup, middleware
+            "tests",     # cobertura
+            "conftest",
+            "database",  # sesión async
+            "auth",      # JWT, RUT
+        ]
+
+        def _qa_file_priority(path: "_pl.Path") -> int:
+            name = path.stem.lower()
+            for i, kw in enumerate(_QA_PRIORITY_KEYWORDS):
+                if kw in name or kw in str(path).lower():
+                    return i
+            return len(_QA_PRIORITY_KEYWORDS)
+
         file_blocks: list[str] = []
         # S31-A: solo archivos escritos en este ciclo (mtime >= cycle_start_ts - 5s buffer)
         cycle_ts = state.get("cycle_start_ts", 0)
         if base.exists():
-            for fp in sorted(base.rglob("*")):
+            for fp in sorted(base.rglob("*"), key=_qa_file_priority):
                 if not fp.is_file():
                     continue
                 if any(
@@ -5574,7 +5614,7 @@ async def qa_review(state: OVDState) -> dict:
         ),
         HumanMessage(
             content=(
-                f"## Código generado:\n{_truncate(agent_output, 20000)}"
+                f"## Código generado:\n{_truncate(agent_output, 50000)}"  # S117-C: 20K→50K (cubre ~90% de proyectos medium)
                 + (
                     f"\n\n## Estructura workspace (S39-B):\n{_truncate(qa_summary, 3000)}"
                     if qa_summary
@@ -5701,6 +5741,7 @@ async def qa_review(state: OVDState) -> dict:
     log.info("NODE_TIMING: node=qa_review elapsed=%.1fs", time.monotonic() - _t0_node)
     return {
         "qa_result": qa,
+        "qa_result_current": qa,  # S117-B: last-write-wins (sin _keep_best_qa) → update_qa_retry lee score real
         "status": "qa_done",
         "messages": state.get("messages", [])
         + [
@@ -9645,7 +9686,10 @@ def update_qa_retry(state: OVDState) -> dict:
     S97-A: registra entrada en qa_score_history para detección de estancamiento.
     S97-C: cap aumentado a 5000 chars para preservar más contexto de feedback.
     """
-    qa = state.get("qa_result", {})
+    # S117-B: leer qa_result_current (last-write-wins), no qa_result (_keep_best_qa preserva mejor score)
+    # Sin este fix: si ronda 0 = 55 y retry #1 = 12, qa_result sigue siendo {score:55}
+    # y el historial registra [55, 55] → stagnation falso con delta=0
+    qa = state.get("qa_result_current") or state.get("qa_result", {})
     retry_round = state.get("qa_retry_count", 0)
     current_score = qa.get("score", 0)
 
