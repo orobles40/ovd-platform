@@ -1725,6 +1725,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S122-A: reescribir engine module-level a lazy factory en database.py
     content = _fix_database_module_level_engine(content, rel_path)
 
+    # S123-B: eliminar imports de src.database en test files (excepto Base)
+    content = _fix_test_database_imports(content, rel_path)
+
     if content != original:
         log.warning(
             "[S72] postprocessed %s (%d → %d chars)",
@@ -1874,6 +1877,82 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
         )
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# S123-B — Eliminar imports de src.database en test files (excepto Base)
+# ---------------------------------------------------------------------------
+
+_DB_IMPORT_PATTERN = re.compile(
+    r"^from\s+src\.database\s+import\s+(.+)$", re.MULTILINE
+)
+
+_SAFE_DB_NAMES = frozenset({"Base"})
+
+# Nombres que NO deben importarse de src.database en tests (renombrados por S122-A)
+_UNSAFE_DB_NAMES = frozenset(
+    {
+        "engine",
+        "AsyncSessionLocal",
+        "async_session_factory",
+        "async_session_maker",
+        "async_sessionmaker",
+        "get_engine",
+        "get_session_factory",
+        "SessionLocal",
+        "session_factory",
+    }
+)
+
+
+def _fix_test_database_imports(content: str, rel_path: str) -> str:
+    """S123-B: elimina imports prohibidos de src.database en archivos de test.
+
+    Después de S122-A, src.database expone get_engine()/get_session_factory() via
+    funciones lazy. Los tests NO deben importar sesiones/engine desde src.database —
+    deben crear su propio engine (SQLite in-memory). Solo 'Base' está permitido.
+    """
+    basename = rel_path.replace("\\", "/").split("/")[-1]
+    is_test_file = basename.startswith("test_") or rel_path.startswith("tests/")
+    if not is_test_file:
+        return content
+
+    lines = content.split("\n")
+    new_lines = []
+    changed = False
+
+    for line in lines:
+        m = _DB_IMPORT_PATTERN.match(line.strip())
+        if not m:
+            new_lines.append(line)
+            continue
+
+        # Parsear nombres: "Base, AsyncSessionLocal" o "(Base, AsyncSessionLocal)"
+        raw = m.group(1).strip().strip("()")
+        names = [n.strip().rstrip(",") for n in re.split(r"[,\s]+", raw) if n.strip()]
+        safe = [n for n in names if n in _SAFE_DB_NAMES]
+        removed = [n for n in names if n not in _SAFE_DB_NAMES]
+
+        if not removed:
+            new_lines.append(line)
+            continue
+
+        changed = True
+        log.warning(
+            "[S123-B] %s: eliminando imports prohibidos de src.database: %s",
+            rel_path,
+            removed,
+        )
+        if safe:
+            # Mantener solo los nombres seguros
+            indent = line[: len(line) - len(line.lstrip())]
+            new_lines.append(f"{indent}from src.database import {', '.join(safe)}")
+        # Si no quedan nombres seguros, la línea se omite
+
+    if not changed:
+        return content
+
+    return "\n".join(new_lines)
 
 
 def postprocess_yaml_file(

@@ -503,6 +503,53 @@ async def get_session():
 
 ---
 
+### D6 — Tests: PROHIBIDO importar sesiones/engine desde src.database (S123-A)
+
+Los archivos de test **NUNCA** deben importar sesiones, factories ni el engine desde `src.database`. Después de S121-A/S122-A, esos nombres (`AsyncSessionLocal`, `async_session_factory`, `async_session_maker`, `engine`) no existen a nivel de módulo — solo `Base` y las funciones lazy `get_engine()` / `get_session_factory()`.
+
+❌ **PROHIBIDO en tests:**
+```python
+from src.database import AsyncSessionLocal       # ← no existe
+from src.database import async_session_factory   # ← no existe
+from src.database import async_session_maker     # ← no existe
+from src.database import engine                  # ← no existe
+```
+
+✅ **CORRECTO — test autocontenido con engine propio (S123-A):**
+```python
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from src.main import app
+from src.database import Base  # solo Base está permitido
+
+TEST_DATABASE_URL = "sqlite+aiosqlite://"  # in-memory, sin persistencia entre tests
+
+_test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+_TestSession = async_sessionmaker(_test_engine, class_=AsyncSession, expire_on_commit=False)
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def setup_db():
+    async with _test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with _test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+@pytest_asyncio.fixture
+async def client():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+```
+
+**Reglas:**
+- Los tests crean su propio engine con SQLite in-memory (`sqlite+aiosqlite://`)
+- `from src.database import Base` es el único import permitido de `src.database` en tests
+- `pytest.ini` debe incluir `asyncio_mode = auto` para fixtures async
+
+---
+
 ### Formato de tests pytest — Ejemplo obligatorio (S52-B)
 
 Cuando el SDD incluya una tarea de tests, el archivo `tests/test_<paquete>.py` DEBE seguir este patrón:
