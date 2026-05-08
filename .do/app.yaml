@@ -117,6 +117,11 @@ services:
       - key: OVD_LLM_TIMEOUT_SECS
         scope: RUN_TIME
         value: "300"
+      # S116-A: aumentado de 900s a 3600s — ciclos complejos (3 retries × 12 tasks) requieren ~45-60 min
+      # Causa raíz: asyncio.timeout(900) en _run_graph_background mataba el background task a los 15 min
+      - key: OVD_SSE_STREAM_TIMEOUT_SECS
+        scope: RUN_TIME
+        value: "3600"
       # Observabilidad
       - key: LOG_LEVEL
         scope: RUN_TIME
