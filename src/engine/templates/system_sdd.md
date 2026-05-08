@@ -374,6 +374,22 @@ por cada entidad del dominio. Sin estos schemas, main.py y los tests no pueden i
 > Sin los schemas Pydantic, `main.py` falla con `ImportError: cannot import name 'ContratoCreate'`
 > y los tests no pueden instanciar datos de prueba. Es la causa más frecuente de QA=0.
 
+## Operaciones concurrentes: async SQLAlchemy + SELECT FOR UPDATE (S117-E)
+
+Cuando el FR involucre **reservas, asignaciones o cualquier write concurrente** (turnos, citas, inventario), la descripción de la tarea de servicios DEBE indicar explícitamente:
+
+```
+[S117-E] CONCURRENCIA: usar `async with db.begin()` + `.with_for_update()` para
+la operación de reserva/asignación. Patrón en backend_python.md sección D4.
+```
+
+**Señales en el FR que activan esta restricción:**
+- "reservar turno", "asignar slot", "bloquear recurso", "evitar doble reserva"
+- "turno médico", "cita", "inventario", "cupones", "licencias"
+- Cualquier operación donde dos usuarios puedan actuar sobre el mismo registro simultáneamente
+
+Sin esta instrucción en el SDD, el agente backend generará un `db.commit()` sin lock, causando race conditions en producción.
+
 ## Reglas obligatorias
 - El SDD debe estar 100% alineado con el stack tecnológico del proyecto
 - No menciones tecnologías fuera del perfil del proyecto
