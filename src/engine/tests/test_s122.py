@@ -60,6 +60,26 @@ async def get_session():
         yield session
 """
 
+_DB_CUSTOM_VAR = """\
+import os
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://localhost/db")
+
+engine = create_async_engine(DATABASE_URL, echo=False, pool_size=10, max_overflow=20)
+async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+async def get_db():
+    async with async_session_factory() as session:
+        yield session
+"""
+
 _DB_ALREADY_LAZY = """\
 import os
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -161,6 +181,21 @@ def test_s122a_does_not_apply_to_already_lazy():
     result = _fix_database_module_level_engine(_DB_ALREADY_LAZY, "src/database.py")
     # Si ya tiene get_engine() sin engine module-level, no debe cambiar nada relevante
     assert "def get_engine():" in result
+
+
+def test_s122a_rewrites_custom_session_var_to_lazy():
+    """Reescribe async_session_factory = async_sessionmaker(engine, ...) (no solo AsyncSessionLocal)."""
+    result = _fix_database_module_level_engine(_DB_CUSTOM_VAR, "src/database.py")
+    assert "async_session_factory = async_sessionmaker(engine" not in result
+    assert "_session_factory = None" in result
+    assert "def get_session_factory():" in result
+
+
+def test_s122a_custom_var_call_replaced():
+    """async_session_factory() debe reemplazarse por get_session_factory()() en el código."""
+    result = _fix_database_module_level_engine(_DB_CUSTOM_VAR, "src/database.py")
+    assert "async_session_factory()" not in result
+    assert "get_session_factory()()" in result
 
 
 def test_s122a_function_present_in_postprocessor():

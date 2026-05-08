@@ -1803,20 +1803,34 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
 
     content = content[:idx] + lazy_engine_block + content[line_end:]
 
-    # --- Paso 2: hacer lazy AsyncSessionLocal = async_sessionmaker(engine, ...) ---
+    # --- Paso 2: hacer lazy cualquier <var> = async_sessionmaker(...) a nivel módulo ---
+    # S122-A: generalizado para cualquier nombre de variable (no solo AsyncSessionLocal)
     session_m = _re_local.search(
-        r"^AsyncSessionLocal\s*=\s*async_sessionmaker\s*\(([^)]*)\)",
+        r"^([A-Za-z_]\w*)\s*=\s*async_sessionmaker\s*\(",
         content,
         _re_local.MULTILINE,
     )
     if session_m:
-        args_str = session_m.group(1)
+        sf_var = session_m.group(1)
+        # Extraer call completo con paréntesis balanceados
+        sf_call_start = session_m.start()
+        open_idx = content.index("async_sessionmaker(", sf_call_start)
+        open_paren2 = content.index("(", open_idx)
+        depth2 = 0
+        end_paren2 = open_paren2
+        for i2, ch2 in enumerate(content[open_paren2:], start=open_paren2):
+            if ch2 == "(":
+                depth2 += 1
+            elif ch2 == ")":
+                depth2 -= 1
+                if depth2 == 0:
+                    end_paren2 = i2
+                    break
+        sf_args_raw = content[open_paren2 + 1 : end_paren2]
         # Reemplazar referencia a engine por get_engine()
-        args_str = _re_local.sub(r"\bengine\b", "get_engine()", args_str)
+        sf_args = _re_local.sub(r"\bengine\b", "get_engine()", sf_args_raw)
 
-        sf_start = session_m.start()
-        sf_end = session_m.end()
-        sf_line_end = sf_end
+        sf_line_end = end_paren2 + 1
         if sf_line_end < len(content) and content[sf_line_end] == "\n":
             sf_line_end += 1
 
@@ -1825,14 +1839,16 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
             "def get_session_factory():\n"
             "    global _session_factory\n"
             "    if _session_factory is None:\n"
-            f"        _session_factory = async_sessionmaker({args_str})\n"
+            f"        _session_factory = async_sessionmaker({sf_args})\n"
             "    return _session_factory\n"
         )
 
-        content = content[:sf_start] + lazy_session_block + content[sf_line_end:]
+        content = content[:sf_call_start] + lazy_session_block + content[sf_line_end:]
 
-        # Reemplazar AsyncSessionLocal() en get_session con get_session_factory()()
-        content = _re_local.sub(r"\bAsyncSessionLocal\s*\(\s*\)", "get_session_factory()()", content)
+        # Reemplazar <var>() en el código por get_session_factory()()
+        content = _re_local.sub(
+            rf"\b{_re_local.escape(sf_var)}\s*\(\s*\)", "get_session_factory()()", content
+        )
 
     # --- Paso 3: limpiar referencias residuales a engine suelto ---
     content = _re_local.sub(
