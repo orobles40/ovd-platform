@@ -268,10 +268,10 @@ def test_s97c_feedback_has_superpowers_instructions():
 
 
 def test_s97c_feedback_cap_is_5000():
-    """update_qa_retry trunca accumulated a 5000 chars (no 3000).
+    """S115-C: update_qa_retry trunca accumulated a 10000 chars (antes: 5000, antes: 3000).
 
-    _truncate añade un sufijo de ~100 chars, por lo que el total puede llegar a ~5100.
-    Lo importante es que NO supere 3000 (el cap anterior) y SÍ esté cerca de 5000.
+    _truncate añade un sufijo de ~100 chars, por lo que el total puede llegar a ~10100.
+    Lo importante es que supere el cap viejo de 5000 y NO supere 10200.
     """
     long_issue = "x" * 200
     qa = {
@@ -285,10 +285,10 @@ def test_s97c_feedback_cap_is_5000():
     state["qa_result"] = qa
     result = update_qa_retry(state)
     feedback_len = len(result["retry_feedback"])
-    # Supera el cap viejo de 3000 (el texto generado es de ~9000 chars)
-    assert feedback_len > 3000
-    # Pero está acotado alrededor de 5000 (+sufijo de truncado ~100 chars)
-    assert feedback_len <= 5200
+    # Supera el cap viejo de 5000 (el texto generado es de ~9000 chars)
+    assert feedback_len > 5000
+    # Acotado alrededor de 10000 (+sufijo de truncado ~100 chars) — S115-C
+    assert feedback_len <= 10200
 
 
 # ---------------------------------------------------------------------------

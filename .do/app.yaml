@@ -34,6 +34,10 @@ services:
       failure_threshold: 5
     instance_count: 1
     instance_size_slug: professional-xs   # 2 vCPU / 4 GiB RAM — $50/mes
+    # S115-E: deshabilitar buffer CDN para SSE streaming real (requiere dominio personalizado)
+    # Sin esto Cloudflare acumula toda la respuesta antes de enviarla → SSE no funciona en tiempo real
+    edge:
+      disable_edge_cache: true
     envs:
       # Base de datos — DO inyecta la URL del managed PostgreSQL
       - key: DATABASE_URL
@@ -80,35 +84,36 @@ services:
       - key: OVD_ANALYSIS_PROVIDER
         scope: RUN_TIME
         value: openai
-      # S112: modelos por rol — analyzer usa DeepSeek V4 Pro; resto usa Qwen3 Coder Flash
+      # S115: todos los agentes usan DeepSeek V4 Pro (1M output tokens, mayor coherencia multi-archivo)
+      # Benchmark SWE-bench: Claude Sonnet 77.2% vs DeepSeek V3.2 72-74% — DeepSeek V4 Pro supera a V3.2
       - key: OVD_MODEL_ANALYZER
         scope: RUN_TIME
         value: deepseek-v4-pro
       - key: OVD_MODEL_SDD
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_QA
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_BACKEND
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_FRONTEND
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_DATABASE
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_DEVOPS
         scope: RUN_TIME
-        value: qwen3-coder-flash
+        value: deepseek-v4-pro
       - key: OVD_MODEL_SECURITY
         scope: RUN_TIME
-        value: qwen3-coder-flash
-      # S115: parámetros LLM configurables — max_tokens 16384 para DeepSeek/Qwen
+        value: deepseek-v4-pro
+      # S115: aumentado de 16384 a 32768 para generar 8+ archivos Python sin truncar
       - key: OVD_LLM_MAX_TOKENS
         scope: RUN_TIME
-        value: "16384"
+        value: "32768"
       - key: OVD_LLM_TIMEOUT_SECS
         scope: RUN_TIME
         value: "300"

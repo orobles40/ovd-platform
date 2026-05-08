@@ -24,6 +24,23 @@ El archivo de lógica de negocio siempre se llama **`services.py`** (plural con 
 ✅ CORRECTO: `src/contratos/services.py`, `src/turnos/services.py`, `src/auth/services.py`
 Los tests deben importar `from src.<paquete>.services import ...` — nunca `from src.<paquete>.service import ...`
 
+### Orden topológico obligatorio para proyectos multi-archivo (S115-D)
+
+Cuando el SDD incluye 4 o más archivos Python interdependientes, SIEMPRE generalos en este orden. Un archivo NO puede importar de uno que aún no aparece en tu output:
+
+```
+1. models.py          ← ORM SQLAlchemy (sin imports del propio proyecto)
+2. schemas.py         ← Pydantic BaseModel (importa solo from models si usa from_attributes)
+3. utils/rut.py       ← funciones puras, helpers (sin imports del proyecto)
+4. services.py        ← lógica de negocio (importa models + schemas)
+5. routers/<x>.py     ← endpoints FastAPI (importa services + schemas)
+6. main.py            ← app FastAPI + include_router (importa routers)
+7. conftest.py        ← sys.path.insert (sin imports del proyecto)
+8. tests/test_*.py    ← importa main + schemas (SIEMPRE el último)
+```
+
+Al inicio de cada bloque de código, declara sus imports reales. Si un archivo importa de otro de esta entrega, ese otro debe haber aparecido ANTES en tu respuesta.
+
 **CHECKLIST antes de entregar:**
 - [ ] `requirements.txt` con todas las dependencias usadas en el código
 - [ ] Cada módulo importado por otros fue generado en esta entrega

@@ -9664,7 +9664,7 @@ def update_qa_retry(state: OVDState) -> dict:
         if existing_feedback
         else new_feedback
     )
-    accumulated = _truncate(accumulated, 5000)  # S97-C: aumentado de 3000 a 5000
+    accumulated = _truncate(accumulated, 10000)  # S115-C: aumentado de 5000 a 10000 para 8+ archivos
 
     return {
         "qa_retry_count": retry_round + 1,
