@@ -6604,8 +6604,9 @@ def _ensure_python_infrastructure(work_dir: str) -> list[str]:
     # requirements.txt mínimo si no existe
     req_txt = base / "requirements.txt"
     if not req_txt.exists() or req_txt.stat().st_size == 0:
+        # S118-C: incluir pytest-asyncio para tests async y asyncpg/psycopg como drivers opcionales
         req_txt.write_text(
-            "fastapi\nuvicorn\nsqlalchemy\npydantic\npytest\nhttpx\n",
+            "fastapi\nuvicorn\nsqlalchemy[asyncio]\npydantic\npytest\nhttpx\npytest-asyncio\nasyncpg\n",
             encoding="utf-8",
         )
         created.append("requirements.txt")
@@ -7271,8 +7272,13 @@ async def run_tests(state: OVDState) -> dict:
                             output[:200],
                         )
                 # S57-B: cuando rc==1, distinguir entre collection error e AssertionError
+                # S118-B: ampliar detección para "no tests ran" e "ImportError while importing"
                 if rc == 1 and not passed:
-                    _is_collection_error = "collected 0 items" in output and (
+                    _is_collection_error = (
+                        "collected 0 items" in output
+                        or "no tests ran" in output
+                        or "ImportError while importing" in output
+                    ) and (
                         "ImportError" in output
                         or "ModuleNotFoundError" in output
                         or "attempted relative import" in output
@@ -7782,10 +7788,16 @@ def update_test_retry(state: OVDState) -> dict | Command:
 
     # S60-B: detectar error estructural no-retryable.
     # S61-B: usa last_test_error (sin truncar) en vez de existing (truncado a 800 chars).
+    # S118-A: ampliar detección — pytest con --tb=short imprime "no tests ran" en lugar de
+    # "collected 0 items" cuando hay ImportError en collection. Ambas frases son válidas.
     _rc = tr.get("return_code", 0)
     _is_structural = (
         "ModuleNotFoundError" in test_output or "ImportError" in test_output
-    ) and "collected 0 items" in test_output
+    ) and (
+        "collected 0 items" in test_output
+        or "no tests ran" in test_output
+        or "ImportError while importing" in test_output
+    )
     _last_test_error = state.get("last_test_error", "")
     _same_error_repeated = _is_structural and (
         "ModuleNotFoundError" in _last_test_error or "ImportError" in _last_test_error
