@@ -36,6 +36,10 @@ dependencies = [
     "alembic>=1.18.4",
     # S20 — Resiliencia: retries con backoff exponencial y circuit breaker
     "tenacity>=8.2.0",
+    # S119-A: pytest como runtime dep — el engine ejecuta tests en proyectos generados.
+    # uv sync --no-dev excluye [dependency-groups]dev → pytest no disponible en Docker prod.
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
 ]
 
 [tool.pytest.ini_options]

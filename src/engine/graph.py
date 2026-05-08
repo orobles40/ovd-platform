@@ -107,6 +107,8 @@ def _get_task_timeout(retry_round: int) -> float:
     scale = [1.0, 1.5, 2.0]
     factor = scale[min(retry_round, len(scale) - 1)]
     return _AGENTS_TIMEOUT * factor
+
+
 _SECURITY_TIMEOUT: float = float(os.getenv("OVD_SECURITY_TIMEOUT_SECS", "1800"))
 _QA_TIMEOUT: float = float(os.getenv("OVD_QA_TIMEOUT_SECS", "1200"))
 _ANALYZE_TIMEOUT: float = float(os.getenv("OVD_ANALYZE_TIMEOUT_SECS", "300"))  # S41P.A
@@ -3111,7 +3113,7 @@ def _build_architecture_contract_text(sdd: dict) -> str:
         # S113-A: normalizar service.py → services.py en el contrato para que el agente
         # genere el archivo con el nombre canónico desde el inicio (sin requerir S101-A).
         if module_path.endswith("/service.py"):
-            module_path = module_path[:-len("service.py")] + "services.py"
+            module_path = module_path[: -len("service.py")] + "services.py"
         # Inferir módulo de import: src/contracts/services.py → src.contracts.services
         import_module = module_path.removesuffix(".py").replace("/", ".")
 
@@ -4259,7 +4261,8 @@ async def _agent_executor_impl(state: OVDState) -> dict:
         # S20 — GAP-R1 / S41P.A: timeout por nodo — si el LLM cuelga, retornar error parcial sin matar el ciclo
         try:
             result = await asyncio.wait_for(
-                _invoke_agent_logic(), timeout=_task_timeout  # S117-D: escalado por retry round
+                _invoke_agent_logic(),
+                timeout=_task_timeout,  # S117-D: escalado por retry round
             )
         except asyncio.TimeoutError:
             log.error(
@@ -5385,14 +5388,22 @@ async def qa_review(state: OVDState) -> dict:
                 _raw_score,
                 _adj_score,
             )
-            return {"qa_result": _adj_qa, "qa_result_current": _adj_qa, "qa_passed": _adj_qa.get("passed", True)}
+            return {
+                "qa_result": _adj_qa,
+                "qa_result_current": _adj_qa,
+                "qa_passed": _adj_qa.get("passed", True),
+            }
         log.info(
             "qa_review: S62-B test_retry_count=%d, qa_retry_count=%d — reutilizando QA previo (score=%d)",
             _test_retry_count,
             _qa_retry_count,
             _prev_qa.get("score", 0),
         )
-        return {"qa_result": _prev_qa, "qa_result_current": _prev_qa, "qa_passed": _prev_qa.get("passed", True)}
+        return {
+            "qa_result": _prev_qa,
+            "qa_result_current": _prev_qa,
+            "qa_passed": _prev_qa.get("passed", True),
+        }
 
     project_ctx = state.get("project_context", "")
     llm = await model_router.get_llm_with_context(
@@ -5439,14 +5450,14 @@ async def qa_review(state: OVDState) -> dict:
         # truncados. En S116: workspace 115KB truncado a 20K → 83% ciego → varianza 55→12→68.
         _QA_PRIORITY_KEYWORDS = [
             "services",  # lógica de negocio — más issues QA
-            "models",    # ORM, validators
-            "router",    # endpoints CRUD
+            "models",  # ORM, validators
+            "router",  # endpoints CRUD
             "routers",
-            "main",      # startup, middleware
-            "tests",     # cobertura
+            "main",  # startup, middleware
+            "tests",  # cobertura
             "conftest",
             "database",  # sesión async
-            "auth",      # JWT, RUT
+            "auth",  # JWT, RUT
         ]
 
         def _qa_file_priority(path: "_pl.Path") -> int:
@@ -7967,8 +7978,16 @@ def update_test_retry(state: OVDState) -> dict | Command:
 
     # S61-B: guardar error sin truncar para que S60-B pueda detectar repetición en siguiente ronda
     # S68-A: incluir S65-A output (no contiene "collected 0 items" → _is_structural=False pero es loop)
+    # S119-B: [S103-P2] (AST pre-check) y "No module named" (pytest no instalado) tampoco activan
+    # _is_structural pero deben propagarse para evitar retries ciegos sin feedback de error.
     _is_s65a_output = "[S65-A] IMPORTS ROTOS" in test_output
-    _new_last_error = test_output if (_is_structural or _is_s65a_output) else ""
+    _is_s103_output = "[S103-P2]" in test_output
+    _is_no_module = "No module named" in test_output
+    _new_last_error = (
+        test_output
+        if (_is_structural or _is_s65a_output or _is_s103_output or _is_no_module)
+        else ""
+    )
 
     # S63-B: cleanup ANTES de despachar el próximo retry.
     # En este punto los archivos del retry anterior ya están en disco pero el nuevo retry
@@ -9720,7 +9739,9 @@ def update_qa_retry(state: OVDState) -> dict:
         if existing_feedback
         else new_feedback
     )
-    accumulated = _truncate(accumulated, 10000)  # S115-C: aumentado de 5000 a 10000 para 8+ archivos
+    accumulated = _truncate(
+        accumulated, 10000
+    )  # S115-C: aumentado de 5000 a 10000 para 8+ archivos
 
     return {
         "qa_retry_count": retry_round + 1,

@@ -134,6 +134,44 @@ class ImcRequest(BaseModel):
         return v
 ```
 
+### Pydantic v2 — PROHIBIDO: @classmethod duplicado (S119-C)
+
+El orden correcto es: `@field_validator(...)` primero, `@classmethod` debajo. NUNCA al revés ni duplicado.
+
+❌ **PROHIBIDO — genera `TypeError: duplicate decorator` o ignora la validación:**
+```python
+# MALO: @classmethod antes de @field_validator
+@classmethod
+@field_validator('rut')
+def validate_rut(cls, v): ...
+
+# MALO: @classmethod duplicado
+@field_validator('rut')
+@classmethod
+@classmethod
+def validate_rut(cls, v): ...
+
+# MALO: @classmethod standalone en un BaseModel (fuera de @field_validator)
+class PacienteCreate(BaseModel):
+    rut: str
+
+    @classmethod
+    def validate_rut(cls, v): ...  # ← no es un validator de Pydantic
+```
+
+✅ **CORRECTO — único patrón válido en Pydantic v2:**
+```python
+class PacienteCreate(BaseModel):
+    rut: str
+
+    @field_validator('rut')
+    @classmethod
+    def validate_rut(cls, v: str) -> str:
+        if not v:
+            raise ValueError("RUT requerido")
+        return v
+```
+
 ---
 
 ### Regla de valores numéricos en tests (S50-D / S53-A)

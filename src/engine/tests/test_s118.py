@@ -9,9 +9,8 @@ S118-B: run_tests S57-B._is_collection_error acepta los mismos patrones
 S118-C: S65-E requirements.txt mínimo incluye pytest-asyncio y asyncpg
 """
 
-import re
 import pathlib
-
+import re
 
 # ---------------------------------------------------------------------------
 # Helpers de lectura de código fuente
@@ -22,7 +21,9 @@ _GRAPH_SRC = pathlib.Path("graph.py").read_text(encoding="utf-8")
 
 def _get_function_body(src: str, func_name: str) -> str:
     """Extrae el cuerpo de una función hasta la siguiente def/async def al mismo nivel."""
-    pattern = rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    pattern = (
+        rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    )
     m = re.search(pattern, src, re.DOTALL)
     return m.group(0) if m else ""
 
@@ -30,6 +31,7 @@ def _get_function_body(src: str, func_name: str) -> str:
 # ---------------------------------------------------------------------------
 # S118-A — _is_structural en update_test_retry
 # ---------------------------------------------------------------------------
+
 
 def test_is_structural_uses_no_tests_ran():
     """_is_structural debe aceptar 'no tests ran' (output real de pytest --tb=short)."""
@@ -69,12 +71,15 @@ def test_is_structural_requires_importerror_or_modulenotfound():
 def test_is_structural_s118a_comment_present():
     """El comentario S118-A debe estar presente para trazabilidad."""
     body = _get_function_body(_GRAPH_SRC, "update_test_retry")
-    assert "S118-A" in body, "S118-A: falta comentario de trazabilidad en update_test_retry"
+    assert "S118-A" in body, (
+        "S118-A: falta comentario de trazabilidad en update_test_retry"
+    )
 
 
 # ---------------------------------------------------------------------------
 # S118-B — _is_collection_error en run_tests (S57-B)
 # ---------------------------------------------------------------------------
+
 
 def _get_run_tests_body(src: str) -> str:
     return _get_function_body(src, "run_tests")
@@ -107,6 +112,7 @@ def test_s57b_s118b_comment_present():
 # S118-C — S65-E requirements.txt mínimo
 # ---------------------------------------------------------------------------
 
+
 def _get_ensure_infra_body(src: str) -> str:
     return _get_function_body(src, "_ensure_python_infrastructure")
 
@@ -132,10 +138,14 @@ def test_s65e_requirements_still_includes_core_packages():
     """S65-E no debe eliminar los paquetes core existentes."""
     body = _get_ensure_infra_body(_GRAPH_SRC)
     for pkg in ("fastapi", "uvicorn", "sqlalchemy", "pydantic", "pytest", "httpx"):
-        assert pkg in body, f"S118-C: {pkg} no debe eliminarse del requirements.txt mínimo"
+        assert pkg in body, (
+            f"S118-C: {pkg} no debe eliminarse del requirements.txt mínimo"
+        )
 
 
 def test_s65e_s118c_comment_present():
     """El comentario S118-C debe estar presente para trazabilidad."""
     body = _get_ensure_infra_body(_GRAPH_SRC)
-    assert "S118-C" in body, "S118-C: falta comentario de trazabilidad en _ensure_python_infrastructure"
+    assert "S118-C" in body, (
+        "S118-C: falta comentario de trazabilidad en _ensure_python_infrastructure"
+    )
