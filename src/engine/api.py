@@ -631,6 +631,17 @@ async def start_session(
                     _e,
                 )
 
+    if not resolved_directory and body.project_id:
+        # S120-A: directorio de fallback cuando el proyecto no tiene directory en BD.
+        # Normalizar project_id a slug: PRJ_TURNOS_DEMO → prj-turnos-demo
+        _slug = body.project_id.lower().replace("_", "-")
+        resolved_directory = f"/srv/projects/{_slug}"
+        logging.getLogger("ovd.api").warning(
+            "session_create: S120-A directorio fallback — project_id=%s → %s",
+            body.project_id,
+            resolved_directory,
+        )
+
     if not resolved_directory:
         logging.getLogger("ovd.api").warning(
             "session_create: directory vacío — run_tests usará tmpdir. "

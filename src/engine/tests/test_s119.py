@@ -99,26 +99,27 @@ def test_s119b_new_last_error_includes_no_module():
 
 
 def test_s119b_new_last_error_uses_or_chain():
-    """_new_last_error usa OR chain: _is_structural OR _is_s65a OR _is_s103 OR _is_no_module."""
+    """_new_last_error usa OR chain: _is_structural OR _is_s65a OR _is_s103 OR _is_no_module.
+
+    La asignación puede estar en una o varias líneas (el formatter la parte).
+    Buscamos el bloque completo entre _new_last_error = y el cierre de la expresión.
+    """
     body = _get_function_body(_GRAPH_SRC, "update_test_retry")
-    # Verificar que la asignación de _new_last_error incluye todos los flags
-    new_error_line = [
-        l for l in body.splitlines() if "_new_last_error" in l and "test_output if" in l
-    ]
-    assert new_error_line, (
-        "S119-B: no se encontró la asignación de _new_last_error con condición compuesta"
-    )
-    line = new_error_line[0]
-    assert "_is_s103_output" in line, (
+    # Extraer bloque de la asignación _new_last_error (puede ser multi-línea)
+    idx = body.find("_new_last_error")
+    assert idx != -1, "S119-B: no se encontró _new_last_error en update_test_retry"
+    # Tomar las 5 líneas desde la asignación para cubrir formato multi-línea
+    block = "\n".join(body[idx:].splitlines()[:5])
+    assert "_is_s103_output" in block, (
         "S119-B: _is_s103_output no está en la condición de _new_last_error"
     )
-    assert "_is_no_module" in line, (
+    assert "_is_no_module" in block, (
         "S119-B: _is_no_module no está en la condición de _new_last_error"
     )
-    assert "_is_s65a_output" in line, (
+    assert "_is_s65a_output" in block, (
         "S119-B: _is_s65a_output no debe eliminarse de la condición"
     )
-    assert "_is_structural" in line, (
+    assert "_is_structural" in block, (
         "S119-B: _is_structural no debe eliminarse de la condición"
     )
 

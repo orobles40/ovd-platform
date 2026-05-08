@@ -69,3 +69,26 @@ VALUES (
     TRUE
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Organización de validación de ciclos en producción (S120-B)
+-- Usada por ciclos de validación con org_id='01KMK160F1TJ807Z0BDSJD504D'
+-- ---------------------------------------------------------------------------
+INSERT INTO ovd_orgs (id, name, plan, active)
+VALUES ('01KMK160F1TJ807Z0BDSJD504D', 'OVD Validación Prod', 'starter', TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO ovd_projects (id, org_id, name, description, directory, active)
+VALUES (
+    'PRJ_TURNOS_VAL',
+    '01KMK160F1TJ807Z0BDSJD504D',
+    'Sistema de Turnos Médicos (Validación)',
+    'Proyecto de validación de ciclos OVD en producción',
+    '/srv/projects/turnos-demo',
+    TRUE
+)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO ovd_stack_profiles (id, project_id, language, framework, database, active)
+VALUES ('STACK_TURNOS_VAL', 'PRJ_TURNOS_VAL', 'Python', 'FastAPI', 'PostgreSQL', TRUE)
+ON CONFLICT (id) DO NOTHING;
