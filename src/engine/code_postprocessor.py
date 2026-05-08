@@ -1722,6 +1722,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     if not is_conftest:
         content = _fix_back_populates_orphan(content, rel_path, work_dir)
 
+    # S122-A: reescribir engine module-level a lazy factory en database.py
+    content = _fix_database_module_level_engine(content, rel_path)
+
     if content != original:
         log.warning(
             "[S72] postprocessed %s (%d → %d chars)",
@@ -1729,6 +1732,118 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
             len(original),
             len(content),
         )
+
+    return content
+
+
+# ---------------------------------------------------------------------------
+# S122-A — Fix create_async_engine() module-level en database.py → lazy factory
+# ---------------------------------------------------------------------------
+
+
+def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
+    """S122-A: reescribe engine = create_async_engine(...) a nivel de módulo a lazy factory.
+
+    Detecta el patrón:
+        engine = create_async_engine(DATABASE_URL, ...)       ← module-level
+        AsyncSessionLocal = async_sessionmaker(engine, ...)   ← module-level
+
+    Reescribe a:
+        _engine = None
+        def get_engine(): global _engine; if _engine is None: _engine = create_async_engine(...); return _engine
+
+        _session_factory = None
+        def get_session_factory(): global _session_factory; if ... return _session_factory
+
+    Aplica SOLO a archivos llamados database.py.
+    """
+    if not rel_path.endswith("database.py"):
+        return content
+
+    import re as _re_local
+
+    # Detectar engine = create_async_engine(...) a nivel de módulo (empieza en col 0)
+    if not _re_local.search(r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE):
+        return content
+
+    original = content
+
+    # --- Paso 1: extraer call completo de create_async_engine(...) ---
+    m = _re_local.search(r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE)
+    idx = m.start()
+    call_start = content.index("create_async_engine(", idx)
+    open_paren = content.index("(", call_start)
+
+    depth = 0
+    end_paren = open_paren
+    for i, ch in enumerate(content[open_paren:], start=open_paren):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end_paren = i
+                break
+
+    call_expr = content[call_start : end_paren + 1]  # "create_async_engine(...)"
+
+    # Avanzar hasta el siguiente newline para borrar toda la línea
+    line_end = end_paren + 1
+    if line_end < len(content) and content[line_end] == "\n":
+        line_end += 1
+
+    lazy_engine_block = (
+        "_engine = None\n\n\n"
+        "def get_engine():\n"
+        "    global _engine\n"
+        "    if _engine is None:\n"
+        f"        _engine = {call_expr}\n"
+        "    return _engine\n"
+    )
+
+    content = content[:idx] + lazy_engine_block + content[line_end:]
+
+    # --- Paso 2: hacer lazy AsyncSessionLocal = async_sessionmaker(engine, ...) ---
+    session_m = _re_local.search(
+        r"^AsyncSessionLocal\s*=\s*async_sessionmaker\s*\(([^)]*)\)",
+        content,
+        _re_local.MULTILINE,
+    )
+    if session_m:
+        args_str = session_m.group(1)
+        # Reemplazar referencia a engine por get_engine()
+        args_str = _re_local.sub(r"\bengine\b", "get_engine()", args_str)
+
+        sf_start = session_m.start()
+        sf_end = session_m.end()
+        sf_line_end = sf_end
+        if sf_line_end < len(content) and content[sf_line_end] == "\n":
+            sf_line_end += 1
+
+        lazy_session_block = (
+            "_session_factory = None\n\n\n"
+            "def get_session_factory():\n"
+            "    global _session_factory\n"
+            "    if _session_factory is None:\n"
+            f"        _session_factory = async_sessionmaker({args_str})\n"
+            "    return _session_factory\n"
+        )
+
+        content = content[:sf_start] + lazy_session_block + content[sf_line_end:]
+
+        # Reemplazar AsyncSessionLocal() en get_session con get_session_factory()()
+        content = _re_local.sub(r"\bAsyncSessionLocal\s*\(\s*\)", "get_session_factory()()", content)
+
+    # --- Paso 3: limpiar referencias residuales a engine suelto ---
+    content = _re_local.sub(
+        r"async_sessionmaker\(\s*engine\s*,", "async_sessionmaker(get_engine(),", content
+    )
+    content = _re_local.sub(
+        r"async_sessionmaker\(\s*engine\s*\)", "async_sessionmaker(get_engine())", content
+    )
+
+    if content != original:
+        log.warning("[S122-A] database.py: engine module-level → lazy get_engine() + get_session_factory()")
 
     return content
 

@@ -7901,28 +7901,32 @@ def update_test_retry(state: OVDState) -> dict | Command:
     _classified = _classify_pytest_failures(test_output)
     _typed_feedback = _build_typed_retry_feedback(_classified)
 
-    # S121-C: ImportError en tests/conftest.py al importar src.database → lazy init hint
+    # S121-C / S122-B: ImportError en conftest.py con cadena hacia src.main o src.database → lazy init hint
+    # S122-B: amplía detección a "src.main" / "src/main" para capturar cadena conftest→main→models→database
     _is_conftest_importerror = (
         "tests/conftest.py" in test_output or "conftest.py" in test_output
     ) and ("ImportError" in test_output or "No module named" in test_output) and (
         "database" in test_output
+        or "src.main" in test_output
+        or "src/main" in test_output
+        or "create_async_engine" in test_output
     )
     _conftest_import_hint = ""
     if _is_conftest_importerror:
         _conftest_import_hint = (
-            "\n\n⚠️ S121-C CONFTEST IMPORTERROR: El error ocurre en conftest.py al importar src.database.\n"
-            "CAUSA: create_async_engine(...) se llama a nivel de módulo en src/database.py — "
-            "falla en import time.\n"
-            "SOLUCIÓN OBLIGATORIA — dos cambios:\n"
-            "1) src/database.py: mover create_async_engine() DENTRO de una función factory.\n"
-            "   NUNCA: engine = create_async_engine(DATABASE_URL, ...)  ← PROHIBIDO a nivel de módulo\n"
-            "   CORRECTO: _engine=None; def get_engine(): global _engine; "
-            "if _engine is None: _engine = create_async_engine(DATABASE_URL, ...); return _engine\n"
-            "2) tests/conftest.py: NUNCA 'from src.database import ...'. "
-            "Solo: from src.main import app + httpx.AsyncClient(transport=ASGITransport(app=app))"
+            "\n\n⚠️ S121-C/S122-B CONFTEST IMPORTERROR: conftest importa src.main que falla "
+            "en la cadena conftest→main→models→database.\n"
+            "CAUSA: create_async_engine(...) se llama a nivel de módulo en src/database.py.\n"
+            "SOLUCIÓN OBLIGATORIA en src/database.py — lazy factory:\n"
+            "  _engine=None\n"
+            "  def get_engine(): global _engine; "
+            "if _engine is None: _engine=create_async_engine(DATABASE_URL,...); return _engine\n"
+            "  def get_session_factory(): (usar get_engine() dentro)\n"
+            "NUNCA: engine=create_async_engine(...) ni AsyncSessionLocal=async_sessionmaker(engine,...) "
+            "fuera de una función."
         )
         log.warning(
-            "update_test_retry: S121-C conftest ImportError detectado — inyectando lazy init hint"
+            "update_test_retry: S121-C/S122-B conftest ImportError detectado — inyectando lazy init hint"
         )
 
     # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
