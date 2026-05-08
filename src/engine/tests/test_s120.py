@@ -8,9 +8,9 @@ import pathlib
 import re
 
 _API_SRC = (pathlib.Path(".") / "api.py").read_text(encoding="utf-8")
-_SEED_SQL = (
-    pathlib.Path(".") / "migrations" / "seed_prod.sql"
-).read_text(encoding="utf-8")
+_SEED_SQL = (pathlib.Path(".") / "migrations" / "seed_prod.sql").read_text(
+    encoding="utf-8"
+)
 _MIGRATION = (
     pathlib.Path(".")
     / "migrations"
@@ -26,9 +26,7 @@ _MIGRATION = (
 
 def test_s120a_fallback_present_in_api():
     """api.py debe tener el bloque S120-A de directorio fallback."""
-    assert "S120-A" in _API_SRC, (
-        "S120-A: falta comentario de trazabilidad en api.py"
-    )
+    assert "S120-A" in _API_SRC, "S120-A: falta comentario de trazabilidad en api.py"
 
 
 def test_s120a_uses_srv_projects_path():
@@ -77,9 +75,7 @@ def test_s120b_migration_inserts_validation_org():
     assert _VAL_ORG in _MIGRATION, (
         f"S120-B: migración 0008 debe incluir INSERT de org '{_VAL_ORG}'"
     )
-    assert "ovd_orgs" in _MIGRATION, (
-        "S120-B: migración debe insertar en tabla ovd_orgs"
-    )
+    assert "ovd_orgs" in _MIGRATION, "S120-B: migración debe insertar en tabla ovd_orgs"
 
 
 def test_s120b_migration_inserts_validation_project():

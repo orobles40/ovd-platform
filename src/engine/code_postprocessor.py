@@ -1763,13 +1763,17 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
     import re as _re_local
 
     # Detectar engine = create_async_engine(...) a nivel de módulo (empieza en col 0)
-    if not _re_local.search(r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE):
+    if not _re_local.search(
+        r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE
+    ):
         return content
 
     original = content
 
     # --- Paso 1: extraer call completo de create_async_engine(...) ---
-    m = _re_local.search(r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE)
+    m = _re_local.search(
+        r"^engine\s*=\s*create_async_engine\s*\(", content, _re_local.MULTILINE
+    )
     idx = m.start()
     call_start = content.index("create_async_engine(", idx)
     open_paren = content.index("(", call_start)
@@ -1847,19 +1851,27 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
 
         # Reemplazar <var>() en el código por get_session_factory()()
         content = _re_local.sub(
-            rf"\b{_re_local.escape(sf_var)}\s*\(\s*\)", "get_session_factory()()", content
+            rf"\b{_re_local.escape(sf_var)}\s*\(\s*\)",
+            "get_session_factory()()",
+            content,
         )
 
     # --- Paso 3: limpiar referencias residuales a engine suelto ---
     content = _re_local.sub(
-        r"async_sessionmaker\(\s*engine\s*,", "async_sessionmaker(get_engine(),", content
+        r"async_sessionmaker\(\s*engine\s*,",
+        "async_sessionmaker(get_engine(),",
+        content,
     )
     content = _re_local.sub(
-        r"async_sessionmaker\(\s*engine\s*\)", "async_sessionmaker(get_engine())", content
+        r"async_sessionmaker\(\s*engine\s*\)",
+        "async_sessionmaker(get_engine())",
+        content,
     )
 
     if content != original:
-        log.warning("[S122-A] database.py: engine module-level → lazy get_engine() + get_session_factory()")
+        log.warning(
+            "[S122-A] database.py: engine module-level → lazy get_engine() + get_session_factory()"
+        )
 
     return content
 

@@ -8,13 +8,31 @@
 
 ## Estado actual
 
-- **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18)
-- **Rama de trabajo:** `dev`
-- **Sprints completados:** S3 → S111
-- **Tests:** 1908 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline  
-  *(suite 100% limpia — 0 fallos pre-existentes pendientes)*
+- **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18) + S122 (calidad engine)
+- **Rama de trabajo:** `main`
+- **Sprints completados:** S3 → S121
+- **Tests:** 2013 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
+
+---
+
+## Última sesión (2026-05-08 — S121 + S122: postprocessor lazy engine + fix ciclo validación)
+
+**S121 — Fix ImportError conftest.py — COMPLETADO:**
+- S121-A: `backend_python.md` regla D5 — PROHIBIDO `engine = create_async_engine(...)` a nivel módulo en `database.py`. Patrón lazy `_engine=None + def get_engine()` obligatorio.
+- S121-B: `backend_python.md` — PROHIBIDO `from src.database import ...` en conftest.py. Patrón correcto: `from src.main import app` + `httpx.AsyncClient`.
+- S121-C: `graph.py` `update_test_retry` — detección `_is_conftest_importerror` + inyección hint lazy init cuando conftest ImportError.
+- **Ciclo validación `46d2d42a`:** S121-B ✅ validado (3 rondas conftest correcto). S121-A ❌ no efectivo (modelo ignoró la regla). QA máximo 72/100.
+
+**S122 — Postprocessor lazy engine — COMPLETADO:**
+- S122-A: `_fix_database_module_level_engine` en `code_postprocessor.py` — reescribe `engine = create_async_engine(...)` y `<var> = async_sessionmaker(engine, ...)` a nivel módulo → lazy `get_engine()` + `get_session_factory()`. Paso 2 generalizado para cualquier nombre de variable (no solo `AsyncSessionLocal`).
+- S122-B: `update_test_retry` — detección expandida a `src.main`, `src/main`, `create_async_engine` además de `database`.
+- 17 tests en `test_s122.py` — todos PASS incluyendo caso `async_session_factory`.
+- **Ciclo validación `7990efb6`:** S122-A ✅ disparado 2 veces en logs. QA 95/100 (mejor histórico). Nuevo fallo: test files importan `async_session_maker` de `src.database` (renombrado por S122-A) → S123.
+
+**Commits:** `d1057cac` (S122 inicial) + `47ab0b7f` (fix paso 2 generalizado)
+**Deploy DO:** `417cc98a` ACTIVE
 
 ---
 
@@ -173,15 +191,18 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S112 — Despliegue DigitalOcean (demo 2026-05-18)**
+**S123 — Fix test files importan from src.database (nueva barrera tras S122)**
 
-**Acciones inmediatas:**
-1. Merge `dev→main` — activa deploy automático en DO (S112-D + S112-E + OVD_MODEL_SDD)
-2. **D4**: verificar `curl https://ovd-platform.codigonet.cloud/health` tras el deploy
-3. **D5**: RAG bootstrap contra BD prod — `DATABASE_URL=<prod_url> ... python scripts/rag_bootstrap.py --org-id ORG_OVD_DEMO --project-id ovd-platform --clear`
-4. Lanzar ciclo demo "Sistema de Turnos" desde dashboard web y verificar que el botón "Descargar código" entrega el ZIP
+Causa raíz: el modelo genera `from src.database import async_session_maker` en test files. Después de S122-A, ese nombre no existe (`get_session_factory` es el API público).
 
-**Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46 (Design Quality System), S113 (dry run + guion presentación)
+**S123-A:** `backend_python.md` — prohibir `from src.database import` en test files. Patrón correcto para fixtures: crear engine propio con SQLite in-memory.
+**S123-B (opcional):** postprocessor `_fix_test_database_imports` — detectar y reemplazar imports de `src.database` en `tests/*.py`.
+
+**S112 — Deploy DO (demo 2026-05-18):**
+- D4: `curl https://ovd-platform.codigonet.cloud/health` (después de verificar merge)
+- D5: RAG bootstrap prod
+
+**Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46, S113 (guion presentación)
 
 ---
 
@@ -231,6 +252,9 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 | S107 | 0426dd25 | **94** ✅ | 1 retry (S79-C+Pydantic Date) | 13m 45s |
 | S108 | 3fbfc62d | **60** ❌ | 0 retries (NameError S108-B regresión) | 14m 50s |
 | S109 | 5931bd36 | **90** ✅ | 0 retries (S108-B guard activo) | 11m 53s |
+| S120 | a18c7b32 | — | FAIL | conftest `from src.database import` directo |
+| S121 | 46d2d42a | **72** ❌ | FAIL × 3 | conftest correcto ✅ pero database.py engine module-level |
+| S122 | 7990efb6 | **95** ✅ | FAIL × 3 | S122-A activado ✅ — nuevo fallo: test imports src.database |
 
 ---
 

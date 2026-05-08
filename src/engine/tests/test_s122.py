@@ -103,7 +103,9 @@ class Base(DeclarativeBase):
 
 
 def _get_function_body(src: str, func_name: str) -> str:
-    pattern = rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    pattern = (
+        rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    )
     m = re.search(pattern, src, re.DOTALL)
     return m.group(0) if m else ""
 
@@ -154,7 +156,10 @@ def test_s122a_get_session_uses_lazy_factory():
     # AsyncSessionLocal() directo debe ser reemplazado
     assert "async with AsyncSessionLocal()" not in result
     # La sesión se crea via factory
-    assert "get_session_factory()()" in result or "async_sessionmaker(get_engine()" in result
+    assert (
+        "get_session_factory()()" in result
+        or "async_sessionmaker(get_engine()" in result
+    )
 
 
 def test_s122a_preserves_base_class():

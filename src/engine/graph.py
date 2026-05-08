@@ -7904,12 +7904,14 @@ def update_test_retry(state: OVDState) -> dict | Command:
     # S121-C / S122-B: ImportError en conftest.py con cadena hacia src.main o src.database → lazy init hint
     # S122-B: amplía detección a "src.main" / "src/main" para capturar cadena conftest→main→models→database
     _is_conftest_importerror = (
-        "tests/conftest.py" in test_output or "conftest.py" in test_output
-    ) and ("ImportError" in test_output or "No module named" in test_output) and (
-        "database" in test_output
-        or "src.main" in test_output
-        or "src/main" in test_output
-        or "create_async_engine" in test_output
+        ("tests/conftest.py" in test_output or "conftest.py" in test_output)
+        and ("ImportError" in test_output or "No module named" in test_output)
+        and (
+            "database" in test_output
+            or "src.main" in test_output
+            or "src/main" in test_output
+            or "create_async_engine" in test_output
+        )
     )
     _conftest_import_hint = ""
     if _is_conftest_importerror:

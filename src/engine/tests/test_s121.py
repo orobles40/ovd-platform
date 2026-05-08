@@ -16,7 +16,9 @@ _BACKEND_PY_MD = (_ENGINE_ROOT / "templates" / "stack" / "backend_python.md").re
 
 
 def _get_function_body(src: str, func_name: str) -> str:
-    pattern = rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    pattern = (
+        rf"(?:async )?def {re.escape(func_name)}\b.*?(?=\n(?:async )?def [a-z_]|\Z)"
+    )
     m = re.search(pattern, src, re.DOTALL)
     return m.group(0) if m else ""
 
@@ -105,9 +107,7 @@ def test_s121c_detection_present_in_update_test_retry():
 def test_s121c_checks_conftest_and_database_in_output():
     """La detección S121-C verifica 'conftest.py' y 'database' en test_output."""
     body = _get_function_body(_GRAPH_SRC, "update_test_retry")
-    assert "conftest.py" in body, (
-        "S121-C: debe verificar 'conftest.py' en test_output"
-    )
+    assert "conftest.py" in body, "S121-C: debe verificar 'conftest.py' en test_output"
     assert '"database"' in body or "'database'" in body, (
         "S121-C: debe verificar 'database' en test_output para limitar falsos positivos"
     )
@@ -147,6 +147,8 @@ def test_s121c_lazy_init_mentioned_in_hint():
     assert "factory" in hint_block or "get_engine" in hint_block, (
         "S121-C: el hint debe mencionar la solución factory/get_engine"
     )
-    assert "ASGITransport" in hint_block or "httpx" in hint_block or "src.main" in hint_block, (
-        "S121-C: el hint debe mencionar el conftest correcto con src.main"
-    )
+    assert (
+        "ASGITransport" in hint_block
+        or "httpx" in hint_block
+        or "src.main" in hint_block
+    ), "S121-C: el hint debe mencionar el conftest correcto con src.main"
