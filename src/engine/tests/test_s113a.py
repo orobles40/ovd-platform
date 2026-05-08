@@ -31,6 +31,7 @@ class TestSddTemplateSingularAusente:
         content = open(template_path, encoding="utf-8").read()
         # Buscar 'service.py' que NO sea 'services.py'
         import re
+
         matches = re.findall(r"(?<![s])service\.py", content)
         assert matches == [], (
             f"system_sdd.md contiene {len(matches)} referencias a service.py (singular): {matches}"
@@ -42,7 +43,9 @@ class TestSddTemplateSingularAusente:
             os.path.dirname(__file__), "..", "templates", "system_sdd.md"
         )
         content = open(template_path, encoding="utf-8").read()
-        assert "services.py" in content, "system_sdd.md no contiene services.py (plural)"
+        assert "services.py" in content, (
+            "system_sdd.md no contiene services.py (plural)"
+        )
 
     def test_system_sdd_import_usa_services_plural(self):
         """system_sdd.md debe usar src.*.services en el ejemplo de imports."""
@@ -141,6 +144,7 @@ class TestArchitectureContractNormalization:
         )
         # Extraer el JSON del contrato
         import re
+
         json_match = re.search(r"```json\n(.+?)\n```", contract_text, re.DOTALL)
         assert json_match, "No se encontró bloque JSON en el contrato"
         contract_data = json.loads(json_match.group(1))

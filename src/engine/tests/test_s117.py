@@ -75,7 +75,7 @@ def test_qa_result_current_is_not_annotated():
     for i, line in enumerate(lines):
         if "qa_result_current" in line and "Annotated" in line:
             pytest.fail(
-                f"qa_result_current no debe usar Annotated (línea {i+1}): {line.strip()}"
+                f"qa_result_current no debe usar Annotated (línea {i + 1}): {line.strip()}"
             )
 
 
@@ -190,7 +190,9 @@ def test_agent_executor_impl_no_direct_agents_timeout_in_wait_for():
     impl_body = match.group(0)
 
     # Buscar wait_for con timeout=_AGENTS_TIMEOUT directo (debe ser 0)
-    direct_uses = re.findall(r"asyncio\.wait_for\([^)]*timeout=_AGENTS_TIMEOUT", impl_body)
+    direct_uses = re.findall(
+        r"asyncio\.wait_for\([^)]*timeout=_AGENTS_TIMEOUT", impl_body
+    )
     assert not direct_uses, (
         f"_agent_executor_impl aún usa timeout=_AGENTS_TIMEOUT directamente "
         f"({len(direct_uses)} ocurrencia(s)) — debe usar _task_timeout"

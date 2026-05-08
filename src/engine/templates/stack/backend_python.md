@@ -81,6 +81,29 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 ```
 
+**PROHIBIDO en conftest.py (S121-B):** NUNCA importes `from src.database import ...` ni `from src.models import ...` a nivel de módulo en `conftest.py`. Esto provoca `ImportError` en colección de pytest si el engine async no puede inicializarse.
+
+❌ **PROHIBIDO:**
+```python
+# conftest.py — MALO
+from src.database import Base, get_session  # ← dispara create_async_engine() al importar
+```
+
+✅ **CORRECTO — conftest.py mínimo para FastAPI async:**
+```python
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+import pytest
+from httpx import AsyncClient, ASGITransport
+from src.main import app
+
+@pytest.fixture
+async def client():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+```
+
 ### pytest.ini mínimo
 
 ```ini:pytest.ini
@@ -431,6 +454,52 @@ turno = result.scalar_one()
 turno.estado = "reservado"
 await db.commit()  # race condition: otro proceso puede modificar entre select y commit
 ```
+
+---
+
+### D5 — SQLAlchemy async: PROHIBIDO engine a nivel de módulo en src/database.py (S121-A)
+
+`create_async_engine(...)` NUNCA debe llamarse fuera de una función en `src/database.py`. Al importar el módulo (desde `tests/conftest.py` o cualquier otro archivo), Python ejecuta el cuerpo del módulo inmediatamente. Si el driver async no está disponible o la URL es inválida, se genera `ImportError` durante la colección de pytest, antes de que se ejecute ningún test.
+
+❌ **PROHIBIDO — falla en colección de pytest:**
+```python
+# src/database.py — MALO
+import os
+from sqlalchemy.ext.asyncio import create_async_engine
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+engine = create_async_engine(DATABASE_URL, echo=False)  # ← module-level: ImportError al importar
+```
+
+✅ **CORRECTO — inicialización lazy dentro de factory (S121-A):**
+```python
+# src/database.py
+import os
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+_engine = None
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_async_engine(DATABASE_URL, echo=False)
+    return _engine
+
+class Base(DeclarativeBase):
+    pass
+
+async def get_session():
+    async_session = async_sessionmaker(get_engine(), expire_on_commit=False)
+    async with async_session() as session:
+        yield session
+```
+
+**Reglas:**
+- **NUNCA** escribas `engine = create_async_engine(...)` fuera de una función en `src/database.py`
+- La inicialización lazy garantiza que el engine solo se crea cuando el proceso realmente conecta a la BD, no al importar el módulo
 
 ---
 

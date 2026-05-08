@@ -7901,6 +7901,30 @@ def update_test_retry(state: OVDState) -> dict | Command:
     _classified = _classify_pytest_failures(test_output)
     _typed_feedback = _build_typed_retry_feedback(_classified)
 
+    # S121-C: ImportError en tests/conftest.py al importar src.database → lazy init hint
+    _is_conftest_importerror = (
+        "tests/conftest.py" in test_output or "conftest.py" in test_output
+    ) and ("ImportError" in test_output or "No module named" in test_output) and (
+        "database" in test_output
+    )
+    _conftest_import_hint = ""
+    if _is_conftest_importerror:
+        _conftest_import_hint = (
+            "\n\n⚠️ S121-C CONFTEST IMPORTERROR: El error ocurre en conftest.py al importar src.database.\n"
+            "CAUSA: create_async_engine(...) se llama a nivel de módulo en src/database.py — "
+            "falla en import time.\n"
+            "SOLUCIÓN OBLIGATORIA — dos cambios:\n"
+            "1) src/database.py: mover create_async_engine() DENTRO de una función factory.\n"
+            "   NUNCA: engine = create_async_engine(DATABASE_URL, ...)  ← PROHIBIDO a nivel de módulo\n"
+            "   CORRECTO: _engine=None; def get_engine(): global _engine; "
+            "if _engine is None: _engine = create_async_engine(DATABASE_URL, ...); return _engine\n"
+            "2) tests/conftest.py: NUNCA 'from src.database import ...'. "
+            "Solo: from src.main import app + httpx.AsyncClient(transport=ASGITransport(app=app))"
+        )
+        log.warning(
+            "update_test_retry: S121-C conftest ImportError detectado — inyectando lazy init hint"
+        )
+
     # S33-A / S43-E: instrucción de no modificar tests — stack-aware via helper
     _runner_for_msg = tr.get("runner", "")
     new_feedback = (
@@ -7914,6 +7938,7 @@ def update_test_retry(state: OVDState) -> dict | Command:
         + output_section
         + "Corregir SOLO la implementación para que los tests pasen."
         + repeat_hint
+        + _conftest_import_hint  # S121-C
     )
     accumulated = f"{existing}\n\n{new_feedback}".strip() if existing else new_feedback
     accumulated = _truncate(

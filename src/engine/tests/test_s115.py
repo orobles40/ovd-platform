@@ -103,6 +103,7 @@ class TestQAFeedbackTruncation:
     def test_update_qa_retry_usa_limite_10000(self):
         """S115-C: update_qa_retry debe usar _truncate con 10000 chars."""
         import inspect
+
         from graph import update_qa_retry
 
         src = inspect.getsource(update_qa_retry)
@@ -115,6 +116,7 @@ class TestQAFeedbackTruncation:
     def test_feedback_acumula_entre_rondas(self):
         """S115-C: update_qa_retry debe acumular el feedback de rondas anteriores."""
         from factories import make_state
+
         from graph import update_qa_retry
 
         # Estado con feedback previo (ronda 0 ya tuvo issues)
@@ -223,8 +225,8 @@ class TestBackendPythonTopologicalOrder:
 class TestEarlyCycleRegistration:
     def test_ensure_cycle_registered_existe(self):
         """S115-B: _ensure_cycle_registered debe existir en api.py."""
-        import inspect
         import importlib
+        import inspect
 
         # Verificar que la función existe en api.py
         import api
