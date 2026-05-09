@@ -530,44 +530,45 @@ def test_clean_rut_elimina_puntos_y_guion():
     assert cleaned == '123456785'
 ```
 
-### Ejemplo 2 — Tests de endpoint FastAPI con TestClient
+### Ejemplo 2 — Tests de endpoint FastAPI con AsyncClient y engine propio (S124-A)
 
 ```python
 # tests/test_auth.py
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from src.database import Base, get_db
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from src.database import Base, get_session  # solo Base y get_session (función generadora)
 from src.main import app
 
-_engine = create_engine("sqlite:///./test_auth.db", connect_args={"check_same_thread": False})
-_TestSession = sessionmaker(bind=_engine)
+# Engine independiente — NUNCA importar el engine de src.database
+TEST_DATABASE_URL = "sqlite+aiosqlite://"
+_test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+_TestSession = async_sessionmaker(_test_engine, class_=AsyncSession, expire_on_commit=False)
 
-@pytest.fixture(autouse=True)
-def _setup_db():
-    Base.metadata.create_all(bind=_engine)
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _setup_db():
+    async with _test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
-    Base.metadata.drop_all(bind=_engine)
+    await _test_engine.dispose()
 
-@pytest.fixture
-def db():
-    session = _TestSession()
-    yield session
-    session.close()
-
-@pytest.fixture
-def client(db):
-    app.dependency_overrides[get_db] = lambda: db
-    yield TestClient(app)
+@pytest_asyncio.fixture
+async def client():
+    async def override_get_session():
+        async with _TestSession() as session:
+            yield session
+    app.dependency_overrides[get_session] = override_get_session
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
     app.dependency_overrides.clear()
 
-def test_login_rut_invalido(client):
-    resp = client.post("/auth/login", json={"rut": "00000000-0", "password": "test"})
+async def test_login_rut_invalido(client):
+    resp = await client.post("/auth/login", json={"rut": "00000000-0", "password": "test"})
     assert resp.status_code in (401, 422)
 
-def test_endpoint_protegido_sin_token(client):
-    resp = client.get("/contracts/")
+async def test_endpoint_protegido_sin_token(client):
+    resp = await client.get("/contracts/")
     assert resp.status_code == 401
 ```
 

@@ -515,14 +515,14 @@ from src.database import async_session_maker     # ← no existe
 from src.database import engine                  # ← no existe
 ```
 
-✅ **CORRECTO — test autocontenido con engine propio (S123-A):**
+✅ **CORRECTO — test autocontenido con engine propio y dependency override (S124-A):**
 ```python
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.main import app
-from src.database import Base  # solo Base está permitido
+from src.database import Base, get_session  # Base y get_session (función generadora) permitidos
 
 TEST_DATABASE_URL = "sqlite+aiosqlite://"  # in-memory, sin persistencia entre tests
 
@@ -534,19 +534,31 @@ async def setup_db():
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with _test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    await _test_engine.dispose()
 
 @pytest_asyncio.fixture
 async def client():
+    # dependency_override: la app usa el engine de test en lugar del de producción
+    async def override_get_session():
+        async with _TestSession() as session:
+            yield session
+    app.dependency_overrides[get_session] = override_get_session
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+    app.dependency_overrides.clear()
+
+async def test_ejemplo(client):
+    resp = await client.get("/health")
+    assert resp.status_code == 200
 ```
 
 **Reglas:**
 - Los tests crean su propio engine con SQLite in-memory (`sqlite+aiosqlite://`)
-- `from src.database import Base` es el único import permitido de `src.database` en tests
+- `from src.database import Base` y `from src.database import get_session` son los únicos imports permitidos de `src.database` en tests
+- `app.dependency_overrides[get_session]` conecta el engine de test con la app — SIEMPRE hacerlo en la fixture `client`
+- `app.dependency_overrides.clear()` al finalizar la fixture para no contaminar otros tests
 - `pytest.ini` debe incluir `asyncio_mode = auto` para fixtures async
+- NUNCA crear el engine a nivel de módulo sin ponerlo en una fixture de scope="session"
 
 ---
 

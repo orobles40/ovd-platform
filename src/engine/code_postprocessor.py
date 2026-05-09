@@ -1728,6 +1728,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S123-B: eliminar imports de src.database en test files (excepto Base)
     content = _fix_test_database_imports(content, rel_path)
 
+    # S124-B: reemplazar usos residuales de factories eliminados por S123-B
+    content = _fix_test_session_usage(content, rel_path)
+
     if content != original:
         log.warning(
             "[S72] postprocessed %s (%d → %d chars)",
@@ -1890,15 +1893,16 @@ _SAFE_DB_NAMES = frozenset({"Base"})
 # Nombres que NO deben importarse de src.database en tests (renombrados por S122-A)
 _UNSAFE_DB_NAMES = frozenset(
     {
+        # Variables module-level que S122-A elimina de src.database
         "engine",
         "AsyncSessionLocal",
         "async_session_factory",
         "async_session_maker",
         "async_sessionmaker",
-        "get_engine",
-        "get_session_factory",
         "SessionLocal",
         "session_factory",
+        # NOTA: get_engine / get_session_factory son API público post-S122-A
+        # y NO deben eliminarse de los imports de test.
     }
 )
 
@@ -1951,6 +1955,78 @@ def _fix_test_database_imports(content: str, rel_path: str) -> str:
         return content
 
     return "\n".join(new_lines)
+
+
+# Patrones de uso residual que quedan en el cuerpo del test después de que
+# _fix_test_database_imports elimina el import.  Los reemplazamos por la llamada
+# pública correcta que sí existe en src.database post-S122-A.
+_RESIDUAL_FACTORY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bAsyncSessionLocal\s*\(\s*\)"), "_TestSessionFactory()"),
+    (re.compile(r"\basync_session_maker\s*\(\s*\)"), "_TestSessionFactory()"),
+    (re.compile(r"\basync_session_factory\s*\(\s*\)"), "_TestSessionFactory()"),
+    (re.compile(r"\basync_sessionmaker\s*\(\s*\)"), "_TestSessionFactory()"),
+    (re.compile(r"\bSessionLocal\s*\(\s*\)"), "_TestSessionFactory()"),
+    (re.compile(r"\bsession_factory\s*\(\s*\)"), "_TestSessionFactory()"),
+]
+
+# Bloque que se inyecta al inicio del test file si se encontraron usos residuales.
+# Solo se inyecta si el archivo no declara ya create_async_engine (evita duplicados).
+_TEST_ENGINE_PREAMBLE = (
+    "# S124-B: engine SQLite in-memory — inyectado por postprocessor\n"
+    "from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession\n"
+    '_test_engine = create_async_engine("sqlite+aiosqlite://", echo=False)\n'
+    "_TestSessionFactory = async_sessionmaker(\n"
+    "    _test_engine, class_=AsyncSession, expire_on_commit=False\n"
+    ")\n"
+)
+
+
+def _fix_test_session_usage(content: str, rel_path: str) -> str:
+    """S124-B: reemplaza usos residuales de factories eliminados en test files.
+
+    _fix_test_database_imports elimina la línea de import pero deja el cuerpo
+    usando `AsyncSessionLocal()` u otras factories → NameError en runtime.
+    Esta función:
+    1. Reemplaza esas llamadas por `_TestSessionFactory()` (nombre local estándar).
+    2. Si hizo reemplazos Y el archivo no define aún create_async_engine,
+       inyecta el bloque _TEST_ENGINE_PREAMBLE con el engine SQLite in-memory.
+    """
+    basename = rel_path.replace("\\", "/").split("/")[-1]
+    is_test_file = basename.startswith("test_") or rel_path.startswith("tests/")
+    if not is_test_file:
+        return content
+
+    new_content = content
+    replaced = False
+    for pattern, replacement in _RESIDUAL_FACTORY_PATTERNS:
+        fixed = pattern.sub(replacement, new_content)
+        if fixed != new_content:
+            replaced = True
+            new_content = fixed
+
+    if not replaced:
+        return content
+
+    log.warning(
+        "[S124-B] %s: usos residuales de DB factory reemplazados por _TestSessionFactory()",
+        rel_path,
+    )
+
+    # Inyectar preamble solo si create_async_engine no está ya presente
+    if "create_async_engine" not in new_content:
+        # Insertar después del último import del bloque superior
+        lines = new_content.split("\n")
+        insert_at = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("import ") or stripped.startswith("from "):
+                insert_at = i + 1
+        preamble_lines = _TEST_ENGINE_PREAMBLE.splitlines()
+        lines = lines[:insert_at] + [""] + preamble_lines + [""] + lines[insert_at:]
+        new_content = "\n".join(lines)
+        log.warning("[S124-B] %s: preamble _TestSessionFactory inyectado", rel_path)
+
+    return new_content
 
 
 def postprocess_yaml_file(
