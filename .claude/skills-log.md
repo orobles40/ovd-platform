@@ -745,3 +745,38 @@ Decisión: mantener deepseek-v4-pro en producción (scores 45-68 son variabilida
 
 ### Notas
 La causa raíz del problema era en dos capas: S123-B eliminaba el import (resolvía ImportError de colección) pero dejaba NameError en runtime. B2 cierra esa segunda capa de forma determinística. La investigación externa (repos OpenHands, LangChain, Superpowers) confirmó que el patrón canónico de la industria es dependency_override con engine independiente — exactamente lo que A2 ahora muestra en el template.
+
+## S019 | 2026-05-09
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~18:00 |
+| Cierre | ~21:15 |
+| Duración | ~3h 15m |
+| Sprint | S112 + OVD Desktop F7 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [x] /run-tests ×1
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS (9 fixable auto-corregidos en tests)
+- [x] ruff format: PASS (2 archivos reformateados)
+- [x] pytest unit: 2044 passed (1 fallo corregido: test_s120 → test_s120a_fires_before_tmpdir_fallback)
+- [x] OVD conventions: PASS (usos legacy pre-existentes, sin regresión)
+- Push ejecutado: SÍ | Fallos CI post-push: 0
+
+### Completado hoy
+- Fix `messages: Annotated[list[dict], operator.add]` en `OVDState` (graph.py) — resolvía InvalidUpdateError en fan-out paralelo. Commit + push.
+- Rebuild DO con acumulado S123/S124/RLS fixes → ACTIVE 11/11.
+- OVD Desktop F6/F7: verificados completos (CSP, capabilities, CORS ya aplicados).
+- Fix `write_artifacts` (2 bugs): `threadIdRef` para evitar stale closure + `directory:""` para no enviar path local al engine DO.
+- Fix `api.py` `session_create`: `tempfile.mkdtemp()` cuando `directory` vacío — caso desktop sin `project_id`.
+- Smoke test end-to-end desktop→producción: Login ✅, FR ✅, tests PASS 5/5, **5 archivos escritos en carpeta local** ✅.
+- Tag `desktop-v0.1.1` → CI `Desktop Release` disparado (macOS aarch64 + x86_64).
+
+### Notas
+Sesión sin fricción (5/5). Todos los fixes fueron directos al diagnóstico sin iteraciones largas. El smoke test de write_artifacts reveló dos bugs independientes que se corrigieron en un solo commit. El CI de GitHub Actions quedó corriendo para el release del DMG.
