@@ -7,7 +7,7 @@
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "cd frontend && bun run dev",
-    "beforeBuildCommand": "cd frontend && bun run build"
+    "beforeBuildCommand": "cd ../frontend && bun run build"
   },
   "app": {
     "windows": [
@@ -48,7 +48,7 @@
     "linux": {
       "deb": { "depends": [] }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {
