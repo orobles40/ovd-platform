@@ -97,6 +97,11 @@ _graph_tasks: dict[str, asyncio.Task] = {}  # thread_id → background task del 
 _event_queues: dict[str, asyncio.Queue] = {}  # thread_id → queue de eventos SSE
 _stream_done: dict[str, asyncio.Event] = {}  # thread_id → señal de fin de stream
 
+# v0.2: Replay buffer para reconexión SSE con Last-Event-ID
+_event_replay: dict[str, list[dict]] = {}   # thread_id → eventos ordenados con id asignado
+_event_id_counters: dict[str, int] = {}     # thread_id → próximo id de evento
+_REPLAY_BUFFER_MAX = 500                    # máx eventos en memoria por thread
+
 
 def _configure_app_loggers() -> None:
     """S59-A/A1: configura logging con dictConfig para garantizar handlers en todos los loggers de app."""
@@ -864,6 +869,21 @@ async def start_session(
     )
 
 
+async def _queue_put_with_replay(thread_id: str, event: dict) -> None:
+    """v0.2: asigna id monotónico al evento, lo guarda en replay buffer y lo encola."""
+    queue = _event_queues.get(thread_id)
+    if queue is None:
+        return
+    n = _event_id_counters.get(thread_id, 0) + 1
+    _event_id_counters[thread_id] = n
+    event_with_id = {**event, "id": str(n)}
+    buf = _event_replay.setdefault(thread_id, [])
+    buf.append(event_with_id)
+    if len(buf) > _REPLAY_BUFFER_MAX:
+        buf.pop(0)
+    await queue.put(event_with_id)
+
+
 async def _run_graph_background(thread_id: str, config: dict) -> None:
     """
     S47-A: ejecuta el grafo LangGraph en una task asyncio separada del SSE.
@@ -907,33 +927,35 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                 # S20-GAP-R1: timeout global — el grafo no puede correr eternamente
                 async with asyncio.timeout(_SSE_STREAM_TIMEOUT):
                     async for event in _stream_graph_events(thread_id, config):
-                        await queue.put(event)
+                        await _queue_put_with_replay(thread_id, event)
             except asyncio.TimeoutError:
                 log.error(
                     "S47-A: timeout global para thread=%s tras %.0fs",
                     thread_id,
                     _SSE_STREAM_TIMEOUT,
                 )
-                await queue.put(
+                await _queue_put_with_replay(
+                    thread_id,
                     _make_sse_event(
                         "error",
                         {
                             "message": f"Timeout global del grafo ({_SSE_STREAM_TIMEOUT:.0f}s). Consulta /session/{thread_id}/state",
                             "recoverable": False,
                         },
-                    )
+                    ),
                 )
             finally:
                 unregister_session(thread_id)
     except AlreadyRunningError:
-        await queue.put(
+        await _queue_put_with_replay(
+            thread_id,
             _make_sse_event(
                 "error",
                 {
                     "message": "Ciclo ya en ejecución — espera a que termine o usa /session/{thread_id}/state",
                     "recoverable": False,
                 },
-            )
+            ),
         )
     except Exception as exc:
         log.error(
@@ -942,14 +964,15 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
             exc,
             exc_info=True,
         )
-        await queue.put(
+        await _queue_put_with_replay(
+            thread_id,
             _make_sse_event(
                 "error",
                 {
                     "message": str(exc) or type(exc).__name__,
                     "recoverable": False,
                 },
-            )
+            ),
         )
     finally:
         done_ev.set()
@@ -994,6 +1017,8 @@ async def _deferred_cleanup(thread_id: str, delay: float) -> None:
     await asyncio.sleep(delay)
     _event_queues.pop(thread_id, None)
     _stream_done.pop(thread_id, None)
+    _event_replay.pop(thread_id, None)
+    _event_id_counters.pop(thread_id, None)
 
 
 async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
@@ -1093,13 +1118,15 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
 async def stream_session(
     thread_id: str,
     request: Request,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     _: None = Depends(verify_secret),
 ):
     """
     S47-A: SSE que lee de una queue. El grafo corre en background.
+    v0.2: soporta Last-Event-ID para reconexión sin perder eventos.
 
     Si el cliente desconecta, el grafo CONTINÚA ejecutándose.
-    Si el cliente reconecta, consume los eventos acumulados en la queue.
+    Si el cliente reconecta con Last-Event-ID, se reproducen los eventos perdidos.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -1124,9 +1151,27 @@ async def stream_session(
     async def event_generator():
         """
         Lee eventos de la queue y los emite como SSE.
+        v0.2: reproduce eventos perdidos si el cliente reconecta con Last-Event-ID.
         Si no hay eventos en 30s, emite heartbeat para mantener la conexión viva.
-        Si el cliente desconecta, el generador termina pero el grafo continúa.
         """
+        # v0.2: replay de eventos perdidos al reconectar
+        if last_event_id is not None:
+            try:
+                last_id = int(last_event_id)
+                missed = [
+                    e for e in _event_replay.get(thread_id, [])
+                    if int(e.get("id", 0)) > last_id
+                ]
+                if missed:
+                    log.info(
+                        "v0.2: reconexión thread=%s — reproduciendo %d evento(s) desde id=%s",
+                        thread_id[:8], len(missed), last_event_id,
+                    )
+                for e in missed:
+                    yield e
+            except (ValueError, TypeError):
+                pass
+
         while not (done_ev.is_set() and queue.empty()):
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
@@ -1141,7 +1186,6 @@ async def stream_session(
                 # Heartbeat — mantiene la conexión SSE viva durante ciclos largos
                 yield _make_sse_event("heartbeat", {"ts": time.time()})
             except asyncio.CancelledError:
-                # El task externo fue cancelado (SSE cerrando) — terminar limpiamente
                 log.info(
                     "S47-A: event_generator cancelado para %s — grafo continúa",
                     thread_id[:8],

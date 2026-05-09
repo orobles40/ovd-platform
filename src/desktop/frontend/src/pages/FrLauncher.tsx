@@ -34,7 +34,8 @@ type CyclePhase =
   | "deliver"
   | "tests"
   | "done"
-  | "error";
+  | "error"
+  | "reconnecting";
 
 const PHASE_LABEL: Record<CyclePhase, string> = {
   idle: "",
@@ -48,6 +49,7 @@ const PHASE_LABEL: Record<CyclePhase, string> = {
   tests: "Ejecutando tests…",
   done: "Ciclo completado",
   error: "Error en el ciclo",
+  reconnecting: "Reconectando…",
 };
 
 const EVENT_COLOR: Record<string, string> = {
@@ -240,13 +242,28 @@ export default function FrLauncher() {
       });
     });
 
+    // v0.2: reconexión automática SSE con Last-Event-ID
+    // El EventSource nativo reintenta automáticamente y envía Last-Event-ID.
+    // CONNECTING = reconectando (temporal), CLOSED = error fatal (es.close() explícito).
     es.onerror = () => {
-      es.close();
-      setTimeout(() => {
+      if (es.readyState === EventSource.CONNECTING) {
+        // Reconexión en curso — el grafo sigue corriendo en DO
         setPhase((p) =>
-          ["done", "sdd_approval", "deliver", "tests"].includes(p) ? p : "error"
+          ["done", "sdd_approval", "deliver", "tests", "error"].includes(p) ? p : "reconnecting"
         );
-      }, 150);
+      } else {
+        // Conexión cerrada definitivamente
+        setTimeout(() => {
+          setPhase((p) =>
+            ["done", "sdd_approval", "deliver", "tests"].includes(p) ? p : "error"
+          );
+        }, 150);
+      }
+    };
+
+    es.onopen = () => {
+      // Restaurar fase activa al reconectar exitosamente
+      setPhase((p) => p === "reconnecting" ? "agents" : p);
     };
   }, [handleSseEvent]);
 
