@@ -100,6 +100,7 @@ export default function FrLauncher() {
   const logRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const threadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (logRef.current) {
@@ -251,7 +252,7 @@ export default function FrLauncher() {
 
   const handleDeliver = async (data: Record<string, unknown>) => {
     setPhase("deliver");
-    const sid = (data.session_id as string) ?? sessionIdRef.current;
+    const sid = threadIdRef.current ?? (data.session_id as string);
     if (!sid || !project) {
       setTestResult("Error: sesión no disponible");
       setPhase("done");
@@ -318,7 +319,7 @@ export default function FrLauncher() {
         org_id: user?.org_id ?? "",
         feature_request: fr,
         project_context: ctx,
-        directory: project.directory,
+        directory: "",
         auto_approve: autoApprove,
         jwt_token: accessToken,
       }),
@@ -337,6 +338,7 @@ export default function FrLauncher() {
     setSessionId(session_id);
     setThreadId(thread_id);
     sessionIdRef.current = session_id;
+    threadIdRef.current = thread_id;
 
     connectSse(engineUrl, thread_id, accessToken);
   };
