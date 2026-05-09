@@ -813,6 +813,7 @@ async def start_session(
             async with await _psycopg47.AsyncConnection.connect(
                 _db_url_for_cycle
             ) as _c47:
+                await _c47.execute("SET app.current_org_id = %s", (body.org_id,))
                 await _c47.execute(
                     """INSERT INTO ovd_cycles
                          (id, org_id, project_id, session_id, thread_id,
@@ -1003,7 +1004,20 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
             return
         import psycopg as _psycopg47b
 
+        # Leer checkpoint antes de abrir conexión (org_id necesario para RLS SET)
+        _snap_pre: object = None
+        _rls_org_id = ""
+        if _graph:
+            try:
+                _snap_pre = await _graph.aget_state(config)
+                if _snap_pre and _snap_pre.values:  # type: ignore[union-attr]
+                    _rls_org_id = _snap_pre.values.get("org_id", "")  # type: ignore[union-attr]
+            except Exception:
+                pass
+
         async with await _psycopg47b.AsyncConnection.connect(_db_url) as _conn:
+            if _rls_org_id:
+                await _conn.execute("SET app.current_org_id = %s", (_rls_org_id,))
             cur = await _conn.execute(
                 "SELECT status FROM ovd_cycles WHERE thread_id = %s", (thread_id,)
             )
@@ -1017,47 +1031,51 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
             if row[0] == "completed":
                 return  # deliver ya lo actualizó correctamente
             # Ciclo terminó sin llegar a deliver — actualizar con datos del checkpoint
-            if _graph:
+            snap = _snap_pre
+            if not (snap and snap.values) and _graph:  # type: ignore[union-attr]
                 try:
                     snap = await _graph.aget_state(config)
-                    if snap and snap.values:
-                        v = snap.values
-                        qa = v.get("qa_result", {})
-                        fr_a = v.get("fr_analysis", {})
-                        # S59-A/A5: capturar error_message y failed_at_node del checkpoint
-                        last_error = v.get("_last_error", "")
-                        failed_node = ""
-                        if snap.metadata:
-                            failed_node = snap.metadata.get("source", "")
-                        await _conn.execute(
-                            """UPDATE ovd_cycles SET
-                                status         = 'failed',
-                                fr_analysis    = %s,
-                                sdd            = %s,
-                                qa_score       = %s,
-                                complexity     = %s,
-                                fr_type        = %s,
-                                error_message  = %s,
-                                failed_at_node = %s
-                            WHERE thread_id = %s AND status != 'completed'""",
-                            (
-                                json.dumps(fr_a),
-                                json.dumps(v.get("sdd", {})),
-                                qa.get("score", 0) if isinstance(qa, dict) else 0,
-                                fr_a.get("complexity", ""),
-                                fr_a.get("type", ""),
-                                last_error or None,
-                                failed_node or None,
-                                thread_id,
-                            ),
-                        )
-                        await _conn.commit()
-                        log.info(
-                            "S47-B: ciclo %s marcado 'failed' — nodo=%s error=%s",
-                            thread_id[:8],
-                            failed_node or "?",
-                            (last_error or "")[:120],
-                        )
+                except Exception:
+                    pass
+            if snap and snap.values:  # type: ignore[union-attr]
+                try:
+                    v = snap.values  # type: ignore[union-attr]
+                    qa = v.get("qa_result", {})
+                    fr_a = v.get("fr_analysis", {})
+                    # S59-A/A5: capturar error_message y failed_at_node del checkpoint
+                    last_error = v.get("_last_error", "")
+                    failed_node = ""
+                    if snap.metadata:
+                        failed_node = snap.metadata.get("source", "")
+                    await _conn.execute(
+                        """UPDATE ovd_cycles SET
+                            status         = 'failed',
+                            fr_analysis    = %s,
+                            sdd            = %s,
+                            qa_score       = %s,
+                            complexity     = %s,
+                            fr_type        = %s,
+                            error_message  = %s,
+                            failed_at_node = %s
+                        WHERE thread_id = %s AND status != 'completed'""",
+                        (
+                            json.dumps(fr_a),
+                            json.dumps(v.get("sdd", {})),
+                            qa.get("score", 0) if isinstance(qa, dict) else 0,
+                            fr_a.get("complexity", ""),
+                            fr_a.get("type", ""),
+                            last_error or None,
+                            failed_node or None,
+                            thread_id,
+                        ),
+                    )
+                    await _conn.commit()
+                    log.info(
+                        "S47-B: ciclo %s marcado 'failed' — nodo=%s error=%s",
+                        thread_id[:8],
+                        failed_node or "?",
+                        (last_error or "")[:120],
+                    )
                 except Exception as _snap_err:
                     log.warning(
                         "S47-B: error leyendo checkpoint para %s — %s",

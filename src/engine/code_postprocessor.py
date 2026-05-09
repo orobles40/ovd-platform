@@ -1883,9 +1883,7 @@ def _fix_database_module_level_engine(content: str, rel_path: str) -> str:
 # S123-B — Eliminar imports de src.database en test files (excepto Base)
 # ---------------------------------------------------------------------------
 
-_DB_IMPORT_PATTERN = re.compile(
-    r"^from\s+src\.database\s+import\s+(.+)$", re.MULTILINE
-)
+_DB_IMPORT_PATTERN = re.compile(r"^from\s+src\.database\s+import\s+(.+)$", re.MULTILINE)
 
 _SAFE_DB_NAMES = frozenset({"Base"})
 

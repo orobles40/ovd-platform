@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
-import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests } from "@/lib/tauri";
+import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests, authRefreshToken } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
 
 interface Project {
@@ -111,9 +111,14 @@ export default function FrLauncher() {
     if (!project) navigate("/workspace");
   }, [project, navigate]);
 
-  const getEngineUrl = async (): Promise<string> => {
+  const getEngineConfig = async (): Promise<{ url: string; secret: string }> => {
     const cfg = await configGet();
-    return cfg.engine_url;
+    return { url: cfg.engine_url, secret: cfg.engine_secret ?? "" };
+  };
+
+  const getAccessToken = async (): Promise<string> => {
+    if (token && token !== "__stored__") return token;
+    try { return await authRefreshToken(); } catch { return ""; }
   };
 
   const pushEvent = useCallback((
@@ -199,10 +204,13 @@ export default function FrLauncher() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pushEvent]);
 
-  const connectSse = useCallback((engineUrl: string, tid: string) => {
+  const connectSse = useCallback((engineUrl: string, tid: string, accessToken?: string) => {
     esRef.current?.close();
 
-    const es = new EventSource(`${engineUrl}/session/${tid}/stream`);
+    const streamUrl = accessToken
+      ? `${engineUrl}/session/${tid}/stream?token=${encodeURIComponent(accessToken)}`
+      : `${engineUrl}/session/${tid}/stream`;
+    const es = new EventSource(streamUrl);
     esRef.current = es;
 
     es.onmessage = (e) => {
@@ -291,16 +299,21 @@ export default function FrLauncher() {
     engineTestResultRef.current = null;
     nodeStartTimes.current.clear();
 
-    const [engineUrl, ctx] = await Promise.all([
-      getEngineUrl(),
+    const [engineCfg, ctx, accessToken] = await Promise.all([
+      getEngineConfig(),
       workspaceReadContext(project.directory),
+      getAccessToken(),
     ]);
 
-    const accessToken = token && token !== "__stored__" ? token : "";
+    const { url: engineUrl, secret: engineSecret } = engineCfg;
 
     const res = await fetch(`${engineUrl}/session`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { "Authorization": `Bearer ${accessToken}` } : {}),
+        ...(engineSecret ? { "X-OVD-Secret": engineSecret } : {}),
+      },
       body: JSON.stringify({
         org_id: user?.org_id ?? "",
         feature_request: fr,
@@ -325,21 +338,28 @@ export default function FrLauncher() {
     setThreadId(thread_id);
     sessionIdRef.current = session_id;
 
-    connectSse(engineUrl, thread_id);
+    connectSse(engineUrl, thread_id, accessToken);
   };
 
   const approveSdd = async () => {
     if (!sessionId || !threadId) return;
     setPhase("agents");
-    const engineUrl = await getEngineUrl();
+    const [{ url: engineUrl, secret: engineSecret }, accessToken] = await Promise.all([
+      getEngineConfig(),
+      getAccessToken(),
+    ]);
 
     await fetch(`${engineUrl}/session/${sessionId}/approve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { "Authorization": `Bearer ${accessToken}` } : {}),
+        ...(engineSecret ? { "X-OVD-Secret": engineSecret } : {}),
+      },
       body: JSON.stringify({ approved: true }),
     });
 
-    connectSse(engineUrl, threadId);
+    connectSse(engineUrl, threadId, accessToken);
   };
 
   const detectTestCommand = (_p: Project): string => {

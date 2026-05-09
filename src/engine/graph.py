@@ -9337,6 +9337,9 @@ async def deliver(state: OVDState) -> dict:
             _session_id_p = state.get("session_id", "")
             async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
                 await _conn.execute(
+                    "SET app.current_org_id = %s", (state.get("org_id", ""),)
+                )
+                await _conn.execute(
                     """
                     INSERT INTO ovd_cycles
                       (id, org_id, project_id, session_id, thread_id,

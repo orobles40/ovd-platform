@@ -19,6 +19,7 @@ export interface UserProfile {
 
 export interface Config {
   engine_url: string;
+  engine_secret: string;
 }
 
 export interface WriteResult {
@@ -52,8 +53,8 @@ export const authRefreshToken = () => invoke<string>("auth_refresh_token");
 
 export const configGet = () => invoke<Config>("config_get");
 
-export const configSave = (engineUrl: string) =>
-  invoke<void>("config_save", { engineUrl: engineUrl });
+export const configSave = (engineUrl: string, engineSecret: string) =>
+  invoke<void>("config_save", { engineUrl, engineSecret });
 
 // ── Workspace ─────────────────────────────────────────────────────────────────
 

@@ -10,19 +10,23 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [engineUrl, setEngineUrl] = useState("");
+  const [engineSecret, setEngineSecret] = useState("");
   const [showEngine, setShowEngine] = useState(false);
   const [savingUrl, setSavingUrl] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    configGet().then((c) => setEngineUrl(c.engine_url)).catch(() => {});
+    configGet().then((c) => {
+      setEngineUrl(c.engine_url);
+      setEngineSecret(c.engine_secret ?? "");
+    }).catch(() => {});
   }, []);
 
   const handleSaveEngine = async () => {
     setSavingUrl(true);
     try {
-      await configSave(engineUrl);
+      await configSave(engineUrl, engineSecret);
       setShowEngine(false);
     } finally {
       setSavingUrl(false);
@@ -129,8 +133,7 @@ export default function Login() {
           </button>
         </form>
 
-        {/* Engine URL — solo en desarrollo */}
-        {import.meta.env.DEV && (
+        {/* Engine URL — siempre visible en desktop */}
         <div className="mt-5 pt-4 border-t" style={{ borderColor: "var(--ovd-border)" }}>
           <button
             onClick={() => setShowEngine((v) => !v)}
@@ -142,31 +145,44 @@ export default function Login() {
           </button>
 
           {showEngine && (
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 space-y-2">
               <input
                 type="url"
                 value={engineUrl}
                 onChange={(e) => setEngineUrl(e.target.value)}
-                placeholder="http://localhost:8001"
-                className="flex-1 px-2 py-1.5 rounded-lg text-xs outline-none border"
+                placeholder="https://ovd-platform.codigonet.cloud"
+                className="w-full px-2 py-1.5 rounded-lg text-xs outline-none border"
                 style={{
                   background: "var(--ovd-bg)",
                   borderColor: "var(--ovd-border)",
                   color: "var(--ovd-text)",
                 }}
               />
-              <button
-                onClick={handleSaveEngine}
-                disabled={savingUrl}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                style={{ background: "var(--ovd-accent)", color: "#fff" }}
-              >
-                {savingUrl ? "…" : "OK"}
-              </button>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={engineSecret}
+                  onChange={(e) => setEngineSecret(e.target.value)}
+                  placeholder="Engine secret"
+                  className="flex-1 px-2 py-1.5 rounded-lg text-xs outline-none border"
+                  style={{
+                    background: "var(--ovd-bg)",
+                    borderColor: "var(--ovd-border)",
+                    color: "var(--ovd-text)",
+                  }}
+                />
+                <button
+                  onClick={handleSaveEngine}
+                  disabled={savingUrl}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                  style={{ background: "var(--ovd-accent)", color: "#fff" }}
+                >
+                  {savingUrl ? "…" : "OK"}
+                </button>
+              </div>
             </div>
           )}
         </div>
-        )}
       </div>
     </div>
   );

@@ -8,9 +8,9 @@ import pathlib
 import sys
 
 _ENGINE_ROOT = pathlib.Path(".")
-_BACKEND_PY_MD = (
-    _ENGINE_ROOT / "templates" / "stack" / "backend_python.md"
-).read_text(encoding="utf-8")
+_BACKEND_PY_MD = (_ENGINE_ROOT / "templates" / "stack" / "backend_python.md").read_text(
+    encoding="utf-8"
+)
 
 sys.path.insert(0, str(_ENGINE_ROOT))
 from code_postprocessor import _fix_test_database_imports  # noqa: I001
@@ -72,14 +72,16 @@ from src.main import app
 
 def test_s123a_rule_present_in_backend_python_md():
     """backend_python.md debe tener sección S123-A."""
-    assert "S123-A" in _BACKEND_PY_MD, "S123-A: falta referencia S123-A en backend_python.md"
+    assert "S123-A" in _BACKEND_PY_MD, (
+        "S123-A: falta referencia S123-A en backend_python.md"
+    )
 
 
 def test_s123a_prohibits_session_factory_import():
     """backend_python.md debe prohibir async_session_maker/AsyncSessionLocal en tests."""
-    assert "async_session_maker" in _BACKEND_PY_MD or "AsyncSessionLocal" in _BACKEND_PY_MD, (
-        "S123-A: debe mostrar los imports prohibidos"
-    )
+    assert (
+        "async_session_maker" in _BACKEND_PY_MD or "AsyncSessionLocal" in _BACKEND_PY_MD
+    ), "S123-A: debe mostrar los imports prohibidos"
     assert "PROHIBIDO" in _BACKEND_PY_MD or "NUNCA" in _BACKEND_PY_MD
 
 
@@ -119,11 +121,15 @@ def test_s123b_removes_async_session_maker():
 
 def test_s123b_removes_asyncsessionlocal():
     """Elimina AsyncSessionLocal del import de src.database en test files."""
-    result = _fix_test_database_imports(_TEST_WITH_ASYNCSESSIONLOCAL, "tests/test_foo.py")
+    result = _fix_test_database_imports(
+        _TEST_WITH_ASYNCSESSIONLOCAL, "tests/test_foo.py"
+    )
     # El import debe eliminarse (no debe quedar la línea from src.database import ... AsyncSessionLocal)
-    assert "from src.database import" not in result or "AsyncSessionLocal" not in result.split(
-        "from src.database import"
-    )[-1].split("\n")[0]
+    assert (
+        "from src.database import" not in result
+        or "AsyncSessionLocal"
+        not in result.split("from src.database import")[-1].split("\n")[0]
+    )
     assert "from src.database import Base" in result
 
 

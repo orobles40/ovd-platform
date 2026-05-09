@@ -29,11 +29,15 @@ export default function Workspace() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>(loadProjects);
   const [engineUrl, setEngineUrl] = useState("");
+  const [engineSecret, setEngineSecret] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
-    configGet().then((c) => setEngineUrl(c.engine_url)).catch(() => {});
+    configGet().then((c) => {
+      setEngineUrl(c.engine_url);
+      setEngineSecret(c.engine_secret ?? "");
+    }).catch(() => {});
   }, []);
 
   const handleAddProject = async () => {
@@ -65,7 +69,7 @@ export default function Workspace() {
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      await configSave(engineUrl);
+      await configSave(engineUrl, engineSecret);
       setShowSettings(false);
     } finally {
       setSavingSettings(false);
@@ -184,7 +188,7 @@ export default function Workspace() {
             <h3 className="text-sm font-semibold mb-4" style={{ color: "var(--ovd-text)" }}>
               Configuración
             </h3>
-            <div className="mb-4">
+            <div className="mb-3">
               <label className="block text-xs mb-1.5" style={{ color: "var(--ovd-muted)" }}>
                 URL del engine
               </label>
@@ -202,6 +206,23 @@ export default function Workspace() {
               <p className="text-xs mt-1" style={{ color: "var(--ovd-muted)" }}>
                 Local: http://localhost:8001 · Producción: https://ovd-platform.codigonet.cloud
               </p>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs mb-1.5" style={{ color: "var(--ovd-muted)" }}>
+                Engine secret
+              </label>
+              <input
+                type="password"
+                value={engineSecret}
+                onChange={(e) => setEngineSecret(e.target.value)}
+                placeholder="OVD_ENGINE_SECRET"
+                className="w-full px-3 py-2 rounded-lg text-sm outline-none border"
+                style={{
+                  background: "var(--ovd-bg)",
+                  borderColor: "var(--ovd-border)",
+                  color: "var(--ovd-text)",
+                }}
+              />
             </div>
             <div className="flex gap-2 justify-end">
               <button

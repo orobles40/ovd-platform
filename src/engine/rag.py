@@ -130,7 +130,9 @@ def _get_embeddings():
         # check_embedding_ctx_length=False: evita que tiktoken tokenice a integers
         # (modelos no-OpenAI como bge-m3 no están en el catálogo de tiktoken —
         # sin este flag LangChain envía arrays de token IDs que DO rechaza con 400)
-        return OpenAIEmbeddings(model=model, check_embedding_ctx_length=False, timeout=60)
+        return OpenAIEmbeddings(
+            model=model, check_embedding_ctx_length=False, timeout=60
+        )
 
     # Default: Ollama
     from langchain_ollama import OllamaEmbeddings
