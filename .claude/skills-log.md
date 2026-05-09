@@ -672,3 +672,76 @@ Sesión continuada desde compactación de contexto. El principal hallazgo fue qu
 
 ### Notas
 Sesión continuada desde compactación de contexto. S122-A resolvió la causa raíz del ImportError (engine module-level), pero el modelo generó test files que importan nombres internos renombrados por el postprocessor. S123 debe prohibir `from src.database import` en test files y proporcionar patrón fixture con SQLite in-memory.
+
+---
+
+## S017 | 2026-05-09
+
+| Métrica | Valor |
+|---|---|
+| Inicio | — |
+| Cierre | — |
+| Duración | — |
+| Sprint | S123 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | — |
+
+### Skills utilizados
+- [ ] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS (F541 pre-existente en test_s115.py)
+- [x] ruff format: PASS (4 archivos auto-formateados)
+- [x] pytest unit: 2027 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: NO | Fallos CI post-push: —
+
+### Completado hoy
+- **Auth OVD Desktop end-to-end**: engine_secret en SQLite (config.rs + state.rs), UI Login/Workspace, `Authorization: Bearer` en POST endpoints, `?token=<jwt>` en EventSource URL, `authRefreshToken()` para sentinel `"__stored__"`
+- **Fix RLS ovd_cycles (3 ubicaciones)**: `SET app.current_org_id = %s` en session_create, _ensure_cycle_registered (con lectura previa de checkpoint) y deliver — causa raíz: doadmin en DO PostgreSQL no es superuser real, RLS aplica
+- **Ciclo S113 dry run**: autenticación confirmada end-to-end. 4 rondas QA (45→65→60→68), fallo de calidad deepseek-v4-pro, no infraestructura
+- Commit: `a574a84ec`
+
+### Notas
+Decisión: mantener deepseek-v4-pro en producción (scores 45-68 son variabilidad del modelo, no fallo de infra). El RLS fix es crítico — sin él, ningún ciclo registra en ovd_cycles en producción. El fix de _ensure_cycle_registered requirió leer el checkpoint antes de abrir la conexión DB para obtener org_id sin requerir cambio de firma de función.
+
+---
+
+## S018 | 2026-05-09
+
+| Métrica | Valor |
+|---|---|
+| Inicio | — |
+| Cierre | — |
+| Duración | — |
+| Sprint | S124 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | — |
+
+### Skills utilizados
+- [ ] /session-start
+- [x] /run-tests ×2
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (1 auto-fix code_postprocessor.py)
+- [x] pytest unit: 2045 passed (+18 tests S124)
+- [x] OVD conventions: PASS
+- Push ejecutado: NO | Fallos CI post-push: —
+
+### Completado hoy
+- **Análisis S124**: investigación profunda del problema (agente de research + repos externos), diagnóstico de 3 capas (S122-A, S123-B incompleto, conflict template)
+- **B1**: removidos `get_engine`/`get_session_factory` de `_UNSAFE_DB_NAMES` — son API público post-S122-A
+- **B2**: `_fix_test_session_usage` — reemplaza usos residuales de factories en test bodies + inyecta preamble SQLite in-memory si necesario. Garantía dura vs dependencia del modelo
+- **A1**: `system_backend_python.md` Ejemplo 2 — sync→async, eliminada contradicción con D6
+- **A2**: `stack/backend_python.md` D6 — dependency_overrides[get_session] + dispose() + clear()
+- **18 tests** en `test_s124.py` — 18/18 PASS | Suite: 2045 passed
+- Commit: `34079d11f`
+
+### Notas
+La causa raíz del problema era en dos capas: S123-B eliminaba el import (resolvía ImportError de colección) pero dejaba NameError en runtime. B2 cierra esa segunda capa de forma determinística. La investigación externa (repos OpenHands, LangChain, Superpowers) confirmó que el patrón canónico de la industria es dependency_override con engine independiente — exactamente lo que A2 ahora muestra en el template.

@@ -17,6 +17,36 @@
 
 ---
 
+## Última sesión (2026-05-09 — S124: fix postprocessor test DB imports + templates async)
+
+**S124 — Fix generación de tests con bases de datos — COMPLETADO:**
+
+- **B1 — `_UNSAFE_DB_NAMES`**: removidos `get_engine` y `get_session_factory` — son API público post-S122-A, no deben eliminarse de imports de test.
+- **B2 — `_fix_test_session_usage`** (`code_postprocessor.py`): cuando S123-B elimina el import de factory, esta función reemplaza los usos residuales (`AsyncSessionLocal()`, `async_session_maker()`, etc.) por `_TestSessionFactory()` en el cuerpo del test. Si `create_async_engine` no estaba presente, inyecta el preamble con engine SQLite in-memory automáticamente. Garantía dura — no depende del modelo.
+- **A1 — `system_backend_python.md` Ejemplo 2**: reemplazado patrón sync (`create_engine` + `TestClient` + `from src.database import get_db`) por patrón async correcto (`create_async_engine` + `AsyncClient` + `ASGITransport`). Eliminada contradicción con D6.
+- **A2 — `stack/backend_python.md` D6**: agregado `dependency_overrides[get_session]` completo con `override_get_session` async, `clear()` al finalizar, y `dispose()` en teardown.
+- **18 tests** en `test_s124.py` — todos PASS. Suite total: 2045 passed.
+- **Commit:** `34079d11f`
+
+## Última sesión (2026-05-09 — S123: auth JWT OVD Desktop + fix RLS ovd_cycles)
+
+**S123 — Auth y registro de ciclos en producción — COMPLETADO:**
+
+- **Auth desktop end-to-end:**
+  - `config.rs` + `state.rs`: campo `engine_secret` en AppState y SQLite
+  - `tauri.ts` + `Login.tsx` + `Workspace.tsx`: UI para configurar Engine URL + secret
+  - `FrLauncher.tsx`: `Authorization: Bearer <token>` en POST /session y /approve; `?token=<jwt>` en SSE URL (EventSource no soporta headers custom)
+  - `getAccessToken()`: llama `authRefreshToken()` cuando el token es sentinel `"__stored__"` (sesión restaurada sin re-login)
+- **Fix RLS ovd_cycles (3 ubicaciones):**
+  - `api.py` session_create: `SET app.current_org_id = %s` antes del INSERT `ovd_cycles`
+  - `api.py` `_ensure_cycle_registered`: leer `org_id` del checkpoint antes de abrir conexión; SET antes de SELECT/UPDATE
+  - `graph.py` deliver: `SET app.current_org_id = %s` antes del INSERT/UPSERT
+  - Causa raíz: `doadmin` en DO PostgreSQL NO es superuser real — RLS aplica. La política `ovd_cycles_org_isolation` requiere `app.current_org_id` seteado.
+- **Ciclo S113 dry run:** autenticación confirmada end-to-end. 4 rondas QA (45→65→60→68) — fallo de calidad del modelo (deepseek-v4-pro), no de infraestructura.
+- **Decisión:** mantener deepseek-v4-pro en producción (no migrar a Claude Sonnet).
+- **Suite:** 2027 passed (unit), 0 regresiones.
+- **Commit:** `a574a84ec`
+
 ## Última sesión (2026-05-08 — S121 + S122: postprocessor lazy engine + fix ciclo validación)
 
 **S121 — Fix ImportError conftest.py — COMPLETADO:**
@@ -191,12 +221,16 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S123 — Fix test files importan from src.database (nueva barrera tras S122)**
+**S125 — Ciclo de validación con los fixes acumulados (S121→S124)**
 
-Causa raíz: el modelo genera `from src.database import async_session_maker` en test files. Después de S122-A, ese nombre no existe (`get_session_factory` es el API público).
+Lanzar ciclo en producción para confirmar que:
+- S122-A (lazy engine) se activa correctamente
+- S124-B (_fix_test_session_usage) corrige tests con factory residual
+- Los tests generados pasan pytest sin ImportError ni NameError
+- QA score ≥ 70
 
-**S123-A:** `backend_python.md` — prohibir `from src.database import` en test files. Patrón correcto para fixtures: crear engine propio con SQLite in-memory.
-**S123-B (opcional):** postprocessor `_fix_test_database_imports` — detectar y reemplazar imports de `src.database` en `tests/*.py`.
+**Deploy DO:** rebuild necesario para que fixes S123 (RLS) + S124 (postprocessor) lleguen a producción.
+`doctl apps create-deployment f8d2207e-8229-4647-b9ad-5c14dcba4246`
 
 **S112 — Deploy DO (demo 2026-05-18):**
 - D4: `curl https://ovd-platform.codigonet.cloud/health` (después de verificar merge)
