@@ -52,13 +52,14 @@ def test_s120a_fallback_only_when_project_id_present():
     )
 
 
-def test_s120a_fires_before_empty_directory_warning():
-    """El bloque S120-A debe aparecer antes del warning 'directory vacío'."""
+def test_s120a_fires_before_tmpdir_fallback():
+    """El bloque S120-A debe aparecer antes del fallback tmpdir (desktop sin project_id)."""
     idx_s120 = _API_SRC.find("S120-A")
-    idx_warn = _API_SRC.find("directory vacío")
-    assert idx_s120 != -1 and idx_warn != -1, "Ambos bloques deben existir en api.py"
-    assert idx_s120 < idx_warn, (
-        "S120-A: el fallback debe preceder al warning de directory vacío"
+    idx_tmpdir = _API_SRC.find("tmpdir creado")
+    assert idx_s120 != -1, "S120-A: el bloque de fallback /srv/projects debe existir en api.py"
+    assert idx_tmpdir != -1, "api.py debe crear tmpdir cuando directory no se provee (caso desktop)"
+    assert idx_s120 < idx_tmpdir, (
+        "S120-A: el fallback /srv/projects debe preceder al fallback tmpdir"
     )
 
 

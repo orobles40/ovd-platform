@@ -644,9 +644,11 @@ async def start_session(
 
     if not resolved_directory:
         import tempfile as _tempfile
+
         resolved_directory = _tempfile.mkdtemp(prefix=f"ovd_{session_id[:8]}_")
         logging.getLogger("ovd.api").info(
-            "session_create: directory no provisto — tmpdir creado: %s", resolved_directory
+            "session_create: directory no provisto — tmpdir creado: %s",
+            resolved_directory,
         )
 
     # S104-C + S105-P1: limpiar residuos de ciclos anteriores

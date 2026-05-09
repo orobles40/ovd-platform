@@ -548,7 +548,9 @@ class OVDState(TypedDict):
     status: Annotated[
         str, lambda x, y: y
     ]  # S63-A: last-write-wins, evita InvalidUpdateError
-    messages: Annotated[list[dict], operator.add]  # S125: append reducer — evita InvalidUpdateError en fan-out paralelo
+    messages: Annotated[
+        list[dict], operator.add
+    ]  # S125: append reducer — evita InvalidUpdateError en fan-out paralelo
 
 
 def _extract_usage(response: Any) -> dict[str, int]:

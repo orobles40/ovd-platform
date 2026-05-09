@@ -17,6 +17,25 @@
 
 ---
 
+## Última sesión (2026-05-09 — S019: OVD Desktop F7 smoke test + fix write_artifacts + tag desktop-v0.1.1)
+
+**OVD Desktop F7 — COMPLETADO:**
+
+- **Fix write_artifacts (2 bugs):**
+  - `FrLauncher.tsx`: `threadIdRef` para evitar stale closure en `handleDeliver` — usaba `session_id` en vez de `thread_id` en la llamada a `/artifacts/download`
+  - `FrLauncher.tsx`: `directory: ""` en POST /session — path local no existe en DO
+  - `api.py`: `tempfile.mkdtemp()` automático cuando `directory` no se provee — caso desktop sin `project_id`
+- **Smoke test completo:** Login ✅ → Workspace ✅ → FR ✅ → tests PASS 5/5 ✅ → 5 archivos escritos en carpeta local ✅
+- **Tag `desktop-v0.1.1`** pusheado — CI `Desktop Release` disparado en GitHub Actions (macOS aarch64 + x86_64)
+- **Fix test_s120:** `test_s120a_fires_before_empty_directory_warning` → `test_s120a_fires_before_tmpdir_fallback` — refleja el nuevo comportamiento
+- **Rebuild DO:** `5c493ce6` ACTIVE — engine con fix tmpdir en producción
+- **Commits:** `984558487` (messages reducer), `85cf76b34` (write_artifacts fix)
+- **Suite:** 2044 passed (unit)
+
+## Próxima sesión: Bootstrap RAG producción (D5) + verificar GitHub Release desktop-v0.1.1
+
+---
+
 ## Última sesión (2026-05-09 — S124: fix postprocessor test DB imports + templates async)
 
 **S124 — Fix generación de tests con bases de datos — COMPLETADO:**

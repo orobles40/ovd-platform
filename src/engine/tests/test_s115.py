@@ -144,14 +144,14 @@ class TestQAFeedbackTruncation:
 
         # Simular QA con 8 issues detallados (cada uno ~500 chars)
         issues = [
-            f"src/turnos/models.py: Clase Medico no define __tablename__. SQLAlchemy no puede mapear la tabla. Agregar __tablename__ = 'medicos' en la definición de la clase.",
-            f"src/turnos/schemas.py: MedicoCreate importa de models pero models.py no fue generado. ImportError en runtime.",
-            f"src/turnos/services.py: La función buscar_medicos_por_especialidad usa Session pero no importa from sqlalchemy.orm import Session.",
-            f"src/turnos/routers/medicos.py: El router no llama a services.buscar_medicos. Retorna lista vacía hardcodeada.",
-            f"src/turnos/routers/citas.py: Falta validación de RUT chileno. El endpoint POST /citas acepta cualquier string en rut_paciente.",
-            f"src/main.py: No incluye el router de citas. app.include_router(citas_router) está ausente.",
-            f"conftest.py: sys.path.insert apunta a 'src' pero el paquete es 'turnos'. Los tests no pueden importar.",
-            f"tests/test_turnos.py: test_reservar_cita usa assert data['id'] == 1 en lugar de assert 'id' in data. Falla si el ID cambia.",
+            "src/turnos/models.py: Clase Medico no define __tablename__. SQLAlchemy no puede mapear la tabla. Agregar __tablename__ = 'medicos' en la definición de la clase.",
+            "src/turnos/schemas.py: MedicoCreate importa de models pero models.py no fue generado. ImportError en runtime.",
+            "src/turnos/services.py: La función buscar_medicos_por_especialidad usa Session pero no importa from sqlalchemy.orm import Session.",
+            "src/turnos/routers/medicos.py: El router no llama a services.buscar_medicos. Retorna lista vacía hardcodeada.",
+            "src/turnos/routers/citas.py: Falta validación de RUT chileno. El endpoint POST /citas acepta cualquier string en rut_paciente.",
+            "src/main.py: No incluye el router de citas. app.include_router(citas_router) está ausente.",
+            "conftest.py: sys.path.insert apunta a 'src' pero el paquete es 'turnos'. Los tests no pueden importar.",
+            "tests/test_turnos.py: test_reservar_cita usa assert data['id'] == 1 en lugar de assert 'id' in data. Falla si el ID cambia.",
         ]
         qa = {
             "score": 0,
