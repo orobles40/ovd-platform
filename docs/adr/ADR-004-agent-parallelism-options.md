@@ -42,7 +42,7 @@ El nodo `_dispatch_agents` lanza los agentes (backend, database, devops, fronten
 - Omitir agentes puede resultar en artefactos faltantes que QA detecta y penaliza
 - Requiere calibración cuidadosa de las reglas de selección
 
-**Veredicto:** Mayor relación esfuerzo/impacto. Recomendado como primera acción.
+**Veredicto:** Mayor relación esfuerzo/impacto. Quedó sin implementar — se adoptó Opción D directamente en S112.
 
 ---
 
@@ -148,17 +148,21 @@ Puerto 11436: qwen3-coder:8b  (devops, docs)
 
 ## Recomendación de roadmap
 
-```
-S98: Implementar Opción A (filtrado de agentes)
-     → Validar con 5 ciclos, medir tiempo fan-out
+> **Actualización 2026-05-05 (S112):** El roadmap original A→B→D quedó sin ejecutar.
+> Ante la necesidad de tener producción operativa antes de la demo 2026-05-18, se adoptó
+> Opción D directamente. Las opciones A, B y C quedan disponibles para optimizar el
+> entorno de desarrollo local (donde Ollama sigue siendo el proveedor).
 
-S99: Evaluar Opción B (modelos mixtos) si A no es suficiente
-     → A/B test cuantitativo (3 ciclos baseline vs 3 ciclos con 8B)
-
-S100+: Decisión Opción D para producción
-       → Cuando el producto tenga clientes reales, el costo por ciclo
-         se justifica ampliamente con el valor entregado
 ```
+[SUPERSEDED] S98: Implementar Opción A (filtrado de agentes)
+[SUPERSEDED] S99: Evaluar Opción B (modelos mixtos)
+[ADOPTADO]   S112: Opción D — DO GenAI Platform en producción, Ollama en desarrollo local
+```
+
+**Opciones A/B/C como trabajo futuro (solo desarrollo local):**
+- Opción A (menos agentes): válida para reducir tiempo en ciclos locales con Ollama
+- Opción B (modelos mixtos): requiere A/B test antes de adoptar
+- Opción C (multi-instancia): viable a largo plazo para paralelismo real en local
 
 ---
 

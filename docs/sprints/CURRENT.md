@@ -50,8 +50,8 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 
 | ID | Tarea | Estado |
 |----|-------|--------|
-| A1 | ADR-004: corregir contradicción — Option D (Claude API) es producción, no Option A | ⬜ Pendiente |
-| A2 | ADR-005: crear — decisión DigitalOcean vs AWS/GCP/Fly.io | ⬜ Pendiente |
+| A1 | ADR-004: corregir contradicción — Option D (Claude API) es producción, no Option A | ✅ Resuelto (2026-05-09) |
+| A2 | ADR-005: crear — decisión DigitalOcean vs AWS/GCP/Fly.io | ✅ Resuelto (ya existía) |
 | A3 | Password admin: cubierta por C5 — `OVD_ADMIN_PASSWORD` se define como secret en DO antes del primer deploy. No hay password hardcodeada en git. | ✅ Resuelto por C5 |
 | A4 | RAG producción: BGE-M3 disponible en DO GenAI ($0.02/1M tokens). Sin cambios de código — `OpenAIEmbeddings` lee `OPENAI_BASE_URL` del entorno automáticamente. Solo actualizar en `app.yaml`: `OPENAI_BASE_URL=https://inference.do-ai.run/v1` (hoy apunta a `api.openai.com`). No hay problema de compatibilidad vectorial porque la BD de prod es nueva y pgvector crea la colección con la dimensión de BGE-M3 desde el inicio. | ✅ Resuelto |
 
