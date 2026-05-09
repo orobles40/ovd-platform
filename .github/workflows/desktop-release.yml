@@ -1,0 +1,92 @@
+# OVD Platform Desktop — CI/CD release
+#
+# Trigger: git tag desktop-v*.*.* pusheado a main
+# Output: DMG para macOS aarch64 (Apple Silicon) + x86_64 (Intel) → GitHub Release (draft)
+# Sin notarización Apple — distribución interna.
+#
+# Secrets opcionales (para auto-updater firmado, futuro):
+#   TAURI_SIGNING_PRIVATE_KEY          — contenido de ~/.tauri/ovd-desktop.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — contraseña del key
+
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'desktop-v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon (aarch64)
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel (x86_64)
+            os: macos-13
+            target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/desktop/src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('src/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Instalar Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Instalar dependencias frontend
+        working-directory: src/desktop/frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build y bundle con tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: src/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "OVD Desktop ${{ github.ref_name }}"
+          releaseBody: |
+            ## OVD Desktop ${{ github.ref_name }}
+
+            ### Instalación macOS
+            1. Descarga el `.dmg` para tu arquitectura:
+               - `aarch64` → Apple Silicon (M1/M2/M3/M4/M5)
+               - `x86_64`  → Intel
+            2. Abre el DMG y arrastra **OVD Platform.app** a `/Applications`
+            3. Primera vez: clic derecho → **Abrir** (sin firma Apple Developer)
+               O desde terminal: `xattr -d com.apple.quarantine "/Applications/OVD Platform.app"`
+
+            ### Requisitos
+            - Engine OVD corriendo en `https://ovd-platform.codigonet.cloud` (producción)
+              o `http://localhost:8001` (local)
+            - Configurable desde la pantalla de Login
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
