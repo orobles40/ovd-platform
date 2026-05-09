@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+import {
+  Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2,
+  ChevronDown, ChevronUp,
+} from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
 import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests } from "@/lib/tauri";
@@ -12,9 +15,12 @@ interface Project {
   lastUsed: string;
 }
 
-interface SseEvent {
+interface LogEvent {
   event: string;
   data: Record<string, unknown>;
+  summary: string;
+  duration?: number;
+  ts: number;
 }
 
 type CyclePhase =
@@ -44,6 +50,34 @@ const PHASE_LABEL: Record<CyclePhase, string> = {
   error: "Error en el ciclo",
 };
 
+const EVENT_COLOR: Record<string, string> = {
+  node_end:     "var(--ovd-accent)",
+  node_start:   "var(--ovd-muted)",
+  message:      "var(--ovd-text)",
+  test_results: "#22d3ee",
+  done:         "#34d399",
+  error:        "#f87171",
+  sdd:          "#a78bfa",
+  fr_analysis:  "#a78bfa",
+  pending_approval: "#fb923c",
+  generated_docs:   "#34d399",
+};
+
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function extractSummary(_ev: string, data: Record<string, unknown>): string {
+  const raw =
+    typeof data.content === "string" ? data.content :
+    typeof data.message === "string" ? data.message :
+    typeof data.summary === "string" ? data.summary :
+    typeof data.node   === "string" ? `nodo: ${data.node}` :
+    JSON.stringify(data);
+  return raw.slice(0, 200);
+}
+
 export default function FrLauncher() {
   const { user, token } = useAuth();
   const navigate = useNavigate();
@@ -52,13 +86,17 @@ export default function FrLauncher() {
 
   const [fr, setFr] = useState("");
   const [phase, setPhase] = useState<CyclePhase>("idle");
-  const [events, setEvents] = useState<SseEvent[]>([]);
+  const [events, setEvents] = useState<LogEvent[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [sddData, setSddData] = useState<Record<string, unknown> | null>(null);
   const [autoApprove, setAutoApprove] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testFromEngine, setTestFromEngine] = useState(false);
+  const [testExpanded, setTestExpanded] = useState(false);
+
   const engineTestResultRef = useRef<string | null>(null);
+  const nodeStartTimes = useRef<Map<string, number>>(new Map());
   const logRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -78,10 +116,35 @@ export default function FrLauncher() {
     return cfg.engine_url;
   };
 
+  const pushEvent = useCallback((
+    event: string,
+    data: Record<string, unknown>,
+    extra?: { duration?: number },
+  ) => {
+    const summary = extractSummary(event, data);
+    setEvents((prev) => [...prev, { event, data, summary, ts: Date.now(), ...extra }]);
+  }, []);
+
   const handleSseEvent = useCallback((event: string, data: Record<string, unknown>) => {
     if (event === "heartbeat") return;
 
-    setEvents((prev) => [...prev, { event, data }]);
+    let duration: number | undefined;
+
+    if (event === "node_start") {
+      const node = (data.node as string) ?? "";
+      nodeStartTimes.current.set(node, Date.now());
+    }
+
+    if (event === "node_end") {
+      const node = (data.node as string) ?? "";
+      const started = nodeStartTimes.current.get(node);
+      if (started) {
+        duration = Date.now() - started;
+        nodeStartTimes.current.delete(node);
+      }
+    }
+
+    pushEvent(event, data, { duration });
 
     switch (event) {
       case "fr_analysis":
@@ -101,7 +164,7 @@ export default function FrLauncher() {
         } else if (
           node.includes("backend") || node.includes("frontend") ||
           node.includes("security") || node.includes("database") ||
-          node.includes("devops")
+          node.includes("devops") || node.includes("agent")
         ) {
           setPhase("agents");
         } else if (node.includes("qa")) {
@@ -112,7 +175,6 @@ export default function FrLauncher() {
         break;
       }
       case "test_results": {
-        // Guardar resultado del engine para usar si el runner local falla
         const passed = data.passed as boolean;
         const output = (data.output as string) ?? "";
         const lastLine = output.split("\n").filter(Boolean).pop() ?? "";
@@ -135,7 +197,7 @@ export default function FrLauncher() {
         break;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pushEvent]);
 
   const connectSse = useCallback((engineUrl: string, tid: string) => {
     esRef.current?.close();
@@ -157,7 +219,7 @@ export default function FrLauncher() {
     const namedTypes = [
       "fr_analysis", "sdd", "agent_result", "qa_result",
       "deliver", "done", "error", "heartbeat", "node_start", "node_end",
-      "pending_approval",
+      "pending_approval", "test_results", "generated_docs",
     ];
     namedTypes.forEach((type) => {
       es.addEventListener(type, (e: MessageEvent) => {
@@ -171,8 +233,6 @@ export default function FrLauncher() {
 
     es.onerror = () => {
       es.close();
-      // Delay: dar tiempo al event loop para procesar mensajes pendientes
-      // (ej. pending_approval llega justo antes del cierre del SSE)
       setTimeout(() => {
         setPhase((p) =>
           ["done", "sdd_approval", "deliver", "tests"].includes(p) ? p : "error"
@@ -197,14 +257,20 @@ export default function FrLauncher() {
       try {
         const testCmd = detectTestCommand(project);
         const result = await workspaceRunTests(project.directory, testCmd, 120);
-        // Si el resultado local es el fallback genérico, preferir el del engine
         const localIsGeneric = result.summary.includes("ver output para detalles") ||
           result.summary.includes("exitosamente");
         const engineResult = engineTestResultRef.current;
-        setTestResult(localIsGeneric && engineResult ? `(engine) ${engineResult}` : result.summary);
+        if (localIsGeneric && engineResult) {
+          setTestResult(engineResult);
+          setTestFromEngine(true);
+        } else {
+          setTestResult(result.summary);
+          setTestFromEngine(false);
+        }
       } catch {
         const fallback = engineTestResultRef.current ?? "Tests corridos en el engine (ver log)";
-        setTestResult(`(engine) ${fallback}`);
+        setTestResult(fallback);
+        setTestFromEngine(true);
       }
       setPhase("done");
     } catch (err) {
@@ -220,7 +286,10 @@ export default function FrLauncher() {
     setEvents([]);
     setSddData(null);
     setTestResult(null);
+    setTestFromEngine(false);
+    setTestExpanded(false);
     engineTestResultRef.current = null;
+    nodeStartTimes.current.clear();
 
     const [engineUrl, ctx] = await Promise.all([
       getEngineUrl(),
@@ -246,7 +315,7 @@ export default function FrLauncher() {
       setPhase("error");
       setEvents((e) => [
         ...e,
-        { event: "error", data: { message: `HTTP ${res.status}` } },
+        { event: "error", data: { message: `HTTP ${res.status}` }, summary: `HTTP ${res.status}`, ts: Date.now() },
       ]);
       return;
     }
@@ -270,7 +339,6 @@ export default function FrLauncher() {
       body: JSON.stringify({ approved: true }),
     });
 
-    // Reconectar SSE — el engine crea un nuevo background task al reconectar
     connectSse(engineUrl, threadId);
   };
 
@@ -320,7 +388,7 @@ export default function FrLauncher() {
 
       <div
         ref={logRef}
-        className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs space-y-1"
+        className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs space-y-0.5"
         style={{ color: "var(--ovd-muted)" }}
       >
         {events.length === 0 && phase === "idle" && (
@@ -329,30 +397,79 @@ export default function FrLauncher() {
           </p>
         )}
         {events.map((ev, i) => {
-          const summary = typeof ev.data.content === "string"
-            ? ev.data.content.slice(0, 120)
-            : typeof ev.data.message === "string"
-            ? ev.data.message.slice(0, 120)
-            : typeof ev.data.summary === "string"
-            ? ev.data.summary.slice(0, 120)
-            : typeof ev.data.node === "string"
-            ? `nodo: ${ev.data.node}`
-            : JSON.stringify(ev.data).slice(0, 120);
+          const isLast = i === events.length - 1;
+          const color = EVENT_COLOR[ev.event] ?? "var(--ovd-muted)";
+          const showCursor = isLast && isRunning;
+
           return (
-            <div key={i} className="flex gap-2">
-              <span style={{ color: "var(--ovd-accent)", minWidth: 90, flexShrink: 0 }}>
+            <div key={i} className="flex gap-2 items-baseline">
+              <span style={{ color, minWidth: 100, flexShrink: 0 }}>
                 [{ev.event}]
               </span>
-              <span className="truncate" style={{ color: "var(--ovd-text)" }}>
-                {summary}
+              <span
+                className="flex-1 min-w-0"
+                style={{ color: EVENT_COLOR[ev.event] ? "var(--ovd-text)" : "var(--ovd-muted)" }}
+              >
+                <span className="break-all">{ev.summary}</span>
+                {showCursor && (
+                  <span
+                    className="inline-block w-1.5 h-3 ml-0.5 animate-pulse align-middle"
+                    style={{ background: "var(--ovd-accent)" }}
+                  />
+                )}
               </span>
+              {ev.duration !== undefined && (
+                <span
+                  className="text-xs shrink-0 ml-2 px-1 rounded"
+                  style={{
+                    color: "var(--ovd-muted)",
+                    background: "var(--ovd-surface)",
+                    fontSize: "0.65rem",
+                  }}
+                >
+                  {fmtDuration(ev.duration)}
+                </span>
+              )}
             </div>
           );
         })}
+
         {testResult && (
-          <div className="mt-3 px-3 py-2 rounded-lg border"
-               style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}>
-            <span style={{ color: "#34d399" }}>Tests: </span>{testResult}
+          <div
+            className="mt-3 rounded-lg border overflow-hidden"
+            style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}
+          >
+            <button
+              onClick={() => setTestExpanded((x) => !x)}
+              className="w-full flex items-center justify-between px-3 py-2 text-left gap-2"
+            >
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span style={{ color: "#34d399", flexShrink: 0 }}>Tests:</span>
+                {testFromEngine && (
+                  <span
+                    className="text-xs px-1 rounded shrink-0"
+                    style={{ background: "var(--ovd-border)", color: "var(--ovd-muted)", fontSize: "0.6rem" }}
+                  >
+                    engine
+                  </span>
+                )}
+                <span className="truncate" style={{ color: "var(--ovd-text)" }}>
+                  {testResult.slice(0, 100)}
+                </span>
+              </span>
+              {testExpanded
+                ? <ChevronUp size={12} style={{ color: "var(--ovd-muted)", flexShrink: 0 }} />
+                : <ChevronDown size={12} style={{ color: "var(--ovd-muted)", flexShrink: 0 }} />
+              }
+            </button>
+            {testExpanded && (
+              <div
+                className="px-3 pb-3 pt-1 border-t text-xs whitespace-pre-wrap break-all"
+                style={{ borderColor: "var(--ovd-border)", color: "var(--ovd-muted)" }}
+              >
+                {testResult}
+              </div>
+            )}
           </div>
         )}
       </div>
