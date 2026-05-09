@@ -143,6 +143,7 @@ Con S114, el operador selecciona el modelo de cada agente desde la UI sin tocar 
 |------|-------------|-----------|
 | Sprint 41 — RAG Learning | Indexación automática de errores QA/tests/security por ciclo + inyección como lecciones en agentes del mismo proyecto. Base para M4. | Alta post-demo |
 | S96-I | Indexar código generado por agentes post-ciclo en RAG (doc_type=codebase) | Media |
+| S113-X — RAG docs incremental | Auto-indexado incremental de docs del proyecto post-ciclo. Diseño: campo `docs_paths jsonb` en `ovd_projects`; al terminar `deliver`, detectar archivos modificados (git diff o mtime) dentro de `docs_paths` y re-indexar solo esos. Fallback: si `docs_paths` vacío, omitir. Transversal para todos los proyectos (existentes y nuevos). Hoy los `docs/` solo se indexan con `rag_bootstrap.py` manual. | Media post-demo |
 | Sprint 47 — Sequential dispatch | Frontend espera a que server-side (backend+database+devops) termine — ya implementado en graph.py (`_SERVER_SIDE_AGENTS`, `pending_agents`) | ✅ Implementado |
 | Sprint 46 — Design Quality System | UI profesional en código generado: shadcn/ui, Tailwind, estados de formulario, responsive | Post-demo |
 | Sprint 44 — MCP Server Manager | Admin dinámico de servidores MCP desde dashboard (context7 hardcodeado hoy) | Post-demo |

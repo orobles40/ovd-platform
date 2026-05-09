@@ -135,6 +135,7 @@ async def run(
             failed += len(batch)
             errors.append(str(e))
             log.warning("knowledge.bootstrap: error indexando lote — %s", e)
+        await asyncio.sleep(0.5)
 
         log.info(
             "knowledge.bootstrap: progreso %d/%d chunks (%d fallidos)",
