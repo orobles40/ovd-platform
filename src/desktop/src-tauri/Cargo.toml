@@ -1,0 +1,58 @@
+[package]
+name = "ovd-desktop"
+version = "0.1.0"
+description = "OVD Platform Desktop Client"
+authors = ["Codigonet Cloud"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "ovd_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri core
+tauri                        = { version = "2", features = [] }
+tauri-plugin-shell           = "2"
+tauri-plugin-dialog          = "2"
+tauri-plugin-os              = "2"
+tauri-plugin-updater         = "2"
+tauri-plugin-single-instance = "2"
+
+# Serialización
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP — rustls (sin OpenSSL), cookies para manejar Set-Cookie del engine
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "rustls-tls", "gzip", "stream", "cookies"
+] }
+tokio = { version = "1", features = ["full"] }
+
+# Keychain nativo del SO (v3 — requiere use_native_store + release_store)
+keyring = { version = "3", features = [
+    "apple-native", "windows-native", "sync-secret-service"
+] }
+
+# Config local (engine URL preferida)
+rusqlite   = { version = "0.32", features = ["bundled"] }
+dirs-next  = "2"
+
+# ZIP extracción en memoria (zip2 = fork activo de zip)
+zip = "2"
+
+# Filesystem recursivo
+walkdir = "2"
+
+# Errores y logging
+thiserror = "1"
+anyhow    = "1"
+tracing   = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -601,3 +601,74 @@ Sesión continuada desde contexto compactado (sin session-active.md). La única 
 
 ### Notas
 Sesión continuada desde compactación de contexto. Diagnóstico principal: engine arrancado sin --reload tenía código anterior — los postprocessors de S111 nunca corrieron en el primer ciclo. Segunda causa: guard innecesario en deliver() impedía scaffold cuando no había agente frontend explícito.
+
+---
+
+## S015 | 2026-05-07
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 11:30 |
+| Cierre | 15:43 |
+| Duración | ~4h 13m |
+| Sprint | S112 |
+| Branch | dev |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (1 auto-fix en test_model_router.py)
+- [x] pytest unit: 1908 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: SÍ (feat commit 2a5c724fb) | Fallos CI post-push: 0
+
+### Completado hoy
+- **S112-D**: fix `mkdir -p` en `session_create` — DO App Platform no pre-crea `/srv/projects/{id}/` → `[Errno 2]` en run_tests resuelto
+- **OVD_MODEL_SDD=deepseek-v4-pro**: qwen3-coder-flash agotaba 8192 tokens en thinking mode para SDD; deepseek 16× más rápido (15.9s vs 260s)
+- **S112-E**: endpoint `GET /session/{thread_id}/artifacts/download` + botón "Descargar código" en Lanzador FR (fase done) → ZIP en memoria del código generado
+- Primer deliver exitoso en DO: ciclo `180baa45` completó todos los nodos, 10 archivos entregados
+- Diagnóstico `LengthFinishReasonError`: qwen3 thinking mode usa todos los tokens antes de emitir JSON estructurado — solución por modelo, no por prompt
+
+### Notas
+Sesión continuada desde compactación de contexto. El principal hallazgo fue que qwen3-coder-flash tiene un techo duro de 8192 completion tokens en DO AI gateway, y el modo thinking los consume antes de cerrar el JSON del SDD. deepseek-v4-pro no tiene este problema.
+
+## S016 | 2026-05-08
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~17:00 UTC |
+| Cierre | ~20:00 UTC |
+| Duración | ~3h (estimado — sin session-active.md) |
+| Sprint | S121 + S122 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [ ] /session-start
+- [x] /run-tests ×3
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS (8 errores pre-existentes en test_s115.py — no introducidos hoy)
+- [x] ruff format: PASS (5 auto-fix aplicados)
+- [x] pytest unit: 2013 passed
+- [x] OVD conventions: PASS (os.environ.get preexistentes)
+- Push ejecutado: SÍ (commits d1057cac + 47ab0b7f + 0b28a4b7) | Fallos CI post-push: 0
+
+### Completado hoy
+- **S121**: fix ImportError conftest — S121-A (regla backend_python.md), S121-B (patrón correcto from src.main), S121-C (hint lazy init en update_test_retry). Ciclo `46d2d42a`: S121-B ✅, S121-A ❌ (modelo ignoró regla), QA 72/100.
+- **S122-A**: `_fix_database_module_level_engine` en code_postprocessor.py — reescribe engine module-level → lazy get_engine() + get_session_factory(). Paso 2 generalizado para cualquier nombre de variable (no solo AsyncSessionLocal).
+- **S122-B**: detección conftest ImportError expandida a src.main + create_async_engine en update_test_retry.
+- **Ciclo validación `7990efb6`**: S122-A ✅ disparado 2 veces (logs confirmados). QA **95/100** (mejor histórico). Nuevo fallo identificado: test files importan `async_session_maker` de src.database.
+- **17 tests** test_s122.py — todos PASS. Suite total: 2013 passed.
+- **INFORME_S122_PROD_CYCLE.md** generado con análisis completo.
+
+### Notas
+Sesión continuada desde compactación de contexto. S122-A resolvió la causa raíz del ImportError (engine module-level), pero el modelo generó test files que importan nombres internos renombrados por el postprocessor. S123 debe prohibir `from src.database import` en test files y proporcionar patrón fixture con SQLite in-memory.

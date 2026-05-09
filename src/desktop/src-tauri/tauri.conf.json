@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OVD Platform",
+  "version": "0.1.0",
+  "identifier": "cloud.codigonet.ovd",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "cd frontend && bun run dev",
+    "beforeBuildCommand": "cd frontend && bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OVD Platform",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "decorations": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://localhost:* https://*.codigonet.cloud https://*.ondigitalocean.app; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "msi", "nsis", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "entitlements": null
+    },
+    "windows": {
+      "wix": { "language": "en-US" },
+      "nsis": { "displayLanguageSelector": false }
+    },
+    "linux": {
+      "deb": { "depends": [] }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/omarrobles/ovd-platform/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5RUQyQ0Q4QUJERDlEClJXU2QzYXZZTE8zSkFGN1NFQUt2NWRpSHpjK2lEZTRFSVZCSEV3MnRWdWMwNHFGcmsvcy9rRENqCg==",
+      "dialog": true
+    }
+  }
+}
