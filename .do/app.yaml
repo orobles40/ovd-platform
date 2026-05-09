@@ -69,7 +69,7 @@ services:
       # CORS — C6: dominio codigonet.cloud
       - key: OVD_CORS_ORIGINS
         scope: RUN_TIME
-        value: https://ovd-platform.codigonet.cloud,https://ovd-platform-*.ondigitalocean.app
+        value: https://ovd-platform.codigonet.cloud,https://ovd-platform-*.ondigitalocean.app,tauri://localhost
       # Modelos LLM — nombres DO (prefijo anthropic- / openai- / llama3.3- etc.)
       # Ver catálogo completo: GET https://inference.do-ai.run/v1/models
       - key: OVD_MODEL
