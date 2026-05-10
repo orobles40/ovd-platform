@@ -17,6 +17,20 @@
 
 ---
 
+## Última sesión (2026-05-09 — S020: OVD Desktop Opción C — outputDirectory + cleanup endpoint)
+
+**S125 — OVD Desktop: extracción automática de artefactos — COMPLETADO:**
+
+- **`Workspace.tsx`**: `Project` exportada con `outputDirectory?: string`; botón lápiz por proyecto; modal para elegir carpeta de salida con `workspacePickFolder`.
+- **`FrLauncher.tsx`**: importa `Project` de Workspace; `handleDeliver()` usa `outputDirectory ?? directory`; banner post-entrega con contador de archivos + botón "Abrir"; estado `writtenFiles`; llama `DELETE /session/{id}` para cleanup (best-effort).
+- **`tauri.ts`**: export `workspaceOpenFolder(folder)`.
+- **`workspace.rs`**: comando `workspace_open_folder` — usa `open`/`explorer`/`xdg-open` según SO. Registrado en `lib.rs`.
+- **`api.py`**: endpoint `DELETE /session/{thread_id}` — elimina tmpdir del engine solo si está bajo `gettempdir()` (preserva directorios de proyecto). Verificado: `{"ok":true,"removed":true}` con tmpdir real.
+- **RAG Bootstrap producción (D5):** codebase (3914 chunks) + docs (1930 chunks) indexados en DO PostgreSQL con bge-m3. Documentado en `docs/RAG_BOOTSTRAP.md`.
+- **20 tests** `test_s125.py` — 20/20 PASS. Suite total: 2065 passed.
+- **Ciclos de validación:** 2 ciclos locales OK — seguridad 100/100, entrega ✓, cleanup tmpdir ✓.
+- **Lint fix:** import sorting en `knowledge/bootstrap.py` y `knowledge/cli.py` (pre-existentes en S018).
+
 ## Última sesión (2026-05-09 — S019: OVD Desktop F7 smoke test + fix write_artifacts + tag desktop-v0.1.1)
 
 **OVD Desktop F7 — COMPLETADO:**
@@ -240,20 +254,14 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**S125 — Ciclo de validación con los fixes acumulados (S121→S124)**
+**Deploy DO (demo 2026-05-18):**
+- **D4:** `curl https://ovd-platform.codigonet.cloud/health` (verificar después de merge dev→main)
+- **D5:** ✅ COMPLETADO — RAG prod indexado (3914 codebase + 1930 docs con bge-m3)
+- **Rebuild DO:** para que fixes S123 (RLS) + S124 (postprocessor) + S125 (cleanup endpoint) lleguen a producción.
+  `doctl apps create-deployment f8d2207e-8229-4647-b9ad-5c14dcba4246`
 
-Lanzar ciclo en producción para confirmar que:
-- S122-A (lazy engine) se activa correctamente
-- S124-B (_fix_test_session_usage) corrige tests con factory residual
-- Los tests generados pasan pytest sin ImportError ni NameError
-- QA score ≥ 70
-
-**Deploy DO:** rebuild necesario para que fixes S123 (RLS) + S124 (postprocessor) lleguen a producción.
-`doctl apps create-deployment f8d2207e-8229-4647-b9ad-5c14dcba4246`
-
-**S112 — Deploy DO (demo 2026-05-18):**
-- D4: `curl https://ovd-platform.codigonet.cloud/health` (después de verificar merge)
-- D5: RAG bootstrap prod
+**OVD Desktop:**
+- Compilar release `desktop-v0.2.0` con Opción C (outputDirectory)
 
 **Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46, S113 (guion presentación)
 

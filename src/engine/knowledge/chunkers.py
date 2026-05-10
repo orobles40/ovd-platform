@@ -7,6 +7,7 @@ Estrategias de chunking por tipo de documento.
 Cada chunker recibe una ruta (archivo o directorio) y devuelve
 una lista de Chunk con el texto y metadatos relevantes para el RAG.
 """
+
 from __future__ import annotations
 
 import ast
@@ -28,9 +29,10 @@ _CHUNK_OVERLAP = 200
 @dataclass
 class Chunk:
     """Unidad mínima de conocimiento para indexar en el RAG."""
+
     content: str
-    doc_type: str                        # codebase | doc | schema | contract | ticket
-    source_file: str                     # ruta relativa del archivo origen
+    doc_type: str  # codebase | doc | schema | contract | ticket
+    source_file: str  # ruta relativa del archivo origen
     metadata: dict = field(default_factory=dict)
     # Metadatos específicos por tipo
     # codebase: {"language": "python", "symbol": "MyClass.method", "kind": "function"}
@@ -44,6 +46,7 @@ class Chunk:
 # Codebase chunker — AST-based para Python
 # ---------------------------------------------------------------------------
 
+
 def _chunk_python_file(path: pathlib.Path, rel_path: str) -> list[Chunk]:
     """
     Extrae funciones, clases y métodos de un archivo Python usando el AST.
@@ -53,7 +56,9 @@ def _chunk_python_file(path: pathlib.Path, rel_path: str) -> list[Chunk]:
         source = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as e:
-        log.warning("chunkers: error AST en %s — %s — usando chunking por líneas", rel_path, e)
+        log.warning(
+            "chunkers: error AST en %s — %s — usando chunking por líneas", rel_path, e
+        )
         return _chunk_by_lines(source, "codebase", rel_path, {"language": "python"})
 
     chunks: list[Chunk] = []
@@ -70,20 +75,34 @@ def _chunk_python_file(path: pathlib.Path, rel_path: str) -> list[Chunk]:
                 # Si el símbolo es muy grande, lo partimos conservando el header
                 header_end = min(start + 20, end)
                 header = "".join(lines[start:header_end])
-                for sub_chunk in _split_text(symbol_src[len(header):], _MAX_CHUNK_CHARS - len(header)):
-                    chunks.append(Chunk(
-                        content=header + sub_chunk,
+                for sub_chunk in _split_text(
+                    symbol_src[len(header) :], _MAX_CHUNK_CHARS - len(header)
+                ):
+                    chunks.append(
+                        Chunk(
+                            content=header + sub_chunk,
+                            doc_type="codebase",
+                            source_file=rel_path,
+                            metadata={
+                                "language": "python",
+                                "symbol": name,
+                                "kind": type(node).__name__.lower(),
+                            },
+                        )
+                    )
+            else:
+                chunks.append(
+                    Chunk(
+                        content=symbol_src,
                         doc_type="codebase",
                         source_file=rel_path,
-                        metadata={"language": "python", "symbol": name, "kind": type(node).__name__.lower()},
-                    ))
-            else:
-                chunks.append(Chunk(
-                    content=symbol_src,
-                    doc_type="codebase",
-                    source_file=rel_path,
-                    metadata={"language": "python", "symbol": name, "kind": type(node).__name__.lower()},
-                ))
+                        metadata={
+                            "language": "python",
+                            "symbol": name,
+                            "kind": type(node).__name__.lower(),
+                        },
+                    )
+                )
 
             # Recursivo para métodos dentro de clases
             if isinstance(node, ast.ClassDef):
@@ -95,12 +114,16 @@ def _chunk_python_file(path: pathlib.Path, rel_path: str) -> list[Chunk]:
 
     # Si no encontramos símbolos (archivo de solo imports/configs), chunk completo
     if not chunks:
-        chunks.extend(_chunk_by_lines(source, "codebase", rel_path, {"language": "python"}))
+        chunks.extend(
+            _chunk_by_lines(source, "codebase", rel_path, {"language": "python"})
+        )
 
     return chunks
 
 
-def _chunk_generic_code(path: pathlib.Path, rel_path: str, language: str) -> list[Chunk]:
+def _chunk_generic_code(
+    path: pathlib.Path, rel_path: str, language: str
+) -> list[Chunk]:
     """
     Chunking por líneas para lenguajes sin parser AST disponible
     (TypeScript, Java, Go, SQL genérico, etc.).
@@ -116,8 +139,10 @@ def _chunk_generic_code(path: pathlib.Path, rel_path: str, language: str) -> lis
 
 _EXTENSION_LANGUAGE_MAP: dict[str, str] = {
     ".py": "python",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".js": "javascript", ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
     ".java": "java",
     ".go": "go",
     ".rs": "rust",
@@ -129,8 +154,27 @@ _EXTENSION_LANGUAGE_MAP: dict[str, str] = {
     ".swift": "swift",
 }
 
-_SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".next", "dist", "build"}
-_SKIP_EXTENSIONS = {".min.js", ".map", ".lock", ".pyc", ".class", ".jar", ".war", ".exe", ".bin"}
+_SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".next",
+    "dist",
+    "build",
+}
+_SKIP_EXTENSIONS = {
+    ".min.js",
+    ".map",
+    ".lock",
+    ".pyc",
+    ".class",
+    ".jar",
+    ".war",
+    ".exe",
+    ".bin",
+}
 
 
 def chunk_codebase(source_path: pathlib.Path) -> Iterator[Chunk]:
@@ -220,7 +264,8 @@ def chunk_schema(source_path: pathlib.Path) -> Iterator[Chunk]:
             # Detectar tipo
             kind_match = re.search(
                 r"CREATE\s+(?:OR\s+REPLACE\s+)?(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|SEQUENCE|TYPE)",
-                statement, re.IGNORECASE,
+                statement,
+                re.IGNORECASE,
             )
             kind = kind_match.group(1).lower() if kind_match else "statement"
 
@@ -246,6 +291,7 @@ def chunk_schema(source_path: pathlib.Path) -> Iterator[Chunk]:
 # Contract chunker — OpenAPI/Swagger (JSON o YAML)
 # ---------------------------------------------------------------------------
 
+
 def chunk_contract(source_path: pathlib.Path) -> Iterator[Chunk]:
     """
     Divide una spec OpenAPI en chunks por endpoint (método + path).
@@ -255,9 +301,9 @@ def chunk_contract(source_path: pathlib.Path) -> Iterator[Chunk]:
 
     if source_path.is_dir():
         files = sorted(
-            list(source_path.rglob("*.json")) +
-            list(source_path.rglob("*.yaml")) +
-            list(source_path.rglob("*.yml"))
+            list(source_path.rglob("*.json"))
+            + list(source_path.rglob("*.yaml"))
+            + list(source_path.rglob("*.yml"))
         )
     else:
         files = [source_path]
@@ -294,8 +340,12 @@ def chunk_contract(source_path: pathlib.Path) -> Iterator[Chunk]:
                 summary = operation.get("summary", "")
                 description = operation.get("description", "")
                 params = json.dumps(operation.get("parameters", []), ensure_ascii=False)
-                request_body = json.dumps(operation.get("requestBody", {}), ensure_ascii=False)
-                responses = json.dumps(operation.get("responses", {}), ensure_ascii=False)
+                request_body = json.dumps(
+                    operation.get("requestBody", {}), ensure_ascii=False
+                )
+                responses = json.dumps(
+                    operation.get("responses", {}), ensure_ascii=False
+                )
 
                 content = (
                     f"API: {api_title}\n"
@@ -311,7 +361,11 @@ def chunk_contract(source_path: pathlib.Path) -> Iterator[Chunk]:
                     content=content[:_MAX_CHUNK_CHARS],
                     doc_type="contract",
                     source_file=str(spec_file.name),
-                    metadata={"method": method.upper(), "path": path, "operation_id": operation_id},
+                    metadata={
+                        "method": method.upper(),
+                        "path": path,
+                        "operation_id": operation_id,
+                    },
                 )
 
 
@@ -329,10 +383,10 @@ def chunk_doc(source_path: pathlib.Path) -> Iterator[Chunk]:
     """
     if source_path.is_dir():
         files = sorted(
-            list(source_path.rglob("*.md")) +
-            list(source_path.rglob("*.txt")) +
-            list(source_path.rglob("*.pdf")) +
-            list(source_path.rglob("*.docx"))
+            list(source_path.rglob("*.md"))
+            + list(source_path.rglob("*.txt"))
+            + list(source_path.rglob("*.pdf"))
+            + list(source_path.rglob("*.docx"))
         )
     else:
         files = [source_path]
@@ -440,6 +494,7 @@ def _chunk_docx(path: pathlib.Path) -> Iterator[Chunk]:
 # Ticket chunker — JSON/CSV de tickets (JIRA, Linear, etc.)
 # ---------------------------------------------------------------------------
 
+
 def chunk_tickets(source_path: pathlib.Path) -> Iterator[Chunk]:
     """
     Procesa exportaciones de tickets (JIRA JSON export, Linear CSV, etc.).
@@ -447,8 +502,7 @@ def chunk_tickets(source_path: pathlib.Path) -> Iterator[Chunk]:
     """
     if source_path.is_dir():
         files = sorted(
-            list(source_path.rglob("*.json")) +
-            list(source_path.rglob("*.csv"))
+            list(source_path.rglob("*.json")) + list(source_path.rglob("*.csv"))
         )
     else:
         files = [source_path]
@@ -469,7 +523,9 @@ def _chunk_tickets_json(path: pathlib.Path) -> Iterator[Chunk]:
         return
 
     # Soportar array directo o {issues: [...]} (formato JIRA)
-    tickets = data if isinstance(data, list) else data.get("issues", data.get("tickets", []))
+    tickets = (
+        data if isinstance(data, list) else data.get("issues", data.get("tickets", []))
+    )
     for ticket in tickets:
         if not isinstance(ticket, dict):
             continue
@@ -477,7 +533,11 @@ def _chunk_tickets_json(path: pathlib.Path) -> Iterator[Chunk]:
         summary = ticket.get("summary") or ticket.get("title") or ""
         description = ticket.get("description") or ticket.get("body") or ""
         status = ticket.get("status") or ticket.get("state") or ""
-        ticket_type = ticket.get("issuetype", {}).get("name", "") if isinstance(ticket.get("issuetype"), dict) else ticket.get("type", "")
+        ticket_type = (
+            ticket.get("issuetype", {}).get("name", "")
+            if isinstance(ticket.get("issuetype"), dict)
+            else ticket.get("type", "")
+        )
 
         content = f"Ticket: {ticket_id}\nTipo: {ticket_type}\nEstado: {status}\nTítulo: {summary}\nDescripción:\n{description}"
         yield Chunk(
@@ -490,6 +550,7 @@ def _chunk_tickets_json(path: pathlib.Path) -> Iterator[Chunk]:
 
 def _chunk_tickets_csv(path: pathlib.Path) -> Iterator[Chunk]:
     import csv
+
     try:
         with open(path, encoding="utf-8", errors="replace", newline="") as f:
             reader = csv.DictReader(f)
@@ -512,6 +573,7 @@ def _chunk_tickets_csv(path: pathlib.Path) -> Iterator[Chunk]:
 # ---------------------------------------------------------------------------
 # Helpers internos
 # ---------------------------------------------------------------------------
+
 
 def _split_text(text: str, max_chars: int) -> list[str]:
     """
@@ -607,6 +669,7 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
                 fm_text = text[4:end]
                 try:
                     import yaml as _yaml  # type: ignore[import]
+
                     frontmatter = _yaml.safe_load(fm_text) or {}
                 except Exception:
                     # Parseo manual de pares clave: valor simples
@@ -617,15 +680,22 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
 
         # Metadatos combinados: frontmatter (prioritario) + regex fallback
         qa_score: int | None = (
-            int(frontmatter["qa_score"]) if "qa_score" in frontmatter and frontmatter["qa_score"] is not None
+            int(frontmatter["qa_score"])
+            if "qa_score" in frontmatter and frontmatter["qa_score"] is not None
             else _extract_number(text, r"QA Score\s*\|\s*(\d+)/100")
         )
         sec_score: int | None = (
-            int(frontmatter["security_score"]) if "security_score" in frontmatter and frontmatter["security_score"] is not None
+            int(frontmatter["security_score"])
+            if "security_score" in frontmatter
+            and frontmatter["security_score"] is not None
             else _extract_number(text, r"Security Score\s*\|\s*(\d+)/100")
         )
         qa_passed_fm = frontmatter.get("qa_passed")
-        qa_passed = bool(qa_passed_fm) if qa_passed_fm is not None else ("| QA Passed | ✅" in text)
+        qa_passed = (
+            bool(qa_passed_fm)
+            if qa_passed_fm is not None
+            else ("| QA Passed | ✅" in text)
+        )
 
         # created_at desde frontmatter (YYYY-MM-DD) o mtime del archivo
         created_at: str | None = None
@@ -634,6 +704,7 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
         else:
             try:
                 import datetime
+
                 created_at = datetime.datetime.fromtimestamp(
                     report_file.stat().st_mtime
                 ).strftime("%Y-%m-%d")
@@ -653,11 +724,17 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
         # Omitir el bloque frontmatter del header si está presente
         if header.startswith("---"):
             end_fm = header.find("\n---", 3)
-            header = header[end_fm + 4:].strip() if end_fm != -1 else ""
-        cycle_content = f"{header}\n\n" + "\n\n".join(cycle_lines) if cycle_lines else header
+            header = header[end_fm + 4 :].strip() if end_fm != -1 else ""
+        cycle_content = (
+            f"{header}\n\n" + "\n\n".join(cycle_lines) if cycle_lines else header
+        )
 
         if cycle_content.strip():
-            meta: dict = {"kind": "ciclo", "qa_score": qa_score, "security_score": sec_score}
+            meta: dict = {
+                "kind": "ciclo",
+                "qa_score": qa_score,
+                "security_score": sec_score,
+            }
             if created_at:
                 meta["created_at"] = created_at
             if session_id:
@@ -673,7 +750,14 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
 
         # --- Chunk 2: archivos de implementación ---
         impl_body = ""
-        for key in ("archivos generados", "implementación", "artefactos", "files", "archivos", "archivos generados"):
+        for key in (
+            "archivos generados",
+            "implementación",
+            "artefactos",
+            "files",
+            "archivos",
+            "archivos generados",
+        ):
             if key in sections:
                 impl_body = sections[key]
                 break
@@ -687,7 +771,14 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
 
         # --- Chunk 3: auditoría (scores + compliance) ---
         qa_body = ""
-        for key in ("resultados de auditoría", "auditoría", "issues de calidad", "qa issues", "issues qa", "qa"):
+        for key in (
+            "resultados de auditoría",
+            "auditoría",
+            "issues de calidad",
+            "qa issues",
+            "issues qa",
+            "qa",
+        ):
             if key in sections:
                 qa_body = sections[key]
                 break
@@ -706,10 +797,10 @@ def chunk_delivery(source_path: pathlib.Path) -> Iterator[Chunk]:
 
 DOC_TYPE_CHUNKERS = {
     "codebase": chunk_codebase,
-    "schema":   chunk_schema,
+    "schema": chunk_schema,
     "contract": chunk_contract,
-    "doc":      chunk_doc,
-    "ticket":   chunk_tickets,
+    "doc": chunk_doc,
+    "ticket": chunk_tickets,
     "delivery": chunk_delivery,
 }
 
@@ -721,5 +812,7 @@ def get_chunks(source_path: pathlib.Path, doc_type: str) -> Iterator[Chunk]:
     """
     chunker = DOC_TYPE_CHUNKERS.get(doc_type)
     if not chunker:
-        raise ValueError(f"doc_type '{doc_type}' no soportado. Opciones: {list(DOC_TYPE_CHUNKERS)}")
+        raise ValueError(
+            f"doc_type '{doc_type}' no soportado. Opciones: {list(DOC_TYPE_CHUNKERS)}"
+        )
     yield from chunker(source_path)

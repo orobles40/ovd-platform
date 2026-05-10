@@ -31,18 +31,18 @@ Uso:
     --bridge http://localhost:3000 \\
     --token eyJhbGci...
 """
+
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
 import pathlib
 import sys
 
-import argparse
-
 from . import bootstrap as _bootstrap
-from .chunkers import get_chunks, DOC_TYPE_CHUNKERS
+from .chunkers import DOC_TYPE_CHUNKERS, get_chunks
 
 
 def _get_env(name: str, fallback: str = "") -> str:
@@ -58,11 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── bootstrap ──────────────────────────────────────────────────────────
     bs = sub.add_parser("bootstrap", help="Indexa documentos en el RAG del proyecto")
-    bs.add_argument("--org-id",     required=True, help="ID de la organización")
+    bs.add_argument("--org-id", required=True, help="ID de la organización")
     bs.add_argument("--project-id", required=True, help="ID del proyecto/workspace")
-    bs.add_argument("--source",     required=True, help="Ruta al directorio o archivo")
+    bs.add_argument("--source", required=True, help="Ruta al directorio o archivo")
     bs.add_argument(
-        "--type", required=True,
+        "--type",
+        required=True,
         choices=list(DOC_TYPE_CHUNKERS.keys()),
         help="Tipo de documento",
     )
@@ -76,18 +77,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_get_env("OVD_JWT_TOKEN", ""),
         help="JWT de autenticación (default: $OVD_JWT_TOKEN)",
     )
-    bs.add_argument("--batch-size", type=int, default=10, help="Chunks en paralelo (default: 10)")
-    bs.add_argument("--dry-run", action="store_true", help="Genera chunks sin enviar al Bridge")
+    bs.add_argument(
+        "--batch-size", type=int, default=10, help="Chunks en paralelo (default: 10)"
+    )
+    bs.add_argument(
+        "--dry-run", action="store_true", help="Genera chunks sin enviar al Bridge"
+    )
 
     # ── preview ────────────────────────────────────────────────────────────
     pv = sub.add_parser("preview", help="Muestra chunks generados sin indexar")
     pv.add_argument("--source", required=True, help="Ruta al directorio o archivo")
     pv.add_argument(
-        "--type", required=True,
+        "--type",
+        required=True,
         choices=list(DOC_TYPE_CHUNKERS.keys()),
         help="Tipo de documento",
     )
-    pv.add_argument("--limit", type=int, default=10, help="Máximo de chunks a mostrar (default: 10)")
+    pv.add_argument(
+        "--limit", type=int, default=10, help="Máximo de chunks a mostrar (default: 10)"
+    )
     pv.add_argument("--json", action="store_true", help="Salida en formato JSON")
 
     return parser
@@ -95,19 +103,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cmd_bootstrap(args: argparse.Namespace) -> None:
     if not args.token and not args.dry_run:
-        print("ERROR: --token requerido para indexar (o usar --dry-run)", file=sys.stderr)
+        print(
+            "ERROR: --token requerido para indexar (o usar --dry-run)", file=sys.stderr
+        )
         sys.exit(1)
 
-    result = asyncio.run(_bootstrap.run(
-        org_id=args.org_id,
-        project_id=args.project_id,
-        source_path=args.source,
-        doc_type=args.type,
-        bridge_url=args.bridge,
-        jwt_token=args.token,
-        batch_size=args.batch_size,
-        dry_run=args.dry_run,
-    ))
+    result = asyncio.run(
+        _bootstrap.run(
+            org_id=args.org_id,
+            project_id=args.project_id,
+            source_path=args.source,
+            doc_type=args.type,
+            bridge_url=args.bridge,
+            jwt_token=args.token,
+            batch_size=args.batch_size,
+            dry_run=args.dry_run,
+        )
+    )
     print(result.summary())
     if result.errors:
         print(f"\nPrimeros {len(result.errors)} errores:")
@@ -127,13 +139,18 @@ def cmd_preview(args: argparse.Namespace) -> None:
         if count >= args.limit:
             break
         if args.json:
-            print(json.dumps({
-                "doc_type": chunk.doc_type,
-                "source_file": chunk.source_file,
-                "metadata": chunk.metadata,
-                "content_preview": chunk.content[:200],
-                "content_length": len(chunk.content),
-            }, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "doc_type": chunk.doc_type,
+                        "source_file": chunk.source_file,
+                        "metadata": chunk.metadata,
+                        "content_preview": chunk.content[:200],
+                        "content_length": len(chunk.content),
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             print(f"─── Chunk {count + 1} [{chunk.doc_type}] {chunk.source_file} ───")
             print(f"Metadata: {chunk.metadata}")

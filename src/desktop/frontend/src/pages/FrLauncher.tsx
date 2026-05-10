@@ -2,18 +2,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, FolderOpen,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
-import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests, authRefreshToken } from "@/lib/tauri";
+import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests, workspaceOpenFolder, authRefreshToken } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
-
-interface Project {
-  name: string;
-  directory: string;
-  lastUsed: string;
-}
+import type { Project } from "./Workspace";
 
 interface LogEvent {
   event: string;
@@ -96,6 +91,7 @@ export default function FrLauncher() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testFromEngine, setTestFromEngine] = useState(false);
   const [testExpanded, setTestExpanded] = useState(false);
+  const [writtenFiles, setWrittenFiles] = useState<{ count: number; dir: string } | null>(null);
 
   const engineTestResultRef = useRef<string | null>(null);
   const nodeStartTimes = useRef<Map<string, number>>(new Map());
@@ -276,8 +272,12 @@ export default function FrLauncher() {
       return;
     }
 
+    // S125: extraer en outputDirectory si está configurado, sino en directory del proyecto
+    const outputDir = project.outputDirectory ?? project.directory;
+
     try {
-      await workspaceWriteArtifacts(sid, project.directory);
+      const writeResult = await workspaceWriteArtifacts(sid, outputDir);
+      setWrittenFiles({ count: writeResult.files_written, dir: outputDir });
       setPhase("tests");
 
       try {
@@ -299,6 +299,16 @@ export default function FrLauncher() {
         setTestFromEngine(true);
       }
       setPhase("done");
+
+      // S125: cleanup del tmpdir en el engine (best-effort, no bloquea UI)
+      try {
+        const { url: engineUrl, secret: engineSecret } = await getEngineConfig();
+        await fetch(`${engineUrl}/session/${sid}/cleanup`, {
+          method: "DELETE",
+          headers: engineSecret ? { "X-OVD-Secret": engineSecret } : {},
+        });
+      } catch { /* ignorar errores de cleanup */ }
+
     } catch (err) {
       setTestResult(`Error al escribir artefactos: ${err}`);
       setPhase("done");
@@ -314,6 +324,7 @@ export default function FrLauncher() {
     setTestResult(null);
     setTestFromEngine(false);
     setTestExpanded(false);
+    setWrittenFiles(null);
     engineTestResultRef.current = null;
     nodeStartTimes.current.clear();
 
@@ -472,6 +483,31 @@ export default function FrLauncher() {
             </div>
           );
         })}
+
+        {/* S125: banner de artefactos escritos */}
+        {writtenFiles && (
+          <div
+            className="mt-3 rounded-lg border px-3 py-2 flex items-center justify-between gap-3"
+            style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <FolderOpen size={14} style={{ color: "#34d399", flexShrink: 0 }} />
+              <span className="text-xs truncate" style={{ color: "var(--ovd-text)" }}>
+                {writtenFiles.count} archivo{writtenFiles.count !== 1 ? "s" : ""} escritos
+              </span>
+              <span className="text-xs truncate" style={{ color: "var(--ovd-muted)" }}>
+                {writtenFiles.dir}
+              </span>
+            </div>
+            <button
+              onClick={() => workspaceOpenFolder(writtenFiles.dir)}
+              className="text-xs shrink-0 px-2 py-1 rounded hover:opacity-70"
+              style={{ color: "var(--ovd-accent)" }}
+            >
+              Abrir
+            </button>
+          </div>
+        )}
 
         {testResult && (
           <div

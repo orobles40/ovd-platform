@@ -106,6 +106,23 @@ fn _read_context(folder: &str) -> AppResult<String> {
     Ok(result)
 }
 
+/// S125: abre la carpeta en el explorador del sistema operativo (Finder en macOS).
+#[tauri::command]
+pub async fn workspace_open_folder(folder: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let cmd = ("open", vec![folder.clone()]);
+    #[cfg(target_os = "windows")]
+    let cmd = ("explorer", vec![folder.clone()]);
+    #[cfg(target_os = "linux")]
+    let cmd = ("xdg-open", vec![folder.clone()]);
+
+    std::process::Command::new(cmd.0)
+        .args(&cmd.1)
+        .spawn()
+        .map_err(|e| format!("no se pudo abrir la carpeta: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn workspace_write_artifacts(
     session_id: String,

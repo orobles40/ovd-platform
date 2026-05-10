@@ -80,3 +80,7 @@ export const workspaceRunTests = (
     command,
     timeoutSecs: timeoutSecs ?? null,
   });
+
+// S125: abre la carpeta en el explorador del sistema operativo
+export const workspaceOpenFolder = (folder: string) =>
+  invoke<void>("workspace_open_folder", { folder });

@@ -40,6 +40,7 @@ pub fn run() {
             workspace::workspace_read_context,
             workspace::workspace_write_artifacts,
             workspace::workspace_run_tests,
+            workspace::workspace_open_folder,
             // Config
             config::config_get,
             config::config_save,

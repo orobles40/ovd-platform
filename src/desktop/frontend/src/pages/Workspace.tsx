@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Settings, LogOut, ChevronRight, Plus } from "lucide-react";
+import { FolderOpen, Settings, LogOut, ChevronRight, Plus, Pencil } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { workspacePickFolder, configGet, configSave } from "@/lib/tauri";
 
-interface Project {
+export interface Project {
   name: string;
   directory: string;
   lastUsed: string;
+  outputDirectory?: string;
 }
 
 const PROJECTS_KEY = "ovd_desktop_projects";
@@ -32,6 +33,8 @@ export default function Workspace() {
   const [engineSecret, setEngineSecret] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editOutputDir, setEditOutputDir] = useState("");
 
   useEffect(() => {
     configGet().then((c) => {
@@ -74,6 +77,29 @@ export default function Workspace() {
     } finally {
       setSavingSettings(false);
     }
+  };
+
+  const openProjectSettings = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    setEditingProject(project);
+    setEditOutputDir(project.outputDirectory ?? "");
+  };
+
+  const pickOutputDir = async () => {
+    const dir = await workspacePickFolder();
+    if (dir) setEditOutputDir(dir);
+  };
+
+  const saveProjectSettings = () => {
+    if (!editingProject) return;
+    const updated = projects.map((p) =>
+      p.directory === editingProject.directory
+        ? { ...p, outputDirectory: editOutputDir || undefined }
+        : p
+    );
+    setProjects(updated);
+    saveProjects(updated);
+    setEditingProject(null);
   };
 
   return (
@@ -156,28 +182,103 @@ export default function Workspace() {
                 .sort((a, b) => b.lastUsed.localeCompare(a.lastUsed))
                 .map((p) => (
                   <li key={p.directory}>
-                    <button
-                      onClick={() => openProject(p)}
-                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-colors hover:opacity-90"
+                    <div
+                      className="flex items-center gap-2 rounded-xl border"
                       style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}
                     >
-                      <FolderOpen size={18} style={{ color: "var(--ovd-accent)" }} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate" style={{ color: "var(--ovd-text)" }}>
-                          {p.name}
-                        </p>
-                        <p className="text-xs truncate mt-0.5" style={{ color: "var(--ovd-muted)" }}>
-                          {p.directory}
-                        </p>
-                      </div>
-                      <ChevronRight size={15} style={{ color: "var(--ovd-muted)" }} />
-                    </button>
+                      <button
+                        onClick={() => openProject(p)}
+                        className="flex-1 flex items-center gap-3 px-4 py-3 text-left hover:opacity-90 min-w-0"
+                      >
+                        <FolderOpen size={18} style={{ color: "var(--ovd-accent)", flexShrink: 0 }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: "var(--ovd-text)" }}>
+                            {p.name}
+                          </p>
+                          <p className="text-xs truncate mt-0.5" style={{ color: "var(--ovd-muted)" }}>
+                            {p.outputDirectory
+                              ? `→ ${p.outputDirectory}`
+                              : p.directory}
+                          </p>
+                        </div>
+                        <ChevronRight size={15} style={{ color: "var(--ovd-muted)", flexShrink: 0 }} />
+                      </button>
+                      <button
+                        onClick={(e) => openProjectSettings(e, p)}
+                        className="p-2 mr-2 rounded-lg hover:opacity-70"
+                        style={{ color: "var(--ovd-muted)" }}
+                        title="Configurar directorio de salida"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                   </li>
                 ))}
             </ul>
           )}
         </div>
       </main>
+
+      {/* Project settings modal */}
+      {editingProject && (
+        <div className="fixed inset-0 flex items-center justify-center z-50"
+             style={{ background: "rgba(0,0,0,0.6)" }}>
+          <div className="w-full max-w-sm p-6 rounded-xl border"
+               style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}>
+            <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--ovd-text)" }}>
+              {editingProject.name}
+            </h3>
+            <p className="text-xs mb-4" style={{ color: "var(--ovd-muted)" }}>
+              Directorio de salida para artefactos generados
+            </p>
+            <div className="mb-2">
+              <label className="block text-xs mb-1.5" style={{ color: "var(--ovd-muted)" }}>
+                Carpeta de salida
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={editOutputDir}
+                  onChange={(e) => setEditOutputDir(e.target.value)}
+                  placeholder={editingProject.directory}
+                  className="flex-1 px-3 py-2 rounded-lg text-xs outline-none border"
+                  style={{
+                    background: "var(--ovd-bg)",
+                    borderColor: "var(--ovd-border)",
+                    color: "var(--ovd-text)",
+                  }}
+                />
+                <button
+                  onClick={pickOutputDir}
+                  className="px-3 py-2 rounded-lg text-xs border hover:opacity-80"
+                  style={{ borderColor: "var(--ovd-border)", color: "var(--ovd-muted)" }}
+                >
+                  Elegir
+                </button>
+              </div>
+              <p className="text-xs mt-1.5" style={{ color: "var(--ovd-muted)" }}>
+                Dejar vacío para extraer en la misma carpeta del proyecto
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <button
+                onClick={() => setEditingProject(null)}
+                className="px-3 py-1.5 rounded-lg text-xs"
+                style={{ color: "var(--ovd-muted)" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveProjectSettings}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                style={{ background: "var(--ovd-accent)", color: "#fff" }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings modal */}
       {showSettings && (

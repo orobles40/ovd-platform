@@ -14,6 +14,7 @@ Flujo:
 El Bridge gestiona la embeddings y el almacenamiento en pgvector.
 El Bootstrap solo genera los chunks y los envía al Bridge.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,7 @@ from typing import AsyncIterator
 
 import httpx
 
-from .chunkers import get_chunks, Chunk
+from .chunkers import Chunk, get_chunks
 
 log = logging.getLogger(__name__)
 
@@ -81,8 +82,9 @@ async def run(
     Returns:
         BootstrapResult con estadísticas de la operación
     """
-    import sys
     import os
+    import sys
+
     # Agregar el directorio del engine al path para importar rag.py
     engine_dir = pathlib.Path(__file__).parent.parent / "engine"
     if str(engine_dir) not in sys.path:
@@ -94,7 +96,11 @@ async def run(
 
     log.info(
         "knowledge.bootstrap: iniciando — org=%s project=%s type=%s source=%s dry_run=%s",
-        org_id, project_id, doc_type, source_path, dry_run,
+        org_id,
+        project_id,
+        doc_type,
+        source_path,
+        dry_run,
     )
 
     chunks = list(get_chunks(source_path, doc_type))
@@ -117,8 +123,9 @@ async def run(
 
     # Indexar en lotes directamente via rag.py (sin Bridge)
     import rag as _rag
+
     for batch_start in range(0, len(chunks), batch_size):
-        batch = chunks[batch_start: batch_start + batch_size]
+        batch = chunks[batch_start : batch_start + batch_size]
         batch_dicts = [
             {
                 "content": c.content,
@@ -139,7 +146,9 @@ async def run(
 
         log.info(
             "knowledge.bootstrap: progreso %d/%d chunks (%d fallidos)",
-            batch_start + len(batch), len(chunks), failed,
+            batch_start + len(batch),
+            len(chunks),
+            failed,
         )
 
     result = BootstrapResult(

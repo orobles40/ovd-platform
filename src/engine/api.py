@@ -1371,6 +1371,43 @@ async def download_session_artifacts(
     )
 
 
+@app.delete("/session/{thread_id}")
+async def cleanup_session(
+    thread_id: str,
+    _: None = Depends(verify_secret),
+):
+    """S125: elimina el tmpdir del engine para este ciclo (llamado por el desktop tras extraer ZIP)."""
+    if not _graph:
+        raise HTTPException(503, detail="Engine no inicializado")
+
+    config = {"configurable": {"thread_id": thread_id}}
+    state = await _graph.aget_state(config)
+    if not state or not state.values:
+        return {"ok": True, "removed": False, "reason": "thread no encontrado"}
+
+    directory = state.values.get("directory", "")
+    if not directory:
+        return {"ok": True, "removed": False, "reason": "sin directorio"}
+
+    import tempfile as _tmpmod
+    from pathlib import Path as _CleanPath
+
+    # Solo eliminar si es un tmpdir creado por el engine (no el directorio de trabajo del proyecto)
+    tmp_root = _tmpmod.gettempdir()
+    p = _CleanPath(directory)
+    if not str(p).startswith(tmp_root):
+        return {"ok": True, "removed": False, "reason": "no es tmpdir — se preserva"}
+
+    import shutil as _shutil_del
+
+    try:
+        _shutil_del.rmtree(directory, ignore_errors=True)
+        logging.getLogger("ovd.api").info("S125: tmpdir eliminado por desktop: %s", directory)
+        return {"ok": True, "removed": True, "directory": directory}
+    except Exception as e:
+        return {"ok": False, "removed": False, "reason": str(e)}
+
+
 @app.post("/session/{thread_id}/approve")
 async def approve_session(
     thread_id: str,
