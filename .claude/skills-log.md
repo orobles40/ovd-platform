@@ -780,3 +780,36 @@ La causa raíz del problema era en dos capas: S123-B eliminaba el import (resolv
 
 ### Notas
 Sesión sin fricción (5/5). Todos los fixes fueron directos al diagnóstico sin iteraciones largas. El smoke test de write_artifacts reveló dos bugs independientes que se corrigieron en un solo commit. El CI de GitHub Actions quedó corriendo para el release del DMG.
+
+## S020 | 2026-05-10
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~19:30 |
+| Cierre | 00:10 |
+| Duración | ~4h 40m |
+| Sprint | S112 / S125 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [x] /run-tests ×2
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS (fix imports knowledge/)
+- [x] ruff format: PASS
+- [x] pytest unit: 2065 passed
+- [x] OVD conventions: PASS (sin nuevos os.environ.get)
+- Push ejecutado: NO (pendiente confirmación)
+
+### Completado hoy
+- RAG Bootstrap producción (D5): codebase 3914 chunks + docs 1930 chunks con bge-m3 en DO PostgreSQL. Documentado en docs/RAG_BOOTSTRAP.md.
+- OVD Desktop Opción C (S125): outputDirectory por proyecto, modal configuración en Workspace, banner artefactos escritos + botón "Abrir" en FrLauncher, workspace_open_folder en Rust, DELETE /session/{id} cleanup endpoint en engine.
+- 20 tests test_s125.py — 20/20 PASS. Suite: 2065 total.
+- 2 ciclos de validación locales — seguridad 100/100, cleanup tmpdir verificado end-to-end.
+- Commit ce546dc7f
+
+### Notas
+Sin fricción (5/5). La investigación previa de la sesión anterior sobre Opciones A/B/C dejó el camino claro — la implementación fue directa. El token DO GenAI (dop_v1_ vs doo_v1_) fue la única fricción de la sesión anterior, ya documentada en RAG_BOOTSTRAP.md.

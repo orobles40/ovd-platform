@@ -2,13 +2,15 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2,
-  ChevronDown, ChevronUp, FolderOpen,
+  ChevronDown, ChevronUp, FolderOpen, Settings,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
-import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests, workspaceOpenFolder, authRefreshToken } from "@/lib/tauri";
+import { workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests, workspaceOpenFolder, workspacePickFolder, authRefreshToken } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
 import type { Project } from "./Workspace";
+
+const PROJECTS_KEY = "ovd_desktop_projects";
 
 interface LogEvent {
   event: string;
@@ -92,6 +94,9 @@ export default function FrLauncher() {
   const [testFromEngine, setTestFromEngine] = useState(false);
   const [testExpanded, setTestExpanded] = useState(false);
   const [writtenFiles, setWrittenFiles] = useState<{ count: number; dir: string } | null>(null);
+  const [showOutputConfig, setShowOutputConfig] = useState(false);
+  const [editOutputDir, setEditOutputDir] = useState("");
+  const [localOutputDir, setLocalOutputDir] = useState(project?.outputDirectory ?? "");
 
   const engineTestResultRef = useRef<string | null>(null);
   const nodeStartTimes = useRef<Map<string, number>>(new Map());
@@ -116,8 +121,30 @@ export default function FrLauncher() {
   };
 
   const getAccessToken = async (): Promise<string> => {
-    if (token && token !== "__stored__") return token;
-    try { return await authRefreshToken(); } catch { return ""; }
+    try { return await authRefreshToken(); } catch { return token ?? ""; }
+  };
+
+  const openOutputConfig = () => {
+    setEditOutputDir(localOutputDir);
+    setShowOutputConfig(true);
+  };
+
+  const pickOutputDirInLauncher = async () => {
+    const dir = await workspacePickFolder();
+    if (dir) setEditOutputDir(dir);
+  };
+
+  const saveOutputConfig = () => {
+    if (!project) return;
+    const projects: Project[] = JSON.parse(localStorage.getItem(PROJECTS_KEY) ?? "[]");
+    const updated = projects.map((p) =>
+      p.name === project.name && p.directory === project.directory
+        ? { ...p, outputDirectory: editOutputDir || undefined }
+        : p
+    );
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(updated));
+    setLocalOutputDir(editOutputDir);
+    setShowOutputConfig(false);
   };
 
   const pushEvent = useCallback((
@@ -273,7 +300,7 @@ export default function FrLauncher() {
     }
 
     // S125: extraer en outputDirectory si está configurado, sino en directory del proyecto
-    const outputDir = project.outputDirectory ?? project.directory;
+    const outputDir = localOutputDir || project.outputDirectory || project.directory;
 
     try {
       const writeResult = await workspaceWriteArtifacts(sid, outputDir);
@@ -328,47 +355,58 @@ export default function FrLauncher() {
     engineTestResultRef.current = null;
     nodeStartTimes.current.clear();
 
-    const [engineCfg, ctx, accessToken] = await Promise.all([
-      getEngineConfig(),
-      workspaceReadContext(project.directory),
-      getAccessToken(),
-    ]);
+    try {
+      const [engineCfg, ctx, accessToken] = await Promise.all([
+        getEngineConfig(),
+        workspaceReadContext(project.directory),
+        getAccessToken(),
+      ]);
 
-    const { url: engineUrl, secret: engineSecret } = engineCfg;
+      const { url: engineUrl, secret: engineSecret } = engineCfg;
 
-    const res = await fetch(`${engineUrl}/session`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(accessToken ? { "Authorization": `Bearer ${accessToken}` } : {}),
-        ...(engineSecret ? { "X-OVD-Secret": engineSecret } : {}),
-      },
-      body: JSON.stringify({
-        org_id: user?.org_id ?? "",
-        feature_request: fr,
-        project_context: ctx,
-        directory: "",
-        auto_approve: autoApprove,
-        jwt_token: accessToken,
-      }),
-    });
+      const res = await fetch(`${engineUrl}/session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { "Authorization": `Bearer ${accessToken}` } : {}),
+          ...(engineSecret ? { "X-OVD-Secret": engineSecret } : {}),
+        },
+        body: JSON.stringify({
+          org_id: user?.org_id ?? "",
+          feature_request: fr,
+          project_context: ctx,
+          directory: "",
+          auto_approve: autoApprove,
+          jwt_token: accessToken,
+        }),
+      });
 
-    if (!res.ok) {
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        const msg = body ? `HTTP ${res.status}: ${body.slice(0, 120)}` : `HTTP ${res.status}`;
+        setPhase("error");
+        setEvents((e) => [
+          ...e,
+          { event: "error", data: { message: msg }, summary: msg, ts: Date.now() },
+        ]);
+        return;
+      }
+
+      const { session_id, thread_id } = await res.json();
+      setSessionId(session_id);
+      setThreadId(thread_id);
+      sessionIdRef.current = session_id;
+      threadIdRef.current = thread_id;
+
+      connectSse(engineUrl, thread_id, accessToken);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       setPhase("error");
       setEvents((e) => [
         ...e,
-        { event: "error", data: { message: `HTTP ${res.status}` }, summary: `HTTP ${res.status}`, ts: Date.now() },
+        { event: "error", data: { message: msg }, summary: msg, ts: Date.now() },
       ]);
-      return;
     }
-
-    const { session_id, thread_id } = await res.json();
-    setSessionId(session_id);
-    setThreadId(thread_id);
-    sessionIdRef.current = session_id;
-    threadIdRef.current = thread_id;
-
-    connectSse(engineUrl, thread_id, accessToken);
   };
 
   const approveSdd = async () => {
@@ -422,6 +460,14 @@ export default function FrLauncher() {
         <span className="text-sm font-medium" style={{ color: "var(--ovd-text)" }}>
           {project.name}
         </span>
+        <button
+          onClick={openOutputConfig}
+          title="Configurar carpeta de salida"
+          className="p-1 rounded hover:opacity-70"
+          style={{ color: "var(--ovd-muted)" }}
+        >
+          <Settings size={13} />
+        </button>
         {phase !== "idle" && (
           <div className="flex items-center gap-1.5 ml-auto">
             {phase === "done" && <CheckCircle size={14} style={{ color: "#34d399" }} />}
@@ -630,6 +676,66 @@ export default function FrLauncher() {
           </div>
         </div>
       </div>
+
+      {/* Modal configuración carpeta de salida */}
+      {showOutputConfig && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.6)" }}
+          onClick={() => setShowOutputConfig(false)}
+        >
+          <div
+            className="w-96 rounded-xl border p-4 space-y-3"
+            style={{ background: "var(--ovd-surface)", borderColor: "var(--ovd-border)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-medium" style={{ color: "var(--ovd-text)" }}>
+              Carpeta de salida — {project.name}
+            </h3>
+            <p className="text-xs" style={{ color: "var(--ovd-muted)" }}>
+              Los artefactos generados se extraerán aquí. Dejar vacío para usar la carpeta del proyecto.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={editOutputDir}
+                onChange={(e) => setEditOutputDir(e.target.value)}
+                placeholder={project.directory}
+                className="flex-1 text-xs px-2 py-1.5 rounded-lg border bg-transparent"
+                style={{ borderColor: "var(--ovd-border)", color: "var(--ovd-text)" }}
+              />
+              <button
+                onClick={pickOutputDirInLauncher}
+                className="px-2 py-1.5 rounded-lg border text-xs shrink-0"
+                style={{ borderColor: "var(--ovd-border)", color: "var(--ovd-muted)" }}
+              >
+                Explorar
+              </button>
+            </div>
+            {localOutputDir && (
+              <p className="text-xs" style={{ color: "var(--ovd-muted)" }}>
+                Actual: {localOutputDir}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setShowOutputConfig(false)}
+                className="text-xs px-3 py-1.5 rounded-lg"
+                style={{ color: "var(--ovd-muted)" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveOutputConfig}
+                className="text-xs px-3 py-1.5 rounded-lg font-medium"
+                style={{ background: "var(--ovd-accent)", color: "#fff" }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
