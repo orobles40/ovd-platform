@@ -851,3 +851,40 @@ Sin fricción (5/5). La investigación previa de la sesión anterior sobre Opcio
 
 ### Notas
 Sin fricción (5/5). UI refactoring completo sin bloqueos. El único hitch fue el test de regresión del engine que verificaba un patrón ?? en FrLauncher que cambió a || durante el refactor — solucionado actualizando la aserción.
+
+---
+
+## S022 | 2026-05-12
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~06:00 |
+| Cierre | ~06:45 |
+| Duración | ~45m |
+| Sprint | S126 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [ ] /session-start
+- [ ] /run-tests ×1
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS
+- [x] pytest unit: 2060 passed (5 NATS integration sin marker, pre-existentes — NATS no activo)
+- [x] vitest desktop: 70 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: SÍ | Fallos CI post-push: 0
+
+### Completado hoy
+- lib/ovd.ts nuevo: fetchDelivery, fetchOrgStats, fetchOrgCycles, loadCycleHistory, saveCycleEntry, fmtTokens, fmtSecs
+- T2: TelemetryCard en FrLauncher (QA, seguridad, tokens, duración post-ciclo)
+- T1: historial de ciclos por proyecto en Workspace (localStorage, panel inline)
+- T5: OrgStatsBar en Workspace header (stats 30 días desde engine)
+- 23 tests nuevos en ovd.test.ts (70 total vitest)
+
+### Notas
+Sin fricción (5/5). Investigación exhaustiva del engine antes de implementar evitó sorpresas. Pendiente S126: T3 (SQLite Rust), T4 (evento telemetría → engine), T6 (crash reporting).

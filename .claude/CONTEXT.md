@@ -17,6 +17,18 @@
 
 ---
 
+## Última sesión (2026-05-12 — S022: OVD Desktop S126 — Telemetría T1+T2+T5)
+
+**S126 — Telemetría OVD Desktop (parcial) — COMPLETADO:**
+
+- **`lib/ovd.ts`** (nuevo): `fetchDelivery`, `fetchOrgStats`, `fetchOrgCycles`, `loadCycleHistory`, `saveCycleEntry`, `fmtTokens`, `fmtSecs`.
+- **T2 — TelemetryCard** (`FrLauncher.tsx`): al completar ciclo llama `GET /session/{thread_id}/delivery`, muestra QA, seguridad, tokens entrada/salida y duración dentro de la card de entrega. Ciclo guardado en `localStorage["ovd_cycle_history"]` via `saveCycleEntry`.
+- **T1 — Historial por proyecto** (`Workspace.tsx`): botón `History` por tarjeta expande panel inline con últimos ciclos (fecha, FR, QA, tokens, duración, archivos). Lee de localStorage.
+- **T5 — OrgStatsBar** (`Workspace.tsx`): al cargar, fetcha `/api/v1/orgs/{id}/stats` (JWT fresco) y muestra ciclos totales, QA promedio y costo USD últimos 30 días. Fallo silencioso.
+- **70 tests vitest** (7 archivos, 23 nuevos en `ovd.test.ts`) — todos PASS.
+- **2065 tests engine** — PASS (sin cambios al engine).
+- **Pendiente S126:** T3 (SQLite Rust), T4 (evento telemetría → engine), T6 (crash reporting Rust).
+
 ## Última sesión (2026-05-11 — S021: OVD Desktop UI — NavSidebar + Workspace enriquecido + vitest)
 
 **S125 (continuación) — OVD Desktop UI completo — COMPLETADO:**
@@ -268,14 +280,14 @@ Suite: **1873 passed** (era 1869). Restan: test_s31 (race condition) y test_s63b
 
 ## Próxima sesión
 
-**Deploy DO (demo 2026-05-18):**
-- **D4:** `curl https://ovd-platform.codigonet.cloud/health` (verificar después de merge dev→main)
-- **D5:** ✅ COMPLETADO — RAG prod indexado (3914 codebase + 1930 docs con bge-m3)
-- **Rebuild DO:** para que fixes S123 (RLS) + S124 (postprocessor) + S125 (cleanup endpoint) lleguen a producción.
-  `doctl apps create-deployment f8d2207e-8229-4647-b9ad-5c14dcba4246`
+**S126 Desktop — Telemetría (pendiente):**
+- **T3:** SQLite local en Rust (`db.rs`) — historial offline por proyecto
+- **T4:** `POST /api/v1/telemetry/client-event` en engine + fire-and-forget desde FrLauncher
+- **T6:** Panic hook en `main.rs` + tabla `error_log` en SQLite
 
-**OVD Desktop:**
-- Compilar release `desktop-v0.2.0` con Opción C (outputDirectory)
+**Deploy DO (demo 2026-05-18):**
+- Rebuild fue lanzado en sesión S022: deployment `ffeefb17` (monitorear estado)
+- Compilar release `desktop-v0.2.0`
 
 **Backlog post-demo:** test_s63b, S96-I, Modo 5, Sprint 46, S113 (guion presentación)
 
