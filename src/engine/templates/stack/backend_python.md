@@ -604,3 +604,46 @@ def test_funcion_pura():
 - **NUNCA un float literal en `assert`** — usa `round(a / b**2, 2)` directamente (S53-A)
 - Mínimo 3 casos: happy path, validación negativa, límite/categoría extrema
 - Los imports usan la ruta real del módulo (`from src.calculadora.imc import ...`)
+
+---
+
+### Patrón SQLAlchemy async — transacciones explícitas (S129-E)
+
+Cuando el servicio realiza múltiples operaciones en una misma transacción (create + update + relacionados), usa `AsyncSession` con commit/rollback explícito:
+
+```python:src/<paquete>/services.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+async def create_with_relations(db: AsyncSession, data: dict) -> MyModel:
+    """Crea entidad principal y relacionadas en una sola transacción."""
+    async with db.begin():   # abre transacción; hace rollback automático en excepción
+        obj = MyModel(**data)
+        db.add(obj)
+        await db.flush()     # asigna ID sin hacer commit
+        related = RelatedModel(parent_id=obj.id, ...)
+        db.add(related)
+    # commit se llama automáticamente al salir del bloque begin()
+    await db.refresh(obj)
+    return obj
+```
+
+**Si no usas `async with db.begin()`**, haz commit/rollback manual:
+
+```python
+async def create_item(db: AsyncSession, data: dict) -> MyModel:
+    try:
+        obj = MyModel(**data)
+        db.add(obj)
+        await db.commit()
+        await db.refresh(obj)
+        return obj
+    except Exception:
+        await db.rollback()
+        raise
+```
+
+**PROHIBIDO:**
+- `db.commit()` sin `await` → silently ignores the commit in async context
+- Múltiples operaciones sin transacción → inconsistencia si falla a mitad
+- `session.execute(text("..."))` con parámetros string concatenados → SQL injection

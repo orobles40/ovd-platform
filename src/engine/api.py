@@ -929,7 +929,9 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                 # S20-GAP-R1: timeout global — el grafo no puede correr eternamente
                 # S128-D1: timeout adaptativo — si hay retries en checkpoint (ciclo resumido),
                 #          extender +900s por ronda para evitar CancelledError en retries largos.
+                # S129-D: también sumar qa_retry_count para ciclos con múltiples rondas QA.
                 _d1_retry_round: int = 0
+                _d1_qa_retry_count: int = 0
                 if _graph:
                     try:
                         _d1_snap = await _graph.aget_state(config)
@@ -937,14 +939,19 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                             _d1_retry_round = int(
                                 _d1_snap.values.get("test_retry_count", 0) or 0
                             )
+                            _d1_qa_retry_count = int(
+                                _d1_snap.values.get("qa_retry_count", 0) or 0
+                            )
                     except Exception:
                         pass
-                _adaptive_timeout = _SSE_STREAM_TIMEOUT + (_d1_retry_round * 900)
-                if _d1_retry_round > 0:
+                _d1_total_retries = _d1_retry_round + _d1_qa_retry_count
+                _adaptive_timeout = _SSE_STREAM_TIMEOUT + (_d1_total_retries * 900)
+                if _d1_total_retries > 0:
                     log.info(
-                        "S128-D1: timeout adaptativo para thread=%s retry=%d → %.0fs",
+                        "S129-D: timeout adaptativo para thread=%s test_retry=%d qa_retry=%d → %.0fs",
                         thread_id,
                         _d1_retry_round,
+                        _d1_qa_retry_count,
                         _adaptive_timeout,
                     )
                 async with asyncio.timeout(_adaptive_timeout):

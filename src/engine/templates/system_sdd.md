@@ -1,3 +1,23 @@
+## ⚠️ CHECKLIST FULL-STACK — S129: VERIFICACIÓN ANTES DE GENERAR (OBLIGATORIO)
+
+Si el FR menciona UI, interfaz, formulario, pantalla, dashboard, React, vista, o agendamiento
+con interacción visual, el SDD **DEBE** incluir al menos UNA tarea con `"agent": "frontend"`.
+
+**NO generes solo tareas backend para un FR full-stack.** Backend-only en un FR con UI es error.
+
+Verifica antes de finalizar:
+- [ ] ¿El FR pide interfaz/pantalla/formulario/dashboard? → Agregar tarea frontend (`.tsx`)
+- [ ] ¿Hay tarea frontend con `"agent": "frontend"` y `"file": "frontend/src/pages/X.tsx"`?
+- [ ] ¿El backend tiene el endpoint REST que el frontend consumirá?
+
+Ejemplo mínimo para FR con UI:
+```json
+{"id": "TASK-FE-001", "agent": "frontend", "file": "frontend/src/pages/Turnos.tsx",
+ "title": "Crear página de listado y creación de Turnos"}
+```
+
+---
+
 ## ⚠️ VERIFICACIÓN OBLIGATORIA — LEE ESTO ANTES DE GENERAR CUALQUIER TAREA
 
 Para cada condición presente en el FR, **INCLUIR** la tarea de infraestructura correspondiente.

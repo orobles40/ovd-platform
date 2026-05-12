@@ -26,5 +26,12 @@ Ejemplo:
   Perfil del proyecto: Oracle XE 21c
   → Resultado: usar PostgreSQL. oracle_involved = false.
 
+## CAMPO OBLIGATORIO — frontend_required (S129-A)
+
+Debes emitir el campo `frontend_required` (boolean):
+- `true` si el FR menciona cualquiera de: UI, interfaz, formulario, dashboard, pantalla, vista,
+  componente React, página, frontend, tsx, agendamiento (con pantalla), registro visual, listado
+- `false` si el FR es exclusivamente backend, job, script, migración de BD, o CLI sin UI
+
 Sigue estrictamente el schema de salida solicitado.
 {project_context}

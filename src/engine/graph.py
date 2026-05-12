@@ -157,6 +157,10 @@ class FRAnalysisOutput(BaseModel):
     summary: str = Field(
         description="Resumen de 1-2 oraciones del FR analizado",
     )
+    frontend_required: bool = Field(
+        default=False,
+        description="True si el FR requiere interfaz de usuario (React/TSX/UI/formulario/dashboard)",
+    )
 
 
 class AgentRouterOutput(BaseModel):
@@ -1879,6 +1883,98 @@ def _ensure_auth_login_task(sdd: dict, fr_analysis: dict) -> dict:
     return sdd
 
 
+def _infer_entity_name_from_fr(fr_raw: str) -> str:
+    """S129-C: infiere el nombre de entidad principal del FR para nombrar tareas inyectadas."""
+    import re as _re
+
+    _entity_map = [
+        (_re.compile(r"\bturnos?\b", _re.I), "Turno"),
+        (_re.compile(r"\bpacientes?\b", _re.I), "Paciente"),
+        (_re.compile(r"\busuarios?\b", _re.I), "Usuario"),
+        (_re.compile(r"\bproductos?\b", _re.I), "Producto"),
+        (_re.compile(r"\bpedidos?\b", _re.I), "Pedido"),
+        (_re.compile(r"\bfacturas?\b", _re.I), "Factura"),
+        (_re.compile(r"\bcontrat[oa]s?\b", _re.I), "Contrato"),
+        (_re.compile(r"\bdoctores?|médicos?\b", _re.I), "Doctor"),
+        (_re.compile(r"\bcitas?\b", _re.I), "Cita"),
+        (_re.compile(r"\breservas?\b", _re.I), "Reserva"),
+        (_re.compile(r"\bpagos?\b", _re.I), "Pago"),
+        (_re.compile(r"\bemplead[oa]s?\b", _re.I), "Empleado"),
+        (_re.compile(r"\bclient[eo]s?\b", _re.I), "Cliente"),
+        (_re.compile(r"\binventari[oa]s?\b", _re.I), "Inventario"),
+        (_re.compile(r"\bproyectos?\b", _re.I), "Proyecto"),
+    ]
+    for pattern, name in _entity_map:
+        if pattern.search(fr_raw):
+            return name
+    return "Entidad"
+
+
+def _ensure_frontend_tasks_if_fullstack(
+    sdd: dict, fr_analysis: dict, fr_raw: str = ""
+) -> dict:
+    """S129-C: inyecta tareas frontend si el FR requiere UI pero el SDD no tiene ninguna.
+
+    Condición de activación: fr_analysis['frontend_required'] is True AND
+    no hay tareas con agent='frontend' en el SDD.
+    """
+    if not fr_analysis.get("frontend_required", False):
+        return sdd
+    has_frontend = any(
+        t.get("agent") == "frontend"
+        or ".tsx" in t.get("file", "")
+        or ".jsx" in t.get("file", "")
+        for t in sdd.get("tasks", [])
+    )
+    if has_frontend:
+        return sdd
+
+    entity = _infer_entity_name_from_fr(fr_raw or fr_analysis.get("summary", ""))
+    entity_lower = entity.lower()
+
+    injected: list[dict] = [
+        {
+            "id": f"TASK-FE-{entity.upper()}-LIST",
+            "agent": "frontend",
+            "title": f"Crear página de listado de {entity}s",
+            "description": (
+                f"Crea `frontend/src/pages/{entity}s.tsx` con:\n"
+                f"- Tabla/lista de {entity_lower}s con columnas principales\n"
+                f"- Botón 'Nuevo {entity}' que abre formulario de creación\n"
+                f"- useEffect que llama al endpoint GET /{entity_lower}s\n"
+                f"- Estado loading/error mientras carga\n"
+                "Usa los componentes del design system del proyecto (si existe)."
+            ),
+            "file": f"frontend/src/pages/{entity}s.tsx",
+            "depends_on": [],
+            "estimated_complexity": "medium",
+        },
+        {
+            "id": f"TASK-FE-{entity.upper()}-FORM",
+            "agent": "frontend",
+            "title": f"Crear formulario de creación/edición de {entity}",
+            "description": (
+                f"Crea `frontend/src/components/{entity}Form.tsx` con:\n"
+                f"- Formulario controlado con campos del modelo {entity}\n"
+                f"- Submit que llama POST /{entity_lower}s\n"
+                "- Validación básica de campos requeridos\n"
+                "- Callback onSuccess para refrescar lista"
+            ),
+            "file": f"frontend/src/components/{entity}Form.tsx",
+            "depends_on": [f"TASK-FE-{entity.upper()}-LIST"],
+            "estimated_complexity": "medium",
+        },
+    ]
+
+    sdd["tasks"].extend(injected)
+    log.warning(
+        "generate_sdd: S129-C frontend inyectado para FR full-stack — entidad=%s tasks=%d",
+        entity,
+        len(injected),
+    )
+    return sdd
+
+
 def _ensure_auth_models_task(sdd: dict) -> dict:
     """S84-F: si el SDD tiene src/auth/router.py pero no src/auth/models.py, inyectar models.
 
@@ -2432,6 +2528,12 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S84-F: inyectar src/auth/models.py si hay auth/router.py pero no auth/models.py
         sdd = _ensure_auth_models_task(sdd)
+
+        # S129-C: inyectar tareas frontend si el FR requiere UI pero el SDD no tiene ninguna
+        _fr_raw = state.get("feature_request", "") or ""
+        sdd = _ensure_frontend_tasks_if_fullstack(
+            sdd, state.get("fr_analysis", {}), _fr_raw
+        )
 
         # S74-B: inyectar TASK-INFRA-TESTS si el LLM no incluyó ninguna tarea de tests
         sdd = _ensure_test_task(sdd, state.get("fr_analysis", {}))
