@@ -113,6 +113,28 @@ Tests: 35 Python (`test_s127.py`) + 9 vitest (`toSlug`) — todos PASS.
 
 ---
 
+## S128 — Mejoras post-ciclo 92c6641f (2026-05-12)
+
+Correctivos derivados del análisis del ciclo de dry-run "Sistema de Turnos Médicos" que abortó en retry-2 por CancelledError.
+
+| Fix | Descripción | Estado |
+|-----|-------------|--------|
+| **S128-A1** | EXPORTS explícitos en system_sdd.md — contrato machine-parseable entre service y router | ✅ 2026-05-12 |
+| **S128-A2** | S103-P2 feedback incluye sugerencias de firma para funciones no definidas | ✅ 2026-05-12 |
+| **S128-B1** | Módulo primario obligatorio en system_sdd.md — nunca se puede eliminar del cap | ✅ 2026-05-12 |
+| **S128-C1** | App.tsx obligatorio en system_frontend_react.md cuando ≥2 componentes | ✅ 2026-05-12 |
+| **S128-C2** | deliver() auto-genera App.tsx mínimo con React Router si no existe y hay ≥2 .tsx | ✅ 2026-05-12 |
+| **S128-D1** | Timeout adaptativo en api.py: `_SSE_STREAM_TIMEOUT + retry_round * 900` | ✅ 2026-05-12 |
+| **S128-E3** | Cap duro: low:3, medium:5, high:5, critical:7 (antes low:5, medium/high:8, critical:10) | ✅ 2026-05-12 |
+
+Tests: 28 tests en `test_s128.py` — todos PASS.
+
+**Diferidos (S129+):**
+- S128-D3: retry LLM HTTP call en CancelledError
+- S128-E2: modelo ligero en retry_round > 0
+
+---
+
 ## Backlog post-demo (orden de prioridad sugerido)
 
 ### Infraestructura — Pay-per-use

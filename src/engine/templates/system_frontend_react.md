@@ -408,6 +408,44 @@ export function AppShell({ children, navItems, title, userLabel, onLogout }: App
 
 ---
 
+## App.tsx — OBLIGATORIO para entregas multi-componente (S128-C)
+
+Si el agente genera **≥2 componentes**, DEBE generar `src/App.tsx` como la **última tarea** del listado de tareas.
+
+La tarea de `App.tsx` NO cuenta contra el cap de componentes.
+
+### Requisitos de App.tsx
+
+```tsx
+// src/App.tsx — generado obligatoriamente cuando hay ≥2 componentes
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AppShell } from '@/components/AppShell'   // o el layout generado
+import { PacientesPage } from '@/pages/PacientesPage'  // ejemplo — importar TODOS los componentes
+// ... importar todos los componentes generados
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppShell>
+        <Routes>
+          <Route path="/" element={<Navigate to="/pacientes" replace />} />
+          <Route path="/pacientes" element={<PacientesPage />} />
+          {/* una ruta por cada componente page */}
+        </Routes>
+      </AppShell>
+    </BrowserRouter>
+  )
+}
+```
+
+**Reglas:**
+- `react-router-dom` ya viene en `package.json` — siempre incluirlo cuando hay ≥2 componentes
+- Cada `Page` component tiene su ruta. Cada `Form` component se embebe en la `Page` correspondiente
+- El `AppShell` con sidebar siempre incluye un `<NavLink>` por pantalla principal
+- `src/main.tsx` importa `<App />` — verificar que esta importación esté presente
+
+---
+
 ## Estados de UI requeridos (S46-B)
 
 ### Formularios — estados completos obligatorios (S46-B1)

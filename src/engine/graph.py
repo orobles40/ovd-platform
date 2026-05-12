@@ -2447,9 +2447,11 @@ async def generate_sdd(state: OVDState) -> dict:
 
         # S66-B / S67-B: enforcement de cap de tareas por agente, dinámico según complejidad.
         # S80-E: reducido high:10→8, critical:12→10 — más tareas = más superficie de error sin coordinación.
+        # S128-E3: reducido nuevamente low:5→3, medium:8→5, high:8→5, critical:10→7 — ciclos de 13 tareas
+        #          causaron timeout de 30+ min en ciclo 92c6641f. Cap duro previene acumulación de errores.
         # S68-C: tareas de infraestructura (database.py, main.py, __init__.py) NO cuentan contra el cap.
         _complexity = state.get("fr_analysis", {}).get("complexity", "medium")
-        _TASK_CAPS = {"low": 5, "medium": 8, "high": 8, "critical": 10}
+        _TASK_CAPS = {"low": 3, "medium": 5, "high": 5, "critical": 7}
         _MAX_TASKS_PER_AGENT = _TASK_CAPS.get(_complexity, 8)
         _tasks_by_agent: dict[str, list] = {}
         for _t in sdd["tasks"]:
@@ -6054,13 +6056,59 @@ def _check_undefined_import_names(
         len(undefined),
         body[:600],
     )
+
+    # S128-A2: inyectar sugerencias de firma para cada función faltante.
+    # El agente de retry puede usarlas para agregar los stubs al módulo correcto.
+    import re as _re_p2a2
+
+    _sig_suggestions: list[str] = []
+    for entry in undefined:
+        _m = _re_p2a2.search(
+            r"from ([\w.]+) import (\w+)\s+.*'(\w+)' no definido", entry
+        )
+        if _m:
+            _mod_dotted = _m.group(1)
+            _fname = _m.group(2)
+            _mod_path = _mod_dotted.replace(".", "/") + ".py"
+            _sig_suggestions.append(
+                f"  # Agregar en {_mod_path}:\n  {_p2_infer_signature(_fname)}"
+            )
+
+    _suggestions_text = (
+        "\nSUGERENCIAS DE IMPLEMENTACIÓN:\n" + "\n".join(_sig_suggestions)
+        if _sig_suggestions
+        else ""
+    )
+
     feedback = (
         "[S103-P2] NOMBRES NO DEFINIDOS EN MÓDULO:\n"
         f"{body}\n"
         "CAUSA: el agente importó funciones/clases que NO existen en el módulo destino.\n"
         "ACCIÓN: definir la función faltante en el módulo indicado O corregir el nombre del import."
+        f"{_suggestions_text}"
     )
     return False, feedback
+
+
+def _p2_infer_signature(name: str) -> str:
+    """S128-A2: infiere una firma async simple para una función no definida."""
+    if name.startswith("get_") and "_by_" in name:
+        param = name.split("_by_")[-1]
+        return f"async def {name}({param}: str, db: AsyncSession): ..."
+    if name.startswith(("get_", "list_")):
+        return f"async def {name}(db: AsyncSession, skip: int = 0, limit: int = 100): ..."
+    if name.startswith("create_"):
+        return f"async def {name}(data: dict, db: AsyncSession): ..."
+    if name.startswith("update_"):
+        entity = name[len("update_"):]
+        return f"async def {name}({entity}_id: str, data: dict, db: AsyncSession): ..."
+    if name.startswith("delete_"):
+        entity = name[len("delete_"):]
+        return f"async def {name}({entity}_id: str, db: AsyncSession): ..."
+    if name.startswith("cancel_"):
+        entity = name[len("cancel_"):]
+        return f"async def {name}({entity}_id: str, motivo: str, db: AsyncSession): ..."
+    return f"async def {name}(*args, **kwargs): ..."
 
 
 def _detect_circular_self_imports(directory: str) -> tuple[bool, str]:
@@ -9061,6 +9109,65 @@ async def _git_integration(
     return result
 
 
+def _s128_c2_ensure_app_tsx(directory: str) -> None:
+    """S128-C2: genera App.tsx mínimo con React Router si hay ≥2 componentes y no existe.
+
+    Función extraída para testabilidad — también se llama desde deliver().
+    """
+    import pathlib as _pl_c2
+
+    _base = _pl_c2.Path(directory).expanduser().resolve()
+    _frontend_root: _pl_c2.Path | None = None
+    if (_base / "src").is_dir() and (_base / "package.json").exists():
+        _frontend_root = _base
+    elif (_base / "frontend" / "src").is_dir():
+        _frontend_root = _base / "frontend"
+    if not _frontend_root:
+        return
+    _app_tsx = _frontend_root / "src" / "App.tsx"
+    if _app_tsx.exists():
+        return
+    _tsx_files = list((_frontend_root / "src").rglob("*.tsx"))
+    _components = [
+        f for f in _tsx_files
+        if f.name not in {"App.tsx", "main.tsx"} and not f.name.startswith("index")
+    ]
+    if len(_components) < 2:
+        return
+    _imports: list[str] = []
+    _routes: list[str] = []
+    for _i, _f in enumerate(_components[:8]):
+        _name = _f.stem
+        _rel = _f.relative_to(_frontend_root / "src")
+        _imp_path = "./" + str(_rel).replace("\\", "/").removesuffix(".tsx")
+        _route = (
+            "/" + _name.lower()
+            .replace("page", "").replace("view", "").strip("-_")
+            or f"page{_i}"
+        )
+        _imports.append(f"import {{ {_name} }} from '{_imp_path}'")
+        _routes.append(f'          <Route path="{_route}" element={{<{_name} />}} />')
+    _first = _routes[0].strip().split('path="')[1].split('"')[0] if _routes else "/"
+    _content = (
+        "import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'\n"
+        + "\n".join(_imports)
+        + "\n\nexport default function App() {\n"
+        + "  return (\n"
+        + "    <BrowserRouter>\n"
+        + "      <Routes>\n"
+        + f'        <Route path="/" element={{<Navigate to="{_first}" replace />}} />\n'
+        + "\n".join(_routes)
+        + "\n      </Routes>\n"
+        + "    </BrowserRouter>\n"
+        + "  )\n"
+        + "}\n"
+    )
+    _app_tsx.write_text(_content, encoding="utf-8")
+    log.info(
+        "S128-C2: App.tsx generado automáticamente (%d componentes)", len(_components)
+    )
+
+
 async def deliver(state: OVDState) -> dict:
     """Empaqueta y entrega los artefactos al TUI.
 
@@ -9167,6 +9274,13 @@ async def deliver(state: OVDState) -> dict:
                 )
         except Exception as _e:
             log.warning("deliver: S111-A scaffold error — %s", _e)
+
+    # S128-C2: si hay ≥2 componentes TSX y no existe App.tsx, generarlo automáticamente.
+    if directory:
+        try:
+            _s128_c2_ensure_app_tsx(directory)
+        except Exception as _e:
+            log.warning("deliver: S128-C2 App.tsx auto-gen error — %s", _e)
 
     # S22 — Artefactos de documentación generados por generate_docs
     if directory:

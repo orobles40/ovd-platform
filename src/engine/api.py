@@ -927,21 +927,41 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                 register_task(thread_id, current_task)
             try:
                 # S20-GAP-R1: timeout global — el grafo no puede correr eternamente
-                async with asyncio.timeout(_SSE_STREAM_TIMEOUT):
+                # S128-D1: timeout adaptativo — si hay retries en checkpoint (ciclo resumido),
+                #          extender +900s por ronda para evitar CancelledError en retries largos.
+                _d1_retry_round: int = 0
+                if _graph:
+                    try:
+                        _d1_snap = await _graph.aget_state(config)
+                        if _d1_snap and _d1_snap.values:
+                            _d1_retry_round = int(
+                                _d1_snap.values.get("test_retry_count", 0) or 0
+                            )
+                    except Exception:
+                        pass
+                _adaptive_timeout = _SSE_STREAM_TIMEOUT + (_d1_retry_round * 900)
+                if _d1_retry_round > 0:
+                    log.info(
+                        "S128-D1: timeout adaptativo para thread=%s retry=%d → %.0fs",
+                        thread_id,
+                        _d1_retry_round,
+                        _adaptive_timeout,
+                    )
+                async with asyncio.timeout(_adaptive_timeout):
                     async for event in _stream_graph_events(thread_id, config):
                         await _queue_put_with_replay(thread_id, event)
             except asyncio.TimeoutError:
                 log.error(
                     "S47-A: timeout global para thread=%s tras %.0fs",
                     thread_id,
-                    _SSE_STREAM_TIMEOUT,
+                    _adaptive_timeout,
                 )
                 await _queue_put_with_replay(
                     thread_id,
                     _make_sse_event(
                         "error",
                         {
-                            "message": f"Timeout global del grafo ({_SSE_STREAM_TIMEOUT:.0f}s). Consulta /session/{thread_id}/state",
+                            "message": f"Timeout global del grafo ({_adaptive_timeout:.0f}s). Consulta /session/{thread_id}/state",
                             "recoverable": False,
                         },
                     ),

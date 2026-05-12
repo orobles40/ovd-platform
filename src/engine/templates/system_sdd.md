@@ -52,6 +52,32 @@ Genera una lista de requisitos con los campos exactos:
 ❌ **Causa de fallo:** tests importan `User` pero backend define `LoginRequest` como único modelo → ImportError en runtime.
 ✅ **Correcto:** SDD define `User` en el contrato, todos los agentes usan ese nombre.
 
+### EXPORTS explícitos por tarea de servicios (S128-A)
+
+**OBLIGATORIO en toda tarea de tipo `services.py`:** La descripción DEBE listar las funciones que ese módulo exporta, usando el bloque `EXPORTS:`. El router y los tests SOLO pueden importar funciones de esta lista.
+
+```
+TASK-002: "Crear `src/pacientes/services.py` con:
+  EXPORTS: [get_pacientes, get_paciente_by_id, create_paciente, update_paciente, delete_paciente]
+  - get_pacientes(org_id, db) → list[PacienteResponse]
+  - get_paciente_by_id(id, org_id, db) → PacienteResponse
+  - create_paciente(data: PacienteCreate, org_id, db) → PacienteResponse"
+```
+
+**Regla de oro S128-A:** Si una función NO aparece en `EXPORTS:` de la tarea del servicio, el router NO puede importarla. Nunca uses `from src.X.services import get_X_by_org` si esa función no está en el EXPORTS de la tarea de services.
+
+❌ PROHIBIDO: router importa `get_pacientes_by_org` sin que esté en EXPORTS de services.
+✅ CORRECTO: EXPORTS lista exactamente las funciones disponibles → router solo usa esas.
+
+### Módulo primario obligatorio (S128-B)
+
+El **módulo primario** es la primera entidad sustantiva del FR (ej: "agendamiento de turnos" → módulo `turnos`).
+
+**REGLA ABSOLUTA:** El módulo primario NUNCA puede quedar sin implementación. Si hay restricción de cap:
+- Reducir tareas de módulos secundarios, no del módulo primario
+- El módulo primario siempre tiene TASK explícita con `output_file` y `EXPORTS:`
+- Si se necesitan >3 tareas para el módulo primario, crear sub-módulos pero no eliminarlo
+
 ## Artefacto 3 — Constraints
 Genera restricciones técnicas con los campos:
 - **id**: Formato "CON-NNN"
