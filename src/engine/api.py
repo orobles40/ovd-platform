@@ -98,9 +98,11 @@ _event_queues: dict[str, asyncio.Queue] = {}  # thread_id → queue de eventos S
 _stream_done: dict[str, asyncio.Event] = {}  # thread_id → señal de fin de stream
 
 # v0.2: Replay buffer para reconexión SSE con Last-Event-ID
-_event_replay: dict[str, list[dict]] = {}   # thread_id → eventos ordenados con id asignado
-_event_id_counters: dict[str, int] = {}     # thread_id → próximo id de evento
-_REPLAY_BUFFER_MAX = 500                    # máx eventos en memoria por thread
+_event_replay: dict[
+    str, list[dict]
+] = {}  # thread_id → eventos ordenados con id asignado
+_event_id_counters: dict[str, int] = {}  # thread_id → próximo id de evento
+_REPLAY_BUFFER_MAX = 500  # máx eventos en memoria por thread
 
 
 def _configure_app_loggers() -> None:
@@ -1159,13 +1161,16 @@ async def stream_session(
             try:
                 last_id = int(last_event_id)
                 missed = [
-                    e for e in _event_replay.get(thread_id, [])
+                    e
+                    for e in _event_replay.get(thread_id, [])
                     if int(e.get("id", 0)) > last_id
                 ]
                 if missed:
                     log.info(
                         "v0.2: reconexión thread=%s — reproduciendo %d evento(s) desde id=%s",
-                        thread_id[:8], len(missed), last_event_id,
+                        thread_id[:8],
+                        len(missed),
+                        last_event_id,
                     )
                 for e in missed:
                     yield e
@@ -1402,7 +1407,9 @@ async def cleanup_session(
 
     try:
         _shutil_del.rmtree(directory, ignore_errors=True)
-        logging.getLogger("ovd.api").info("S125: tmpdir eliminado por desktop: %s", directory)
+        logging.getLogger("ovd.api").info(
+            "S125: tmpdir eliminado por desktop: %s", directory
+        )
         return {"ok": True, "removed": True, "directory": directory}
     except Exception as e:
         return {"ok": False, "removed": False, "reason": str(e)}

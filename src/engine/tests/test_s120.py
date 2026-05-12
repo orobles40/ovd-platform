@@ -56,8 +56,12 @@ def test_s120a_fires_before_tmpdir_fallback():
     """El bloque S120-A debe aparecer antes del fallback tmpdir (desktop sin project_id)."""
     idx_s120 = _API_SRC.find("S120-A")
     idx_tmpdir = _API_SRC.find("tmpdir creado")
-    assert idx_s120 != -1, "S120-A: el bloque de fallback /srv/projects debe existir en api.py"
-    assert idx_tmpdir != -1, "api.py debe crear tmpdir cuando directory no se provee (caso desktop)"
+    assert idx_s120 != -1, (
+        "S120-A: el bloque de fallback /srv/projects debe existir en api.py"
+    )
+    assert idx_tmpdir != -1, (
+        "api.py debe crear tmpdir cuando directory no se provee (caso desktop)"
+    )
     assert idx_s120 < idx_tmpdir, (
         "S120-A: el fallback /srv/projects debe preceder al fallback tmpdir"
     )

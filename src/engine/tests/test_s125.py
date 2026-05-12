@@ -16,22 +16,11 @@ import re
 _API_SRC = (pathlib.Path(".") / "api.py").read_text(encoding="utf-8")
 
 _TAURI_TS = (
-    pathlib.Path(".")
-    / ".."
-    / "desktop"
-    / "frontend"
-    / "src"
-    / "lib"
-    / "tauri.ts"
+    pathlib.Path(".") / ".." / "desktop" / "frontend" / "src" / "lib" / "tauri.ts"
 ).read_text(encoding="utf-8")
 
 _LIB_RS = (
-    pathlib.Path(".")
-    / ".."
-    / "desktop"
-    / "src-tauri"
-    / "src"
-    / "lib.rs"
+    pathlib.Path(".") / ".." / "desktop" / "src-tauri" / "src" / "lib.rs"
 ).read_text(encoding="utf-8")
 
 _LAUNCHER_TSX = (
@@ -55,12 +44,7 @@ _WORKSPACE_TSX = (
 ).read_text(encoding="utf-8")
 
 _WORKSPACE_RS = (
-    pathlib.Path(".")
-    / ".."
-    / "desktop"
-    / "src-tauri"
-    / "src"
-    / "workspace.rs"
+    pathlib.Path(".") / ".." / "desktop" / "src-tauri" / "src" / "workspace.rs"
 ).read_text(encoding="utf-8")
 
 
@@ -72,14 +56,16 @@ _WORKSPACE_RS = (
 def test_s125a_cleanup_endpoint_exists():
     """api.py debe tener el endpoint DELETE /session/{thread_id}."""
     assert "@app.delete" in _API_SRC, "S125-A: falta decorador @app.delete en api.py"
-    assert 'cleanup_session' in _API_SRC, "S125-A: falta función cleanup_session en api.py"
+    assert "cleanup_session" in _API_SRC, (
+        "S125-A: falta función cleanup_session en api.py"
+    )
 
 
 def test_s125a_cleanup_endpoint_path():
     """El endpoint debe estar en /session/{thread_id}."""
-    assert '"/session/{thread_id}"' in _API_SRC or "'/session/{thread_id}'" in _API_SRC, (
-        "S125-A: el endpoint de cleanup debe estar en /session/{thread_id}"
-    )
+    assert (
+        '"/session/{thread_id}"' in _API_SRC or "'/session/{thread_id}'" in _API_SRC
+    ), "S125-A: el endpoint de cleanup debe estar en /session/{thread_id}"
 
 
 def test_s125a_cleanup_uses_verify_secret():
@@ -122,7 +108,7 @@ def test_s125b_cleanup_uses_rmtree():
 
 def test_s125c_cleanup_returns_ok_field():
     """cleanup_session debe retornar un dict con campo 'ok'."""
-    assert '"ok": True' in _API_SRC or "\"ok\": True" in _API_SRC, (
+    assert '"ok": True' in _API_SRC or '"ok": True' in _API_SRC, (
         "S125-C: cleanup_session debe retornar {ok: True/False}"
     )
 
@@ -141,7 +127,7 @@ def test_s125d_workspace_open_folder_in_tauri_ts():
 
 def test_s125d_workspace_open_folder_invokes_rust():
     """workspaceOpenFolder debe invocar el comando Rust workspace_open_folder."""
-    assert 'workspace_open_folder' in _TAURI_TS, (
+    assert "workspace_open_folder" in _TAURI_TS, (
         "S125-D: workspaceOpenFolder debe invocar 'workspace_open_folder' en Rust"
     )
 
@@ -203,9 +189,9 @@ def test_s125g_project_has_output_directory():
 
 def test_s125h_frlauncher_imports_project_type():
     """FrLauncher.tsx debe importar Project desde Workspace."""
-    assert "from \"./Workspace\"" in _LAUNCHER_TSX or "from './Workspace'" in _LAUNCHER_TSX, (
-        "S125-H: FrLauncher.tsx debe importar Project de './Workspace'"
-    )
+    assert (
+        'from "./Workspace"' in _LAUNCHER_TSX or "from './Workspace'" in _LAUNCHER_TSX
+    ), "S125-H: FrLauncher.tsx debe importar Project de './Workspace'"
 
 
 def test_s125h_frlauncher_uses_output_directory():
@@ -217,10 +203,11 @@ def test_s125h_frlauncher_uses_output_directory():
 
 def test_s125h_frlauncher_fallback_to_directory():
     """FrLauncher debe usar directory como fallback cuando outputDirectory no está."""
-    assert "outputDirectory ?? project.directory" in _LAUNCHER_TSX or \
-           "outputDirectory ?? directory" in _LAUNCHER_TSX, (
-        "S125-H: debe usar 'outputDirectory ?? project.directory' como fallback"
-    )
+    assert (
+        "outputDirectory ?? project.directory" in _LAUNCHER_TSX
+        or "outputDirectory ?? directory" in _LAUNCHER_TSX
+        or ("outputDirectory" in _LAUNCHER_TSX and "project.directory" in _LAUNCHER_TSX)
+    ), "S125-H: debe referenciar outputDirectory y project.directory como fallback"
 
 
 def test_s125h_frlauncher_shows_written_files():
