@@ -196,7 +196,9 @@ class TestS128C1AppTsxTemplate:
     def test_react_template_contains_app_tsx_section(self):
         """system_frontend_react.md debe tener la sección S128-C sobre App.tsx."""
         content = self._REACT_PATH.read_text(encoding="utf-8")
-        assert "App.tsx — OBLIGATORIO para entregas multi-componente (S128-C)" in content
+        assert (
+            "App.tsx — OBLIGATORIO para entregas multi-componente (S128-C)" in content
+        )
 
     def test_react_template_app_tsx_threshold(self):
         """La sección debe especificar ≥2 componentes como umbral."""
@@ -216,7 +218,9 @@ class TestS128C1AppTsxTemplate:
 
 
 class TestS128C2DeliverAppTsx:
-    def _make_frontend_dir(self, tmp_path: pathlib.Path, components: list[str]) -> pathlib.Path:
+    def _make_frontend_dir(
+        self, tmp_path: pathlib.Path, components: list[str]
+    ) -> pathlib.Path:
         """Crea un directorio frontend simulado con los componentes indicados."""
         src = tmp_path / "src"
         src.mkdir(parents=True)
@@ -230,9 +234,7 @@ class TestS128C2DeliverAppTsx:
 
     def test_app_tsx_generated_when_two_or_more_components(self, tmp_path):
         """deliver (S128-C2): crea App.tsx si hay ≥2 componentes y no existe."""
-        base = self._make_frontend_dir(
-            tmp_path, ["PacientesPage", "MedicosPage"]
-        )
+        base = self._make_frontend_dir(tmp_path, ["PacientesPage", "MedicosPage"])
         from graph import _s128_c2_ensure_app_tsx
 
         _s128_c2_ensure_app_tsx(str(base))
@@ -253,9 +255,7 @@ class TestS128C2DeliverAppTsx:
 
     def test_app_tsx_not_overwritten_when_exists(self, tmp_path):
         """deliver (S128-C2): no sobreescribe App.tsx existente."""
-        base = self._make_frontend_dir(
-            tmp_path, ["PacientesPage", "MedicosPage"]
-        )
+        base = self._make_frontend_dir(tmp_path, ["PacientesPage", "MedicosPage"])
         existing_content = "// mi App.tsx custom\n"
         (base / "src" / "App.tsx").write_text(existing_content, encoding="utf-8")
         from graph import _s128_c2_ensure_app_tsx
@@ -325,7 +325,8 @@ class TestS128E3TaskCap:
         # S80 dejó "high": 8 — verificar que fue reemplazado
         # El comentario S80-E puede mencionarlo como referencia histórica, pero el valor activo debe ser 5
         lines_with_high_8 = [
-            ln for ln in content.splitlines()
+            ln
+            for ln in content.splitlines()
             if '"high": 8' in ln and not ln.strip().startswith("#")
         ]
         assert len(lines_with_high_8) == 0, (

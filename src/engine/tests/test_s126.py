@@ -32,13 +32,13 @@ _DB_RS = (_DESKTOP_DIR / "src-tauri" / "src" / "db.rs").read_text(encoding="utf-
 _LIB_RS = (_DESKTOP_DIR / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
 _MAIN_RS = (_DESKTOP_DIR / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
 
-_TAURI_TS = (
-    _DESKTOP_DIR / "frontend" / "src" / "lib" / "tauri.ts"
-).read_text(encoding="utf-8")
+_TAURI_TS = (_DESKTOP_DIR / "frontend" / "src" / "lib" / "tauri.ts").read_text(
+    encoding="utf-8"
+)
 
-_OVD_TS = (
-    _DESKTOP_DIR / "frontend" / "src" / "lib" / "ovd.ts"
-).read_text(encoding="utf-8")
+_OVD_TS = (_DESKTOP_DIR / "frontend" / "src" / "lib" / "ovd.ts").read_text(
+    encoding="utf-8"
+)
 
 _LAUNCHER_TSX = (
     _DESKTOP_DIR / "frontend" / "src" / "pages" / "FrLauncher.tsx"
@@ -46,6 +46,7 @@ _LAUNCHER_TSX = (
 
 
 # ── S126-A: db.rs estructura ──────────────────────────────────────────────────
+
 
 def test_s126a_db_rs_has_init_db():
     assert "pub fn init_db()" in _DB_RS
@@ -77,6 +78,7 @@ def test_s126a_db_rs_has_db_list_errors_command():
 
 # ── S126-B/C: lib.rs registración ────────────────────────────────────────────
 
+
 def test_s126b_lib_rs_registers_db_save_cycle():
     assert "db::db_save_cycle" in _LIB_RS
 
@@ -95,6 +97,7 @@ def test_s126c_lib_rs_calls_init_db():
 
 # ── S126-D: main.rs panic hook ────────────────────────────────────────────────
 
+
 def test_s126d_main_rs_has_panic_hook():
     assert "set_hook" in _MAIN_RS
 
@@ -104,6 +107,7 @@ def test_s126d_main_rs_panic_hook_calls_log_error():
 
 
 # ── S126-E: tauri.ts TypeScript wrappers ─────────────────────────────────────
+
 
 def test_s126e_tauri_ts_exports_db_save_cycle():
     assert "dbSaveCycle" in _TAURI_TS
@@ -127,22 +131,26 @@ def test_s126e_tauri_ts_has_error_log_entry_interface():
 
 # ── S126-F/G/H: endpoint engine T4 ───────────────────────────────────────────
 
+
 def test_s126f_api_has_telemetry_client_event_endpoint():
     assert "/telemetry/client-event" in _API_SRC
 
 
 def test_s126f_api_endpoint_uses_verify_secret():
-    block = _API_SRC[_API_SRC.find("/telemetry/client-event"):]
+    block = _API_SRC[_API_SRC.find("/telemetry/client-event") :]
     assert "verify_secret" in block[:300]
 
 
 def test_s126g_telemetry_endpoint_returns_204():
-    import os, sys
+    import os
+    import sys
+
     sys.path.insert(0, str(_ENGINE_DIR))
     os.environ.setdefault("OVD_SECRET", "test-secret")
     os.environ.setdefault("DATABASE_URL", "")
     os.environ.setdefault("ANTHROPIC_API_KEY", "dummy")
     from api import app  # noqa: PLC0415
+
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.post(
         "/telemetry/client-event",
@@ -155,8 +163,10 @@ def test_s126g_telemetry_endpoint_returns_204():
 def test_s126h_telemetry_endpoint_rejects_no_secret():
     """Cuando OVD_SECRET está configurado, requests sin header deben ser rechazados."""
     import sys
+
     sys.path.insert(0, str(_ENGINE_DIR))
     import api as api_module  # noqa: PLC0415
+
     original_secret = api_module.OVD_SECRET
     api_module.OVD_SECRET = "patched-secret"
     try:
@@ -172,6 +182,7 @@ def test_s126h_telemetry_endpoint_rejects_no_secret():
 
 # ── S126-I: ovd.ts reportClientEvent ─────────────────────────────────────────
 
+
 def test_s126i_ovd_ts_exports_report_client_event():
     assert "reportClientEvent" in _OVD_TS
 
@@ -181,6 +192,7 @@ def test_s126i_ovd_ts_report_client_event_posts_to_telemetry():
 
 
 # ── S126-J/K/L: FrLauncher.tsx integración ───────────────────────────────────
+
 
 def test_s126j_launcher_imports_db_save_cycle():
     assert "dbSaveCycle" in _LAUNCHER_TSX

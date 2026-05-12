@@ -6096,17 +6096,19 @@ def _p2_infer_signature(name: str) -> str:
         param = name.split("_by_")[-1]
         return f"async def {name}({param}: str, db: AsyncSession): ..."
     if name.startswith(("get_", "list_")):
-        return f"async def {name}(db: AsyncSession, skip: int = 0, limit: int = 100): ..."
+        return (
+            f"async def {name}(db: AsyncSession, skip: int = 0, limit: int = 100): ..."
+        )
     if name.startswith("create_"):
         return f"async def {name}(data: dict, db: AsyncSession): ..."
     if name.startswith("update_"):
-        entity = name[len("update_"):]
+        entity = name[len("update_") :]
         return f"async def {name}({entity}_id: str, data: dict, db: AsyncSession): ..."
     if name.startswith("delete_"):
-        entity = name[len("delete_"):]
+        entity = name[len("delete_") :]
         return f"async def {name}({entity}_id: str, db: AsyncSession): ..."
     if name.startswith("cancel_"):
-        entity = name[len("cancel_"):]
+        entity = name[len("cancel_") :]
         return f"async def {name}({entity}_id: str, motivo: str, db: AsyncSession): ..."
     return f"async def {name}(*args, **kwargs): ..."
 
@@ -9129,7 +9131,8 @@ def _s128_c2_ensure_app_tsx(directory: str) -> None:
         return
     _tsx_files = list((_frontend_root / "src").rglob("*.tsx"))
     _components = [
-        f for f in _tsx_files
+        f
+        for f in _tsx_files
         if f.name not in {"App.tsx", "main.tsx"} and not f.name.startswith("index")
     ]
     if len(_components) < 2:
@@ -9141,8 +9144,7 @@ def _s128_c2_ensure_app_tsx(directory: str) -> None:
         _rel = _f.relative_to(_frontend_root / "src")
         _imp_path = "./" + str(_rel).replace("\\", "/").removesuffix(".tsx")
         _route = (
-            "/" + _name.lower()
-            .replace("page", "").replace("view", "").strip("-_")
+            "/" + _name.lower().replace("page", "").replace("view", "").strip("-_")
             or f"page{_i}"
         )
         _imports.append(f"import {{ {_name} }} from '{_imp_path}'")

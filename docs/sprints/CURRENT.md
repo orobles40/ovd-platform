@@ -133,6 +133,17 @@ Tests: 28 tests en `test_s128.py` — todos PASS.
 - S128-D3: retry LLM HTTP call en CancelledError
 - S128-E2: modelo ligero en retry_round > 0
 
+**Ciclo validación `7bfecf37` (2026-05-12 16:05–16:36):**
+- FR: "Implementar módulo de agendamiento de turnos médicos"
+- Resultado: ERROR (timeout adaptativo 1800s, retry_round=1)
+- QA: 55/100 | Security: 100/100 | Deliverables: 0 | Tokens: 246K in / 148K out
+- Mejora vs 92c6641f: llegó a qa_review. S128-D1 funcionó.
+- Causa raíz: SDD no incluyó tareas de frontend → frontend ausente → QA falla REQ-005 → qa_retry → timeout
+- Informe: `docs/INFORME_S128_CICLO_7bfecf37.md`
+
+**Gap identificado → S129 (prioridad única):**
+`generate_sdd` no genera tareas de frontend en FRs full-stack. Mientras no se corrija, S128-C2 (App.tsx) no se activa. Fórmula timeout también debe incluir `qa_retry_count`.
+
 ---
 
 ## Backlog post-demo (orden de prioridad sugerido)

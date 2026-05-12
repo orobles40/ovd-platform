@@ -8,14 +8,42 @@
 
 ## Estado actual
 
-- **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18) + S122 (calidad engine)
+- **Sprint activo:** S128 (correctivos post-ciclo 92c6641f)
 - **Rama de trabajo:** `main`
-- **Sprints completados:** S3 → S121
-- **Tests:** 2093 pass (unit, +28 S126) | 14 integration | 5 docker | 74 frontend (Vitest, +4 S126) | 26 Rust inline
+- **Sprints completados:** S3 → S127
+- **Tests:** 2121+ pass (unit, +28 S128) | 14 integration | 5 docker | 74 frontend (Vitest) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
+
+## Última sesión (2026-05-12 — S024: S128 — Post-ciclo correctivos + ciclo validación)
+
+**S128 — Correctivos post-ciclo 92c6641f — COMPLETADO:**
+
+- **S128-A** (`system_sdd.md`): Sección "EXPORTS explícitos por tarea de servicios" — cada tarea de servicios debe incluir bloque EXPORTS con funciones que exporta.
+- **S128-A2** (`graph.py` `_p2_infer_signature`): Sugerencias de firma al detectar imports de funciones no definidas en S103-P2. 8 patrones: get_by, get_, list_, create_, update_, delete_, cancel_, fallback genérico.
+- **S128-B** (`system_sdd.md`): Sección "Módulo primario obligatorio" — el módulo primario de un agente NUNCA puede quedar como stub, aunque el cap lo limite.
+- **S128-C1** (`system_frontend_react.md`): Sección App.tsx obligatorio para entregas multi-componente (≥2 componentes), con ejemplo BrowserRouter + Routes.
+- **S128-C2** (`graph.py` `_s128_c2_ensure_app_tsx`): Nueva función que se llama desde `deliver()` — genera App.tsx automáticamente si hay ≥2 archivos `.tsx` y no existe App.tsx.
+- **S128-D1** (`api.py`): Timeout adaptativo en `_run_graph_background` — lee `test_retry_count` del checkpoint y aplica: `_adaptive_timeout = _SSE_STREAM_TIMEOUT + (retry_round × 900)`.
+- **S128-E3** (`graph.py`): Cap duro reducido: `{"low": 3, "medium": 5, "high": 5, "critical": 7}` (antes: 5/8/8/10).
+- **28 tests** (`test_s128.py`) — 28/28 PASS. Suite completa: PASS.
+- **Commit:** `025b87ef2` (S128 + tests). **Push:** origin/main ✓
+
+**Ciclo validación `7bfecf37` (2026-05-12 16:05–16:36):**
+- FR: "Implementar módulo de agendamiento de turnos médicos"
+- Resultado: ERROR (timeout adaptativo 1800s con retry_round=1)
+- QA: 55/100 | Security: 100/100 | Deliverables: 0 | Tokens: 246K in / 148K out
+- Mejora vs 92c6641f: llegó a qa_review (92c6641f abortó en security_audit)
+- Issues: SDD generó solo backend (sin frontend tasks) → frontend ausente → QA falla REQ-005
+- Informe: `docs/INFORME_S128_CICLO_7bfecf37.md`
+
+## Próxima sesión: SDD full-stack
+
+**Prioridad única S129:** `generate_sdd` debe incluir tareas de frontend en FRs full-stack. Regla: si FR menciona "frontend"/"React"/"UI"/"formulario", el SDD debe incluir ≥1 tarea frontend obligatoria. Sin esto, S128-C2 (App.tsx) nunca se activa y QA siempre falla por REQ-005.
+
+**Gap secundario S128-D2:** `_adaptive_timeout` no considera `qa_retry_count`. Fórmula correcta: `_SSE_STREAM_TIMEOUT + (test_retry + qa_retry) × 900`.
 
 ## Última sesión (2026-05-12 — S023: OVD Desktop S126 — Telemetría T3+T4+T6)
 
