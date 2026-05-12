@@ -3,9 +3,15 @@ import { useNavigate } from "react-router-dom";
 import {
   FolderOpen, Settings, LogOut, ChevronRight, Plus, Pencil,
   Trash2, BookOpen, X, CheckCircle, AlertCircle, Loader2,
+  BarChart3, History, ChevronUp,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { workspacePickFolder, configGet, configSave } from "@/lib/tauri";
+import { workspacePickFolder, configGet, configSave, authRefreshToken } from "@/lib/tauri";
+import {
+  getProjectHistory, fetchOrgStats,
+  fmtTokens, fmtSecs,
+  type CycleHistoryEntry, type OrgStats,
+} from "@/lib/ovd";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -351,6 +357,93 @@ function EditProjectModal({ project, onSave, onSaveAndLaunch, onClose }: EditPro
   );
 }
 
+// ── Barra de stats de org ─────────────────────────────────────────────────────
+
+function OrgStatsBar({ stats }: { stats: OrgStats }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap" style={{ color: "var(--ovd-muted)" }}>
+      <BarChart3 size={11} />
+      <span style={{ fontSize: "0.65rem" }}>
+        <span className="font-medium" style={{ color: "var(--ovd-text)" }}>{stats.total_cycles}</span> ciclos
+      </span>
+      <span style={{ fontSize: "0.65rem", opacity: 0.4 }}>·</span>
+      <span style={{ fontSize: "0.65rem" }}>
+        QA prom <span className="font-medium" style={{ color: stats.avg_qa_score >= 80 ? "#34d399" : "var(--ovd-text)" }}>
+          {stats.avg_qa_score.toFixed(0)}
+        </span>
+      </span>
+      {stats.total_cost_usd > 0 && (
+        <>
+          <span style={{ fontSize: "0.65rem", opacity: 0.4 }}>·</span>
+          <span style={{ fontSize: "0.65rem" }}>
+            <span className="font-medium" style={{ color: "var(--ovd-text)" }}>
+              ${stats.total_cost_usd.toFixed(2)}
+            </span> USD
+          </span>
+        </>
+      )}
+      <span style={{ fontSize: "0.65rem", opacity: 0.4 }}>·</span>
+      <span style={{ fontSize: "0.65rem" }}>últimos {stats.period_days} días</span>
+    </div>
+  );
+}
+
+// ── Panel de historial de ciclos ──────────────────────────────────────────────
+
+function ProjectHistoryPanel({ entries }: { entries: CycleHistoryEntry[] }) {
+  if (entries.length === 0) return (
+    <div className="px-4 py-3 text-xs" style={{ color: "var(--ovd-muted)" }}>
+      Sin ciclos completados para este proyecto aún.
+    </div>
+  );
+  return (
+    <div className="border-t divide-y" style={{ borderColor: "var(--ovd-border)" }}>
+      {entries.slice(0, 10).map((e) => {
+        const date = new Date(e.timestamp);
+        const dateStr = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth()+1).toString().padStart(2, "0")} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+        const tokens = (e.tokensIn ?? 0) + (e.tokensOut ?? 0);
+        return (
+          <div key={e.threadId} className="flex items-start gap-3 px-4 py-2.5">
+            <span className="mt-0.5 shrink-0">
+              {e.status === "completed"
+                ? <CheckCircle size={11} style={{ color: "#34d399" }} />
+                : <AlertCircle  size={11} style={{ color: "#f87171" }} />}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs truncate" style={{ color: "var(--ovd-text)" }}>
+                {e.frText.slice(0, 80)}
+              </p>
+              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                <span style={{ fontSize: "0.6rem", color: "var(--ovd-muted)" }}>{dateStr}</span>
+                {e.qaScore !== undefined && (
+                  <span style={{ fontSize: "0.6rem", color: e.qaScore >= 80 ? "#34d399" : "#fb923c" }}>
+                    QA {e.qaScore}
+                  </span>
+                )}
+                {tokens > 0 && (
+                  <span style={{ fontSize: "0.6rem", color: "var(--ovd-muted)" }}>
+                    {fmtTokens(tokens)} tok
+                  </span>
+                )}
+                {e.elapsedSecs !== undefined && (
+                  <span style={{ fontSize: "0.6rem", color: "var(--ovd-muted)" }}>
+                    {fmtSecs(e.elapsedSecs)}
+                  </span>
+                )}
+                {e.filesWritten !== undefined && (
+                  <span style={{ fontSize: "0.6rem", color: "var(--ovd-muted)" }}>
+                    {e.filesWritten} archivos
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Workspace() {
@@ -364,13 +457,22 @@ export default function Workspace() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deleteConfirm, setDeleteConfirm]   = useState<string | null>(null);
+  const [orgStats, setOrgStats]             = useState<OrgStats | null>(null);
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    configGet().then((c) => {
+    configGet().then(async (c) => {
       setEngineUrl(c.engine_url);
       setEngineSecret(c.engine_secret ?? "");
+
+      // T5: cargar stats de la org desde el engine
+      try {
+        const token = await authRefreshToken().catch(() => "");
+        const stats = await fetchOrgStats(c.engine_url, user?.org_id ?? "", token, c.engine_secret ?? "");
+        if (stats) setOrgStats(stats);
+      } catch { /* fallo silencioso si engine está caído */ }
     }).catch(() => {});
-  }, []);
+  }, [user?.org_id]);
 
   const handleAddProject = async () => {
     const dir = await workspacePickFolder();
@@ -424,6 +526,14 @@ export default function Workspace() {
     setDeleteConfirm(null);
   };
 
+  const toggleHistory = (dir: string) => {
+    setExpandedHistory((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir); else next.add(dir);
+      return next;
+    });
+  };
+
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
@@ -467,9 +577,12 @@ export default function Workspace() {
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-base font-semibold" style={{ color: "var(--ovd-text)" }}>
-              Proyectos
-            </h2>
+            <div>
+              <h2 className="text-base font-semibold" style={{ color: "var(--ovd-text)" }}>
+                Proyectos
+              </h2>
+              {orgStats && <div className="mt-0.5"><OrgStatsBar stats={orgStats} /></div>}
+            </div>
             <button onClick={handleAddProject}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium hover:opacity-80"
                     style={{ background: "var(--ovd-accent)", color: "#fff" }}>
@@ -531,6 +644,14 @@ export default function Workspace() {
 
                         {/* Acciones */}
                         <div className="flex items-center gap-1 pr-3 shrink-0">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleHistory(p.directory); }}
+                            className="p-1.5 rounded-lg hover:opacity-70"
+                            style={{ color: expandedHistory.has(p.directory) ? "var(--ovd-accent)" : "var(--ovd-muted)" }}
+                            title="Historial de ciclos"
+                          >
+                            <History size={13} />
+                          </button>
                           <button onClick={(e) => { e.stopPropagation(); setEditingProject(p); }}
                                   className="p-1.5 rounded-lg hover:opacity-70"
                                   style={{ color: "var(--ovd-muted)" }} title="Editar proyecto">
@@ -543,6 +664,24 @@ export default function Workspace() {
                           </button>
                         </div>
                       </div>
+
+                      {/* Panel historial inline */}
+                      {expandedHistory.has(p.directory) && (
+                        <div style={{ background: "var(--ovd-bg)" }}>
+                          <div className="flex items-center gap-1.5 px-4 py-2 border-t"
+                               style={{ borderColor: "var(--ovd-border)" }}>
+                            <History size={11} style={{ color: "var(--ovd-accent)" }} />
+                            <span className="text-xs font-medium" style={{ color: "var(--ovd-muted)", fontSize: "0.65rem" }}>
+                              Historial de ciclos
+                            </span>
+                            <button onClick={() => toggleHistory(p.directory)} className="ml-auto hover:opacity-70"
+                                    style={{ color: "var(--ovd-muted)" }}>
+                              <ChevronUp size={12} />
+                            </button>
+                          </div>
+                          <ProjectHistoryPanel entries={getProjectHistory(p.directory)} />
+                        </div>
+                      )}
                     </div>
 
                     {/* Confirmación eliminar inline */}

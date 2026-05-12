@@ -4,6 +4,7 @@ import {
   Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2,
   ChevronDown, ChevronUp, FolderOpen, Settings, Circle,
   FileText, ShieldCheck, FlaskConical, PackageCheck, Zap,
+  BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
@@ -12,6 +13,10 @@ import {
   workspaceOpenFolder, workspacePickFolder, authRefreshToken,
 } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
+import {
+  fetchDelivery, saveCycleEntry, fmtTokens, fmtSecs,
+  type DeliveryData,
+} from "@/lib/ovd";
 import type { Project } from "./Workspace";
 
 const PROJECTS_KEY = "ovd_desktop_projects";
@@ -216,6 +221,49 @@ function StepItem({ step, status, isLast }: {
   );
 }
 
+// ── Tarjeta de telemetría post-ciclo ──────────────────────────────────────────
+
+function TelemetryCard({ metrics }: { metrics: DeliveryData }) {
+  const items: { label: string; value: string; ok?: boolean }[] = [];
+
+  if (metrics.qa?.score !== undefined)
+    items.push({ label: "QA", value: `${metrics.qa.score}/100`, ok: (metrics.qa.score ?? 0) >= 80 });
+  if (metrics.security?.score !== undefined)
+    items.push({ label: "Seguridad", value: `${metrics.security.score}/100`, ok: (metrics.security.score ?? 0) >= 80 });
+
+  const tokensIn  = metrics.tokens_in  ?? 0;
+  const tokensOut = metrics.tokens_out ?? 0;
+  if (tokensIn + tokensOut > 0)
+    items.push({ label: "Tokens", value: `${fmtTokens(tokensIn)}↑ ${fmtTokens(tokensOut)}↓` });
+  if (metrics.elapsed_secs > 0)
+    items.push({ label: "Duración", value: fmtSecs(metrics.elapsed_secs) });
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t" style={{ borderColor: "rgba(52,211,153,0.2)" }}>
+      <div className="flex items-center gap-1.5 mb-2">
+        <BarChart3 size={11} style={{ color: "var(--ovd-muted)" }} />
+        <span style={{ color: "var(--ovd-muted)", fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Telemetría
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {items.map(({ label, value, ok }) => (
+          <div key={label} className="flex items-center gap-1">
+            <span style={{ fontSize: "0.6rem", color: "var(--ovd-muted)" }}>{label}</span>
+            <span className="text-xs font-medium" style={{
+              color: ok === undefined ? "var(--ovd-text)" : ok ? "#34d399" : "#f87171",
+            }}>
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function FrLauncher() {
@@ -244,12 +292,15 @@ export default function FrLauncher() {
   const [completedNodes, setCompletedNodes] = useState<Set<string>>(new Set());
   const [activeNode, setActiveNode] = useState<string | null>(null);
 
+  const [cycleMetrics, setCycleMetrics] = useState<DeliveryData | null>(null);
+
   const engineTestResultRef = useRef<string | null>(null);
   const nodeStartTimes = useRef<Map<string, number>>(new Map());
   const feedRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
+  const activeFrRef = useRef<string>("");
 
   useEffect(() => {
     if (feedRef.current) {
@@ -460,9 +511,11 @@ export default function FrLauncher() {
     if (!sid || !project) { setPhase("done"); return; }
 
     const outputDir = localOutputDir || project.outputDirectory || project.directory;
+    let filesWritten = 0;
 
     try {
       const writeResult = await workspaceWriteArtifacts(sid, outputDir);
+      filesWritten = writeResult.files_written;
       setWrittenFiles({ count: writeResult.files_written, dir: outputDir });
       setPhase("tests");
 
@@ -478,12 +531,34 @@ export default function FrLauncher() {
       }
       setPhase("done");
 
+      // T2: telemetría post-ciclo
       try {
         const { url: engineUrl, secret: engineSecret } = await getEngineConfig();
+        const orgId = user?.org_id ?? "";
+        const metrics = await fetchDelivery(engineUrl, sid, orgId, engineSecret);
+        if (metrics) {
+          setCycleMetrics(metrics);
+          saveCycleEntry({
+            threadId: sid,
+            projectDirectory: project.directory,
+            frText: activeFrRef.current,
+            qaScore: metrics.qa?.score,
+            securityScore: metrics.security?.score,
+            tokensIn: metrics.tokens_in,
+            tokensOut: metrics.tokens_out,
+            elapsedSecs: metrics.elapsed_secs,
+            filesWritten,
+            outputDir,
+            status: "completed",
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // cleanup tmpdir (best-effort)
         await fetch(`${engineUrl}/session/${sid}/cleanup`, {
           method: "DELETE",
           headers: engineSecret ? { "X-OVD-Secret": engineSecret } : {},
-        });
+        }).catch(() => {});
       } catch { /* ignorar */ }
     } catch (err) {
       setTestResult(`Error al escribir artefactos: ${err}`);
@@ -494,12 +569,14 @@ export default function FrLauncher() {
 
   const startCycle = async () => {
     if (!fr.trim() || !project) return;
+    activeFrRef.current = fr;
     setPhase("sending");
     setEvents([]);
     setSddData(null);
     setTestResult(null);
     setTestFromEngine(false);
     setWrittenFiles(null);
+    setCycleMetrics(null);
     engineTestResultRef.current = null;
     nodeStartTimes.current.clear();
     setCompletedNodes(new Set());
@@ -737,6 +814,7 @@ export default function FrLauncher() {
                   </span>
                 </div>
               )}
+              {cycleMetrics && <TelemetryCard metrics={cycleMetrics} />}
             </div>
           )}
         </div>
