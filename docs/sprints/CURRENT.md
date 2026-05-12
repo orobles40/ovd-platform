@@ -93,6 +93,26 @@ Tests: 28 Python (`test_s126.py`) + 74 vitest (todos PASS).
 
 ---
 
+## S127 — Git integration OVD Desktop
+
+| Fase | Descripción | Estado |
+|------|-------------|--------|
+| **Fase 1** | Branch awareness — badge de rama en Workspace, selector de rama (mantener/nueva) en FrLauncher con auto-slug del FR, `git checkout -b` antes de iniciar ciclo | ✅ 2026-05-12 |
+| **Fase 2** | Post-entrega — botón "Push" en FrLauncher tras `phase=done` (llama `git add -A && git commit -m "<fr-slug>" && git push`), badge dirty/ahead en Workspace | ⬜ Pendiente |
+| **Fase 3** | GitHub PR — botón "Crear PR" post-push: llama `gh pr create` con título desde el FR y cuerpo con resumen del ciclo (QA, archivos, duración) | ⬜ Pendiente |
+
+Tests: 35 Python (`test_s127.py`) + 9 vitest (`toSlug`) — todos PASS.
+
+**Nuevos comandos Tauri registrados (Fase 1):**
+- `workspace_git_status(folder)` → `{ branch, dirty, ahead }`
+- `workspace_git_checkout_branch(folder, branch, create)` → checkout o `-b`
+
+**Comandos Tauri planificados (Fases 2 y 3):**
+- `workspace_git_commit_push(folder, message)` → `git add -A + commit + push`
+- `workspace_git_create_pr(folder, title, body)` → `gh pr create`
+
+---
+
 ## Backlog post-demo (orden de prioridad sugerido)
 
 ### Infraestructura — Pay-per-use
