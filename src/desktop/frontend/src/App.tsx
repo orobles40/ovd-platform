@@ -1,13 +1,23 @@
-import { useEffect } from "react";
-import { MemoryRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { MemoryRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { NavSidebar } from "@/components/NavSidebar";
 import Login from "@/pages/Login";
 import Workspace from "@/pages/Workspace";
 import FrLauncher from "@/pages/FrLauncher";
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { token, isLoading } = useAuth();
+const NAV_COLLAPSED_KEY = "ovd_nav_collapsed";
+
+function AppShell() {
+  const { token, isLoading, user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem(NAV_COLLAPSED_KEY) === "true"
+  );
+
+  const showSidebar = !isLoading && !!token && location.pathname !== "/login";
 
   useEffect(() => {
     if (!isLoading && !token) navigate("/login", { replace: true });
@@ -22,38 +32,33 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
-}
-
-function AppRoutes() {
-  const { token, isLoading } = useAuth();
-
-  if (isLoading) return null;
-
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={token ? <Navigate to="/workspace" replace /> : <Login />}
-      />
-      <Route
-        path="/workspace"
-        element={
-          <ProtectedRoute>
-            <Workspace />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/launch"
-        element={
-          <ProtectedRoute>
-            <FrLauncher />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to={token ? "/workspace" : "/login"} replace />} />
-    </Routes>
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      {showSidebar && (
+        <NavSidebar
+          collapsed={collapsed}
+          onToggle={() =>
+            setCollapsed((c) => {
+              localStorage.setItem(NAV_COLLAPSED_KEY, String(!c));
+              return !c;
+            })
+          }
+          email={user?.email}
+        />
+      )}
+
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <Routes>
+          <Route
+            path="/login"
+            element={token ? <Navigate to="/workspace" replace /> : <Login />}
+          />
+          <Route path="/workspace" element={<Workspace />} />
+          <Route path="/launch" element={<FrLauncher />} />
+          <Route path="*" element={<Navigate to={token ? "/workspace" : "/login"} replace />} />
+        </Routes>
+      </div>
+    </div>
   );
 }
 
@@ -61,7 +66,7 @@ export default function App() {
   return (
     <AuthProvider>
       <MemoryRouter>
-        <AppRoutes />
+        <AppShell />
       </MemoryRouter>
     </AuthProvider>
   );

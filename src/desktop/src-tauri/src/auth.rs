@@ -234,9 +234,28 @@ async fn _auth_refresh_token(state: State<'_, AppState>) -> AppResult<String> {
         return Err(AppError::TokenExpired);
     }
 
+    // Extraer nuevo refresh token rotado ANTES de consumir el body
+    let new_refresh_token = resp
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .find_map(|v| {
+            let s = v.to_str().ok()?;
+            if s.contains("ovd_refresh_token=") {
+                s.split(';').next()?.strip_prefix("ovd_refresh_token=").map(String::from)
+            } else {
+                None
+            }
+        });
+
     let body: LoginResponse = resp.json().await?;
 
-    // Actualizar AppState con nuevo token
+    // Persistir el refresh token rotado en Keychain
+    if let Some(rt) = new_refresh_token {
+        save_refresh_token(&email, &rt)?;
+    }
+
+    // Actualizar AppState con nuevo access token
     {
         let mut s = state.0.lock().unwrap();
         s.access_token = Some(body.access_token.clone());
