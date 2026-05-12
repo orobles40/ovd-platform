@@ -23,6 +23,10 @@ vi.mock("@/lib/tauri", () => ({
   authLogout: vi.fn(),
   authRefreshToken: vi.fn(() => Promise.resolve("mock-token")),
   authGetCurrentUser: vi.fn(() => Promise.resolve({ email: "test@test.com", org_id: "org1" })),
+  // DB — T3/T6
+  dbSaveCycle: vi.fn(() => Promise.resolve()),
+  dbListProjectCycles: vi.fn(() => Promise.resolve([])),
+  dbListErrors: vi.fn(() => Promise.resolve([])),
 }));
 
 // localStorage limpio entre tests

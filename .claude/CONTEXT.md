@@ -11,23 +11,30 @@
 - **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18) + S122 (calidad engine)
 - **Rama de trabajo:** `main`
 - **Sprints completados:** S3 → S121
-- **Tests:** 2065 pass (unit) | 14 integration | 5 docker | 47 frontend (Vitest) | 26 Rust inline
+- **Tests:** 2093 pass (unit, +28 S126) | 14 integration | 5 docker | 74 frontend (Vitest, +4 S126) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
 
-## Última sesión (2026-05-12 — S022: OVD Desktop S126 — Telemetría T1+T2+T5)
+## Última sesión (2026-05-12 — S023: OVD Desktop S126 — Telemetría T3+T4+T6)
 
-**S126 — Telemetría OVD Desktop (parcial) — COMPLETADO:**
+**S126 — Telemetría OVD Desktop COMPLETO (T3+T4+T6):**
+
+- **T3 — `db.rs`** (nuevo módulo Rust): tablas SQLite `cycle_history` + `error_log` en `config.db`. Comandos Tauri: `db_save_cycle`, `db_list_project_cycles`, `db_list_errors`. Wrappers TypeScript en `tauri.ts` con interfaces `CycleEntry` + `ErrorLogEntry`.
+- **T4 — endpoint `POST /telemetry/client-event`** (api.py): acepta `{thread_id, event, client}`, auth con `X-OVD-Secret`, retorna 204. FrLauncher.tsx lo llama fire-and-forget con `reportClientEvent()` tras completar ciclo. `ovd.ts` exporta `reportClientEvent`.
+- **T6 — Panic hook** (`main.rs`): `std::panic::set_hook` persiste crashes en `error_log` via `db::log_error` antes de que el proceso muera.
+- `lib.rs`: módulo `pub mod db` registrado, `db::init_db()` en setup, 3 nuevos comandos en `invoke_handler![]`.
+- **28 tests Python** (`test_s126.py`) — PASS. **74 tests vitest** — PASS (4 nuevos en `db.test.ts`).
+
+## Última sesión anterior (2026-05-12 — S022: OVD Desktop S126 — Telemetría T1+T2+T5)
+
+**S126 — Telemetría OVD Desktop (T1+T2+T5) — COMPLETADO:**
 
 - **`lib/ovd.ts`** (nuevo): `fetchDelivery`, `fetchOrgStats`, `fetchOrgCycles`, `loadCycleHistory`, `saveCycleEntry`, `fmtTokens`, `fmtSecs`.
 - **T2 — TelemetryCard** (`FrLauncher.tsx`): al completar ciclo llama `GET /session/{thread_id}/delivery`, muestra QA, seguridad, tokens entrada/salida y duración dentro de la card de entrega. Ciclo guardado en `localStorage["ovd_cycle_history"]` via `saveCycleEntry`.
 - **T1 — Historial por proyecto** (`Workspace.tsx`): botón `History` por tarjeta expande panel inline con últimos ciclos (fecha, FR, QA, tokens, duración, archivos). Lee de localStorage.
 - **T5 — OrgStatsBar** (`Workspace.tsx`): al cargar, fetcha `/api/v1/orgs/{id}/stats` (JWT fresco) y muestra ciclos totales, QA promedio y costo USD últimos 30 días. Fallo silencioso.
-- **70 tests vitest** (7 archivos, 23 nuevos en `ovd.test.ts`) — todos PASS.
-- **2065 tests engine** — PASS (sin cambios al engine).
-- **Pendiente S126:** T3 (SQLite Rust), T4 (evento telemetría → engine), T6 (crash reporting Rust).
 
 ## Última sesión (2026-05-11 — S021: OVD Desktop UI — NavSidebar + Workspace enriquecido + vitest)
 

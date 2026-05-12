@@ -11,10 +11,11 @@ import { ContextBar } from "@/components/ContextBar";
 import {
   workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests,
   workspaceOpenFolder, workspacePickFolder, authRefreshToken,
+  dbSaveCycle,
 } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
 import {
-  fetchDelivery, saveCycleEntry, fmtTokens, fmtSecs,
+  fetchDelivery, saveCycleEntry, reportClientEvent, fmtTokens, fmtSecs,
   type DeliveryData,
 } from "@/lib/ovd";
 import type { Project } from "./Workspace";
@@ -531,13 +532,14 @@ export default function FrLauncher() {
       }
       setPhase("done");
 
-      // T2: telemetría post-ciclo
+      // T2+T3+T4: telemetría post-ciclo
       try {
         const { url: engineUrl, secret: engineSecret } = await getEngineConfig();
         const orgId = user?.org_id ?? "";
         const metrics = await fetchDelivery(engineUrl, sid, orgId, engineSecret);
         if (metrics) {
           setCycleMetrics(metrics);
+          // T2: historial en localStorage
           saveCycleEntry({
             threadId: sid,
             projectDirectory: project.directory,
@@ -552,7 +554,32 @@ export default function FrLauncher() {
             status: "completed",
             timestamp: new Date().toISOString(),
           });
+          // T3: historial en SQLite (persistencia offline)
+          dbSaveCycle({
+            thread_id: sid,
+            project_directory: project.directory,
+            fr_text: activeFrRef.current,
+            qa_score: metrics.qa?.score ?? null,
+            security_score: metrics.security?.score ?? null,
+            tokens_in: metrics.tokens_in ?? null,
+            tokens_out: metrics.tokens_out ?? null,
+            elapsed_secs: metrics.elapsed_secs ?? null,
+            files_written: filesWritten,
+            output_dir: outputDir,
+            status: "completed",
+          }).catch(() => {});
         }
+
+        // T4: evento de telemetría al engine (fire-and-forget)
+        reportClientEvent(engineUrl, engineSecret, {
+          thread_id: sid,
+          event: "cycle_completed",
+          client: {
+            os: navigator.userAgent,
+            qa_score: metrics?.qa?.score ?? null,
+            files_written: filesWritten,
+          },
+        });
 
         // cleanup tmpdir (best-effort)
         await fetch(`${engineUrl}/session/${sid}/cleanup`, {

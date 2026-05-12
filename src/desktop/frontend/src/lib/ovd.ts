@@ -126,6 +126,23 @@ export async function fetchOrgStats(
   }
 }
 
+export async function reportClientEvent(
+  engineUrl: string,
+  secret: string,
+  payload: { thread_id: string; event: string; client: Record<string, unknown> },
+): Promise<void> {
+  try {
+    await fetch(`${engineUrl}/telemetry/client-event`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { "X-OVD-Secret": secret } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* fire-and-forget — nunca propaga errores */ }
+}
+
 export async function fetchOrgCycles(
   engineUrl: string,
   orgId: string,

@@ -78,6 +78,21 @@ Cambios de código mínimos: solo variables de entorno (`OVD_RAG_EMBEDDING_PROVI
 
 ---
 
+## S126 — Telemetría Desktop (completado 2026-05-12)
+
+| Task | Descripción | Estado |
+|------|-------------|--------|
+| T1 | Historial local por proyecto en Workspace (localStorage) | ✅ S022 |
+| T2 | TelemetryCard en FrLauncher post-ciclo (QA, tokens, duración) | ✅ S022 |
+| T3 | SQLite Rust `db.rs` — historial offline `cycle_history` + Tauri commands | ✅ S023 |
+| T4 | Engine endpoint `POST /telemetry/client-event` + fire-and-forget desde FrLauncher | ✅ S023 |
+| T5 | OrgStatsBar en Workspace (stats 30 días desde engine API) | ✅ S022 |
+| T6 | Panic hook Rust + tabla `error_log` en SQLite | ✅ S023 |
+
+Tests: 28 Python (`test_s126.py`) + 74 vitest (todos PASS).
+
+---
+
 ## Backlog post-demo (orden de prioridad sugerido)
 
 ### Infraestructura — Pay-per-use

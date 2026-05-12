@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+pub mod db;
 mod error;
 mod state;
 mod workspace;
@@ -44,9 +45,14 @@ pub fn run() {
             // Config
             config::config_get,
             config::config_save,
+            // DB — historial SQLite (T3) + errores (T6)
+            db::db_save_cycle,
+            db::db_list_project_cycles,
+            db::db_list_errors,
         ])
         .setup(|app| {
             auth::init_keyring();
+            db::init_db();
             // Cargar engine_url guardada en SQLite al arrancar
             let state = app.state::<AppState>();
             config::init_from_db(&state);

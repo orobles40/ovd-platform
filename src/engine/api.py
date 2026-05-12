@@ -1487,6 +1487,26 @@ class ResearchRequest(BaseModel):
     bridge_url: str = ""  # URL del Bridge (default: variable de entorno)
 
 
+class ClientEventPayload(BaseModel):
+    thread_id: str
+    event: str
+    client: dict = {}
+
+
+@app.post("/telemetry/client-event", status_code=204)
+async def receive_client_event(
+    body: ClientEventPayload,
+    _: None = Depends(verify_secret),
+):
+    """T4 — Recibe eventos de telemetría desde el desktop (fire-and-forget)."""
+    log.info(
+        "S126-T4 client_event thread=%s event=%s client=%s",
+        body.thread_id[:8],
+        body.event,
+        body.client,
+    )
+
+
 @app.post("/research/run")
 async def run_research(
     body: ResearchRequest,

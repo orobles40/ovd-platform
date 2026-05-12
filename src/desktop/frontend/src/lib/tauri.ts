@@ -84,3 +84,37 @@ export const workspaceRunTests = (
 // S125: abre la carpeta en el explorador del sistema operativo
 export const workspaceOpenFolder = (folder: string) =>
   invoke<void>("workspace_open_folder", { folder });
+
+// ── DB — historial SQLite (T3) + error log (T6) ───────────────────────────────
+
+export interface CycleEntry {
+  thread_id: string;
+  project_directory: string;
+  fr_text: string;
+  qa_score: number | null;
+  security_score: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  elapsed_secs: number | null;
+  files_written: number | null;
+  output_dir: string | null;
+  status: string;
+  created_at: string | null;
+}
+
+export interface ErrorLogEntry {
+  id: number;
+  level: string;
+  message: string;
+  context: string;
+  created_at: string;
+}
+
+export const dbSaveCycle = (entry: Omit<CycleEntry, "created_at">) =>
+  invoke<void>("db_save_cycle", { entry });
+
+export const dbListProjectCycles = (projectDirectory: string, limit = 20) =>
+  invoke<CycleEntry[]>("db_list_project_cycles", { projectDirectory, limit });
+
+export const dbListErrors = (limit = 50) =>
+  invoke<ErrorLogEntry[]>("db_list_errors", { limit });
