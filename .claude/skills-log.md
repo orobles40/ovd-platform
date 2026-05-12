@@ -813,3 +813,41 @@ Sesión sin fricción (5/5). Todos los fixes fueron directos al diagnóstico sin
 
 ### Notas
 Sin fricción (5/5). La investigación previa de la sesión anterior sobre Opciones A/B/C dejó el camino claro — la implementación fue directa. El token DO GenAI (dop_v1_ vs doo_v1_) fue la única fricción de la sesión anterior, ya documentada en RAG_BOOTSTRAP.md.
+
+---
+
+## S021 | 2026-05-11
+
+| Métrica | Valor |
+|---|---|
+| Inicio | ~09:00 |
+| Cierre | ~12:00 |
+| Duración | ~3h |
+| Sprint | S112 / S125 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [ ] /run-tests ×1
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (auto-fix 3 archivos)
+- [x] pytest unit: 2065 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: SÍ | Fallos CI post-push: 0
+
+### Completado hoy
+- Fix refresh token rotation (auth.rs) — Set-Cookie leído antes de .json()
+- NavSidebar flotante colapsable (NavSidebar.tsx + App.tsx AppShell)
+- Workspace enriquecido: EditProjectModal con Stack/Tooling/Descripción/KBs, badge Engine, delete inline
+- FrLauncher: textarea redimensionable, controles fuera de overflow-hidden, enrichedCtx al engine
+- Vitest setup + 47 tests unitarios/regresivos (6 archivos)
+- Fix test_s125h_frlauncher_fallback_to_directory (aserción actualizada post-refactor)
+- Tag s125-desktop-ui pusheado
+
+### Notas
+Sin fricción (5/5). UI refactoring completo sin bloqueos. El único hitch fue el test de regresión del engine que verificaba un patrón ?? en FrLauncher que cambió a || durante el refactor — solucionado actualizando la aserción.

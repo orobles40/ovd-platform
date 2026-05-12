@@ -11,11 +11,25 @@
 - **Sprint activo:** S112 (Despliegue DigitalOcean — demo 2026-05-18) + S122 (calidad engine)
 - **Rama de trabajo:** `main`
 - **Sprints completados:** S3 → S121
-- **Tests:** 2013 pass (unit) | 14 integration | 5 docker | 34 frontend (Vitest) | 26 Rust inline
+- **Tests:** 2065 pass (unit) | 14 integration | 5 docker | 47 frontend (Vitest) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
 ---
+
+## Última sesión (2026-05-11 — S021: OVD Desktop UI — NavSidebar + Workspace enriquecido + vitest)
+
+**S125 (continuación) — OVD Desktop UI completo — COMPLETADO:**
+
+- **Fix refresh token rotation** (`auth.rs`): `_auth_refresh_token` ahora lee `Set-Cookie` ANTES de consumir el body con `.json()`. El nuevo `refresh_token` rotado se persiste en Keychain. Antes se descartaba → SSE fallaba en reconexión.
+- **NavSidebar flotante** (`NavSidebar.tsx`): sidebar colapsable (48px icons / 192px expandido), flecha toggle, ítems Lanzar FR + Workspace. Iniciales del avatar desde email. Persistencia en `localStorage["ovd_nav_collapsed"]`.
+- **App.tsx reescrito**: `AppShell` con estado `collapsed`, sidebar solo visible cuando autenticado y fuera de `/login`.
+- **Workspace enriquecido** (`Workspace.tsx`): tarjetas con Stack, Tooling, Descripción, Knowledge Bases, badge Engine (verde/rojo), botón editar, eliminación con confirmación inline. `EditProjectModal` completo: 13 opciones de stack, campo tooling CI/CD, campo descripción, KBs con path/label/stack opcionales. Botón "Guardar y lanzar FR".
+- **FrLauncher.tsx**: textarea redimensionable desde borde superior, altura persistida en localStorage. Controles "Auto-aprobar" + "Enviar" centrados fuera del contenedor con `overflow-hidden` (fix botón cortado). `enrichedCtx` construye `[Metadatos del proyecto]` con stack/tooling/descripción/KBs y lo prepende al `project_context` del engine.
+- **Vitest setup** (`vitest.config.ts`, `vitest.setup.ts`): jsdom, mocks Tauri globales, `localStorage.clear()` en `beforeEach`. 47 tests en 6 archivos — todos PASS.
+- **Fix test_s125h_frlauncher_fallback_to_directory**: aserción actualizada para coincidir con implementación refactorizada (`||` en lugar de `??`).
+- **Suite:** 2065 passed (unit). 47 vitest (desktop).
+- **Tag:** `s125-desktop-ui` pusheado.
 
 ## Última sesión (2026-05-09 — S020: OVD Desktop Opción C — outputDirectory + cleanup endpoint)
 
