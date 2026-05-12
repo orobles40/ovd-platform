@@ -4,14 +4,16 @@ import {
   Send, ArrowLeft, CheckCircle, AlertTriangle, Loader2,
   ChevronDown, ChevronUp, FolderOpen, Settings, Circle,
   FileText, ShieldCheck, FlaskConical, PackageCheck, Zap,
-  BarChart3,
+  BarChart3, GitBranch,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { ContextBar } from "@/components/ContextBar";
 import {
   workspaceReadContext, workspaceWriteArtifacts, workspaceRunTests,
   workspaceOpenFolder, workspacePickFolder, authRefreshToken,
+  workspaceGitStatus, workspaceGitCheckoutBranch,
   dbSaveCycle,
+  type GitStatus,
 } from "@/lib/tauri";
 import { configGet } from "@/lib/tauri";
 import {
@@ -65,6 +67,19 @@ const PHASE_LABEL: Record<CyclePhase, string> = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function toSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 40)
+    .replace(/-$/, "");
+}
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -295,6 +310,12 @@ export default function FrLauncher() {
 
   const [cycleMetrics, setCycleMetrics] = useState<DeliveryData | null>(null);
 
+  // S127 Fase 1 — git branch awareness
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [branchMode, setBranchMode] = useState<"current" | "new">("current");
+  const [newBranchName, setNewBranchName] = useState("");
+  const [gitError, setGitError] = useState<string | null>(null);
+
   const engineTestResultRef = useRef<string | null>(null);
   const nodeStartTimes = useRef<Map<string, number>>(new Map());
   const feedRef = useRef<HTMLDivElement>(null);
@@ -302,6 +323,7 @@ export default function FrLauncher() {
   const sessionIdRef = useRef<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
   const activeFrRef = useRef<string>("");
+  const branchNameEdited = useRef(false);
 
   useEffect(() => {
     if (feedRef.current) {
@@ -312,6 +334,31 @@ export default function FrLauncher() {
   useEffect(() => {
     if (!project) navigate("/workspace");
   }, [project, navigate]);
+
+  // S127: cargar git status del proyecto al montar
+  useEffect(() => {
+    if (!project) return;
+    workspaceGitStatus(project.directory)
+      .then(setGitStatus)
+      .catch(() => setGitStatus(null));
+  }, [project]);
+
+  // S127: refrescar git status y resetear modo rama al completar ciclo
+  useEffect(() => {
+    if (phase !== "done" || !project) return;
+    workspaceGitStatus(project.directory)
+      .then(setGitStatus)
+      .catch(() => {});
+    setBranchMode("current");
+    branchNameEdited.current = false;
+  }, [phase, project]);
+
+  // S127: auto-actualizar nombre de rama sugerido desde el texto del FR
+  useEffect(() => {
+    if (branchNameEdited.current || branchMode !== "new") return;
+    const slug = toSlug(fr);
+    setNewBranchName(slug ? `feature/${slug}` : "");
+  }, [fr, branchMode]);
 
   // Calcular estado de cada step del pipeline
   const getStepStatus = useCallback((step: PipelineStep): StepStatus => {
@@ -596,6 +643,19 @@ export default function FrLauncher() {
 
   const startCycle = async () => {
     if (!fr.trim() || !project) return;
+
+    // S127: crear y hacer checkout de la nueva rama antes de iniciar
+    if (branchMode === "new" && newBranchName) {
+      setGitError(null);
+      try {
+        await workspaceGitCheckoutBranch(project.directory, newBranchName, true);
+        setGitStatus(prev => prev ? { ...prev, branch: newBranchName, dirty: false, ahead: 0 } : null);
+      } catch (err) {
+        setGitError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+
     activeFrRef.current = fr;
     setPhase("sending");
     setEvents([]);
@@ -917,6 +977,36 @@ export default function FrLauncher() {
             }}
           />
         </div>
+
+        {/* S127: selector de rama git */}
+        {gitStatus && phase === "idle" && (
+          <div
+            className="flex items-center gap-3 py-2 border-t text-xs"
+            style={{ borderColor: "var(--ovd-border)" }}
+          >
+            <GitBranch size={11} style={{ color: "var(--ovd-muted)", flexShrink: 0 }} />
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="radio" checked={branchMode === "current"} onChange={() => setBranchMode("current")} />
+              <span style={{ color: "var(--ovd-muted)" }}>{gitStatus.branch}</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="radio" checked={branchMode === "new"} onChange={() => setBranchMode("new")} />
+              <span style={{ color: "var(--ovd-muted)" }}>Nueva:</span>
+            </label>
+            {branchMode === "new" && (
+              <input
+                value={newBranchName}
+                onChange={(e) => { setNewBranchName(e.target.value); branchNameEdited.current = true; }}
+                placeholder="feature/..."
+                className="flex-1 px-2 py-0.5 rounded border text-xs outline-none"
+                style={{ background: "var(--ovd-bg)", borderColor: "var(--ovd-border)", color: "var(--ovd-text)", maxWidth: 220 }}
+              />
+            )}
+            {gitError && (
+              <span style={{ color: "#f87171", fontSize: "0.65rem" }}>{gitError}</span>
+            )}
+          </div>
+        )}
 
         {/* Barra de controles — centrada, fuera del overflow-hidden */}
         <div className="flex items-center justify-center gap-4 pt-2.5 pb-0.5">

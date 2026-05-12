@@ -85,6 +85,20 @@ export const workspaceRunTests = (
 export const workspaceOpenFolder = (folder: string) =>
   invoke<void>("workspace_open_folder", { folder });
 
+// ── Git (S127 Fase 1) ─────────────────────────────────────────────────────────
+
+export interface GitStatus {
+  branch: string;
+  dirty: boolean;
+  ahead: number;
+}
+
+export const workspaceGitStatus = (folder: string) =>
+  invoke<GitStatus>("workspace_git_status", { folder });
+
+export const workspaceGitCheckoutBranch = (folder: string, branch: string, create: boolean) =>
+  invoke<void>("workspace_git_checkout_branch", { folder, branch, create });
+
 // ── DB — historial SQLite (T3) + error log (T6) ───────────────────────────────
 
 export interface CycleEntry {

@@ -42,6 +42,9 @@ pub fn run() {
             workspace::workspace_write_artifacts,
             workspace::workspace_run_tests,
             workspace::workspace_open_folder,
+            // Git (S127 Fase 1)
+            workspace::workspace_git_status,
+            workspace::workspace_git_checkout_branch,
             // Config
             config::config_get,
             config::config_save,

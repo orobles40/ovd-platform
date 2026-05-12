@@ -61,6 +61,64 @@ describe("extractSummary", () => {
   });
 });
 
+// ── toSlug (S127) ─────────────────────────────────────────────────────────────
+
+function toSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 40)
+    .replace(/-$/, "");
+}
+
+describe("toSlug", () => {
+  it("convierte texto simple a slug", () => {
+    expect(toSlug("agregar login")).toBe("agregar-login");
+  });
+
+  it("elimina diacríticos (ñ → n, á → a, ó → o)", () => {
+    // NFD: ñ = n + ̃ → después de quitar combinante queda "n"
+    expect(toSlug("Añadir módulo de autenticación")).toBe("anadir-modulo-de-autenticacion");
+  });
+
+  it("convierte a minúsculas", () => {
+    expect(toSlug("CREAR ENDPOINT")).toBe("crear-endpoint");
+  });
+
+  it("reemplaza espacios múltiples con un solo guion", () => {
+    expect(toSlug("agregar   nuevo   módulo")).toBe("agregar-nuevo-modulo");
+  });
+
+  it("elimina caracteres especiales", () => {
+    expect(toSlug("fix: bug en /auth/login (crítico)")).toBe("fix-bug-en-authlogin-critico");
+  });
+
+  it("trunca a 40 caracteres", () => {
+    const largo = "agregar funcionalidad de exportacion a excel con filtros avanzados";
+    expect(toSlug(largo).length).toBeLessThanOrEqual(40);
+  });
+
+  it("no termina en guion después del truncado", () => {
+    // Construir un texto que al cortarse quede con guion al final
+    const text = "a".repeat(38) + " b";
+    const result = toSlug(text);
+    expect(result.endsWith("-")).toBe(false);
+  });
+
+  it("retorna string vacío para texto sin caracteres válidos", () => {
+    expect(toSlug("!!!---???")).toBe("");
+  });
+
+  it("maneja texto vacío", () => {
+    expect(toSlug("")).toBe("");
+  });
+});
+
 // ── projectLabel ──────────────────────────────────────────────────────────────
 
 interface Project {

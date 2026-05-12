@@ -261,6 +261,71 @@ async fn _run_tests(
     }
 }
 
+// ── Git integration (S127 Fase 1) ────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitStatus {
+    pub branch: String,
+    pub dirty: bool,
+    pub ahead: u32,
+}
+
+#[tauri::command]
+pub async fn workspace_git_status(folder: String) -> Result<GitStatus, String> {
+    let branch_out = tokio::process::Command::new("git")
+        .args(["-C", &folder, "branch", "--show-current"])
+        .output()
+        .await
+        .map_err(|e| format!("git error: {e}"))?;
+
+    let branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+    if branch.is_empty() {
+        return Err("No es un repositorio git".to_string());
+    }
+
+    let status_out = tokio::process::Command::new("git")
+        .args(["-C", &folder, "status", "--porcelain"])
+        .output()
+        .await
+        .map_err(|e| format!("git status error: {e}"))?;
+    let dirty = !status_out.stdout.is_empty();
+
+    let ahead = tokio::process::Command::new("git")
+        .args(["-C", &folder, "rev-list", "--count", "@{u}..HEAD"])
+        .output()
+        .await
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok())
+        .unwrap_or(0);
+
+    Ok(GitStatus { branch, dirty, ahead })
+}
+
+#[tauri::command]
+pub async fn workspace_git_checkout_branch(
+    folder: String,
+    branch: String,
+    create: bool,
+) -> Result<(), String> {
+    let output = if create {
+        tokio::process::Command::new("git")
+            .args(["-C", &folder, "checkout", "-b", &branch])
+            .output()
+            .await
+    } else {
+        tokio::process::Command::new("git")
+            .args(["-C", &folder, "checkout", &branch])
+            .output()
+            .await
+    }
+    .map_err(|e| format!("git checkout error: {e}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
 fn extract_test_summary(output: &str, passed: bool) -> String {
     // pytest: "5 passed, 1 failed in 2.3s"
     for line in output.lines().rev() {

@@ -27,6 +27,9 @@ vi.mock("@/lib/tauri", () => ({
   dbSaveCycle: vi.fn(() => Promise.resolve()),
   dbListProjectCycles: vi.fn(() => Promise.resolve([])),
   dbListErrors: vi.fn(() => Promise.resolve([])),
+  // Git — S127 Fase 1
+  workspaceGitStatus: vi.fn(() => Promise.resolve({ branch: "main", dirty: false, ahead: 0 })),
+  workspaceGitCheckoutBranch: vi.fn(() => Promise.resolve()),
 }));
 
 // localStorage limpio entre tests

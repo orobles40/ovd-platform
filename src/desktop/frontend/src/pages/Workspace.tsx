@@ -3,10 +3,10 @@ import { useNavigate } from "react-router-dom";
 import {
   FolderOpen, Settings, LogOut, ChevronRight, Plus, Pencil,
   Trash2, BookOpen, X, CheckCircle, AlertCircle, Loader2,
-  BarChart3, History, ChevronUp,
+  BarChart3, History, ChevronUp, GitBranch,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { workspacePickFolder, configGet, configSave, authRefreshToken } from "@/lib/tauri";
+import { workspacePickFolder, configGet, configSave, authRefreshToken, workspaceGitStatus } from "@/lib/tauri";
 import {
   getProjectHistory, fetchOrgStats,
   fmtTokens, fmtSecs,
@@ -31,6 +31,7 @@ export interface Project {
   tooling?: string;
   description?: string;
   knowledgeBases?: KnowledgeBase[];
+  defaultBranch?: string;
 }
 
 const PROJECTS_KEY = "ovd_desktop_projects";
@@ -459,6 +460,19 @@ export default function Workspace() {
   const [deleteConfirm, setDeleteConfirm]   = useState<string | null>(null);
   const [orgStats, setOrgStats]             = useState<OrgStats | null>(null);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
+  const [gitBranches, setGitBranches] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const branches: Record<string, string> = {};
+    Promise.allSettled(
+      projects.map(async (p) => {
+        try {
+          const gs = await workspaceGitStatus(p.directory);
+          branches[p.directory] = gs.branch;
+        } catch { /* no es repo git */ }
+      })
+    ).then(() => setGitBranches({ ...branches }));
+  }, [projects]);
 
   useEffect(() => {
     configGet().then(async (c) => {
@@ -621,6 +635,13 @@ export default function Workspace() {
                                 {projectLabel(p)}
                               </p>
                               <StackTag stack={p.stack} />
+                              {gitBranches[p.directory] && (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded shrink-0"
+                                  style={{ background: "var(--ovd-border)", color: "var(--ovd-muted)", fontSize: "0.6rem" }}>
+                                  <GitBranch size={9} />
+                                  {gitBranches[p.directory]}
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs truncate mt-0.5" style={{ color: "var(--ovd-muted)" }}>
                               {p.outputDirectory ? `→ ${p.outputDirectory}` : p.directory}
