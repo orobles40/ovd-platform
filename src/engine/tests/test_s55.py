@@ -110,7 +110,9 @@ def test_write_artifacts_preserves_existing_when_new_content_truncated(tmp_path)
 
     # Nuevo output con contenido pequeño pero válido — S131-A lo sobreescribe
     # Usa nombre en inglés para evitar renombrado por postprocessor S72-B
-    small_content = "def calculate_bmi(weight, height):\n    return round(weight / height**2, 2)\n"
+    small_content = (
+        "def calculate_bmi(weight, height):\n    return round(weight / height**2, 2)\n"
+    )
     output = f"```python:src/imc/service.py\n{small_content}\n```"
 
     result = graph._write_artifacts(

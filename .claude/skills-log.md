@@ -888,3 +888,81 @@ Sin fricción (5/5). UI refactoring completo sin bloqueos. El único hitch fue e
 
 ### Notas
 Sin fricción (5/5). Investigación exhaustiva del engine antes de implementar evitó sorpresas. Pendiente S126: T3 (SQLite Rust), T4 (evento telemetría → engine), T6 (crash reporting).
+
+## S023 | 2026-05-12
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 08:46 |
+| Cierre | 17:30 |
+| Duración | ~8h 44m |
+| Sprint | S128 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [x] /run-tests ×2
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (4 archivos reformateados)
+- [x] pytest unit: 63 passed (test_s128 + test_s127 — suite completa en background)
+- [x] OVD conventions: PASS
+- Push ejecutado: NO
+
+### Completado hoy
+- S128-A1: EXPORTS explícitos en system_sdd.md
+- S128-A2: _p2_infer_signature + sugerencias de firma en S103-P2
+- S128-B1: módulo primario obligatorio en system_sdd.md
+- S128-C1: App.tsx obligatorio en system_frontend_react.md (≥2 componentes)
+- S128-C2: _s128_c2_ensure_app_tsx() en deliver() — auto-generación App.tsx
+- S128-D1: timeout adaptativo api.py (_SSE_STREAM_TIMEOUT + retry_round × 900)
+- S128-E3: cap reducido low:3, medium:5, high:5, critical:7
+- 28 tests test_s128.py — PASS
+- Ciclo validación 7bfecf37: QA 55, security 100, timeout 1800s, mejora vs 92c6641f
+- Informe: docs/INFORME_S128_CICLO_7bfecf37.md
+- Gap S129 identificado: generate_sdd no incluye frontend en FRs full-stack
+
+### Notas
+Sin fricción (5/5). Contexto compactado durante la sesión — continuación fluida sin pérdida de estado. Monitoreo SSE con campos vacíos (bug en monitor script, no afectó al ciclo real). S128-D1 confirmado funcional (ciclo llegó a qa_review, antes abortaba en security_audit).
+
+## S024 | 2026-05-13
+
+| Métrica | Valor |
+|---|---|
+| Inicio | 09:00 |
+| Cierre | 13:30 |
+| Duración | ~4h 30m |
+| Sprint | S130+S131 |
+| Branch | main |
+| Fricción (1=mucha 5=ninguna) | 5 |
+
+### Skills utilizados
+- [x] /session-start
+- [x] /run-tests ×2
+- [ ] /pre-push
+- [x] /session-close
+
+### Gates CI (pre-push)
+- [x] ruff lint: PASS
+- [x] ruff format: PASS (test_s55.py reformateado)
+- [x] pytest unit: 2201 passed
+- [x] OVD conventions: PASS
+- Push ejecutado: NO
+
+### Completado hoy
+- S130-A/A2/B/C/C2/D: ORM naming consistency + custom exceptions + frontend_required — 14 tests PASS
+- S131-A: eliminada protección <50% en _write_artifacts (root cause QA stuck 62/100)
+- S131-B: preamble retry con ARCHIVOS A SOBRESCRIBIR por agente
+- S131-C: deduplicate_module_files() en code_postprocessor.py
+- S131-D: 14 patrones ES/EN en _build_service_alias_map
+- S131-E: debug_frontend_initial/retry.txt cuando frontend entrega 0 artefactos
+- 16 tests test_s131.py — 16/16 PASS
+- Fix test_nats_integration_a.py: @pytest.mark.integration en 5 tests (excluidos de unit suite)
+- Ciclo validación S129: QA 75/100, 3 agentes, 8 artefactos — baseline para S131
+
+### Notas
+Sin fricción (5/5). Contexto compactado mid-session-close — continuación fluida. git stash accidental durante background pytest recuperado con stash pop. NATS issue: tests sin marker @integration corrían en unit suite y fallaban siempre — fix limpio.
