@@ -960,6 +960,36 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                     )
                 async with asyncio.timeout(_adaptive_timeout):
                     async for event in _stream_graph_events(thread_id, config):
+                        # S134-A: actualizar complexity cuando analyze_fr completa
+                        # Corrige S132-H1: complexity="" al registrar → umbral 30min por defecto
+                        _sse_raw = event.get("data", "")
+                        if (
+                            _graph
+                            and '"node_end"' in _sse_raw
+                            and '"analyze_fr"' in _sse_raw
+                        ):
+                            try:
+                                _snap134 = await _graph.aget_state(config)
+                                if _snap134 and _snap134.values:
+                                    _c134 = (
+                                        _snap134.values.get("fr_analysis") or {}
+                                    ).get("complexity", "")
+                                    if _c134:
+                                        from task_checkout import (
+                                            update_session_complexity,
+                                        )
+
+                                        update_session_complexity(thread_id, _c134)
+                                        log.info(
+                                            "S134-A: complexity post-analyze_fr → %s (thread=%s)",
+                                            _c134,
+                                            thread_id[:8],
+                                        )
+                            except Exception as _e134:
+                                log.warning(
+                                    "S134-A: error actualizando complexity — %s",
+                                    _e134,
+                                )
                         await _queue_put_with_replay(thread_id, event)
             except asyncio.TimeoutError:
                 log.error(

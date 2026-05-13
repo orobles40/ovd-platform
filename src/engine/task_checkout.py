@@ -81,6 +81,16 @@ def unregister_session(thread_id: str) -> None:
     _running_tasks.pop(thread_id, None)
 
 
+def update_session_complexity(thread_id: str, complexity: str) -> None:
+    """S134-A: actualiza complexity en session activa post-analyze_fr.
+
+    Corrige S132-H1: la complexity no estaba disponible al registrar la sesión
+    porque analyze_fr no había corrido aún. Se llama al detectar node_end de analyze_fr.
+    """
+    if thread_id in _active_sessions and complexity:
+        _active_sessions[thread_id]["complexity"] = complexity
+
+
 def list_active_sessions(org_id: str | None = None) -> list[dict]:
     """Retorna las sesiones activas, opcionalmente filtradas por org_id."""
     sessions = [{"thread_id": tid, **meta} for tid, meta in _active_sessions.items()]
