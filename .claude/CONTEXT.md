@@ -8,10 +8,10 @@
 
 ## Estado actual
 
-- **Sprint activo:** S129 ✅ (full-stack SDD coverage — COMPLETADO)
+- **Sprint activo:** S135 (security_audit streaming + persist_cycle SQL fix + Desktop session recovery)
 - **Rama de trabajo:** `main`
-- **Sprints completados:** S3 → S128
-- **Tests:** 2171 pass (unit, +20 S129) | 14 integration | 5 docker | 74 frontend (Vitest) | 26 Rust inline
+- **Sprints completados:** S3 → S134
+- **Tests:** 2253 pass (unit, +16 S134) | 14 integration | 5 docker | 74 frontend (Vitest) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
@@ -82,9 +82,36 @@
 - **S131-E** (`graph.py` `_run_agent_with_tools`): escribe `debug_frontend_initial.txt`/`debug_frontend_retry.txt` cuando frontend entrega 0 artefactos.
 - **16 tests** (`test_s131.py`) — 16/16 PASS.
 
-## Próxima sesión: Ciclo de validación S131
+## Última sesión (2026-05-13 — S027: S132–S134 — Heartbeat fix + validación producción)
 
-Lanzar ciclo "Implementar módulo de agendamiento de turnos médicos" y verificar si QA supera 75 (baseline S129). Objetivo: ≥80/100. Foco en "múltiples versiones no consolidadas" que no debe aparecer en QA issues.
+**S132 — Heartbeat threshold adaptativo:**
+- `_threshold_for_session()` en `task_checkout.py`: umbral 60 min para medium/high, 90 min para critical
+- Config vars: `OVD_STALE_SESSION_MINUTES_HIGH`, `OVD_STALE_SESSION_MINUTES_CRITICAL`
+
+**S133 — S133-C fix @classmethod duplicado:**
+- `_fix_duplicate_classmethod` en `code_postprocessor.py`: detecta y elimina decoradores `@classmethod` duplicados
+- Validado en prod (thread `079611ff`): `[S133-C] @classmethod duplicado eliminado` en logs
+- Bug S132-H1 descubierto: cycle cancelado a 30 min por complexity="" en registro inicial
+
+**S134-A — Fix S132-H1 (update_session_complexity):**
+- `update_session_complexity(thread_id, complexity)` en `task_checkout.py`
+- Interceptor en `_run_graph_background` (api.py): detecta `node_end` de `analyze_fr` vía string check en raw SSE
+- 16 tests `test_s134.py` — PASS
+- **VALIDADO en producción** (thread `07fd147f`): complexity=high detectada, ciclo completó 25 min sin cancelación
+- QA 75/100, 40 artefactos, S133-C confirmado
+- Commit: `ec5ceee8b`
+
+**Bugs detectados para S135:**
+- **B1** `security_audit`: timeout DO GenAI con ≥30 archivos (non-streaming supera límite del endpoint)
+- **B2** `deliver.persist_cycle`: `syntax error at or near "$1"` — `SET app.current_org_id = %s` en graph.py, psycopg3 convierte `%s` a `$1` pero SET no acepta parámetros (fix S132-H6 ya aplicado en api.py pero no en graph.py)
+
+## Próxima sesión: S135 — Fix persist_cycle + security_audit streaming
+
+**S135-B [ALTO]:** Quitar `SET app.current_org_id = %s` de `deliver` en `graph.py` (causa "syntax error $1"). Consistente con S132-H6 en api.py.
+
+**S135-A [ALTO]:** Fix `security_audit` para usar streaming en DO GenAI. Evita timeout con workspaces grandes.
+
+**S135-C [MEDIO]:** Desktop: botón "Nueva sesión" en estado `phase=error`, o limpiar sessionId al detectar error en re-entrada.
 
 ## Última sesión (2026-05-12 — S023: OVD Desktop S126 — Telemetría T3+T4+T6)
 

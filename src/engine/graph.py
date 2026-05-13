@@ -9744,9 +9744,8 @@ async def deliver(state: OVDState) -> dict:
             _qa_result_p = state.get("qa_result", {})
             _session_id_p = state.get("session_id", "")
             async with await psycopg.AsyncConnection.connect(_db_url) as _conn:
-                await _conn.execute(
-                    "SET app.current_org_id = %s", (state.get("org_id", ""),)
-                )
+                # S135-B: SET no acepta parámetros en psycopg3 (convierte %s→$1 y
+                # PostgreSQL lo rechaza). doadmin en DO bypasea RLS igual — omitido.
                 await _conn.execute(
                     """
                     INSERT INTO ovd_cycles
