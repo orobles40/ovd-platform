@@ -1,3 +1,40 @@
+## ⚠️ VERIFICACIÓN OBLIGATORIA — LEE ESTO ANTES DE GENERAR CUALQUIER TAREA
+
+Para cada condición presente en el FR, **INCLUIR** la tarea de infraestructura correspondiente.
+Estas tareas son **ADICIONALES al cap** y van ANTES de cualquier tarea de negocio.
+
+| Condición en el FR | Archivo OBLIGATORIO | Qué debe contener |
+|---------------------|---------------------|-------------------|
+| Menciona FastAPI / endpoint / API REST / router / uvicorn | **`src/main.py`** | `app = FastAPI()` + `app.include_router(...)` para cada router del SDD |
+| Menciona base de datos / ORM / Oracle / PostgreSQL / SQLAlchemy | **`src/database.py`** | `engine`, `SessionLocal`, `get_db`, `Base = DeclarativeBase()` |
+| Menciona JWT / login / autenticación / token / bearer | **`src/auth/dependencies.py`** | `get_current_user()` con decode JWT |
+| Siempre (proyecto Python) | **`src/__init__.py`** | Archivo vacío |
+
+**Regla de oro FastAPI:** Si el FR menciona FastAPI → `src/main.py` es la **PRIMERA tarea del agente backend**.
+Sin `src/main.py`, `from src.main import app` falla en todos los tests → `ImportError` → `pytest exit 2`.
+
+---
+
+## ⚠️ CHECKLIST FULL-STACK — S129: VERIFICACIÓN ANTES DE GENERAR (OBLIGATORIO)
+
+Si el FR menciona UI, interfaz, formulario, pantalla, dashboard, React, vista, o agendamiento
+con interacción visual, el SDD **DEBE** incluir al menos UNA tarea con `"agent": "frontend"`.
+
+**NO generes solo tareas backend para un FR full-stack.** Backend-only en un FR con UI es error.
+
+Verifica antes de finalizar:
+- [ ] ¿El FR pide interfaz/pantalla/formulario/dashboard? → Agregar tarea frontend (`.tsx`)
+- [ ] ¿Hay tarea frontend con `"agent": "frontend"` y `"file": "frontend/src/pages/X.tsx"`?
+- [ ] ¿El backend tiene el endpoint REST que el frontend consumirá?
+
+Ejemplo mínimo para FR con UI:
+```json
+{"id": "TASK-FE-001", "agent": "frontend", "file": "frontend/src/pages/Turnos.tsx",
+ "title": "Crear página de listado y creación de Turnos"}
+```
+
+---
+
 ## ⚠️ CAMPO orm_class — S130-A: OBLIGATORIO EN TASKS DE models.py
 
 Si una tarea genera `models.py` con una clase ORM, DEBES declarar el campo `orm_class` con el nombre **exacto** de la clase. Esto es el contrato que services.py, router.py y tests usarán para importar.
@@ -26,43 +63,6 @@ EXPORTS:
 ```
 
 **REGLA**: Si router.py importa `XxxNoEncontradoError`, esa excepción DEBE estar en el EXPORTS de la task de services.py Y definida al inicio del archivo generado.
-
----
-
-## ⚠️ CHECKLIST FULL-STACK — S129: VERIFICACIÓN ANTES DE GENERAR (OBLIGATORIO)
-
-Si el FR menciona UI, interfaz, formulario, pantalla, dashboard, React, vista, o agendamiento
-con interacción visual, el SDD **DEBE** incluir al menos UNA tarea con `"agent": "frontend"`.
-
-**NO generes solo tareas backend para un FR full-stack.** Backend-only en un FR con UI es error.
-
-Verifica antes de finalizar:
-- [ ] ¿El FR pide interfaz/pantalla/formulario/dashboard? → Agregar tarea frontend (`.tsx`)
-- [ ] ¿Hay tarea frontend con `"agent": "frontend"` y `"file": "frontend/src/pages/X.tsx"`?
-- [ ] ¿El backend tiene el endpoint REST que el frontend consumirá?
-
-Ejemplo mínimo para FR con UI:
-```json
-{"id": "TASK-FE-001", "agent": "frontend", "file": "frontend/src/pages/Turnos.tsx",
- "title": "Crear página de listado y creación de Turnos"}
-```
-
----
-
-## ⚠️ VERIFICACIÓN OBLIGATORIA — LEE ESTO ANTES DE GENERAR CUALQUIER TAREA
-
-Para cada condición presente en el FR, **INCLUIR** la tarea de infraestructura correspondiente.
-Estas tareas son **ADICIONALES al cap** y van ANTES de cualquier tarea de negocio.
-
-| Condición en el FR | Archivo OBLIGATORIO | Qué debe contener |
-|---------------------|---------------------|-------------------|
-| Menciona FastAPI / endpoint / API REST / router / uvicorn | **`src/main.py`** | `app = FastAPI()` + `app.include_router(...)` para cada router del SDD |
-| Menciona base de datos / ORM / Oracle / PostgreSQL / SQLAlchemy | **`src/database.py`** | `engine`, `SessionLocal`, `get_db`, `Base = DeclarativeBase()` |
-| Menciona JWT / login / autenticación / token / bearer | **`src/auth/dependencies.py`** | `get_current_user()` con decode JWT |
-| Siempre (proyecto Python) | **`src/__init__.py`** | Archivo vacío |
-
-**Regla de oro FastAPI:** Si el FR menciona FastAPI → `src/main.py` es la **PRIMERA tarea del agente backend**.
-Sin `src/main.py`, `from src.main import app` falla en todos los tests → `ImportError` → `pytest exit 2`.
 
 ---
 
