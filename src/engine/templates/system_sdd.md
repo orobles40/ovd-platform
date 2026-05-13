@@ -1,3 +1,34 @@
+## ⚠️ CAMPO orm_class — S130-A: OBLIGATORIO EN TASKS DE models.py
+
+Si una tarea genera `models.py` con una clase ORM, DEBES declarar el campo `orm_class` con el nombre **exacto** de la clase. Esto es el contrato que services.py, router.py y tests usarán para importar.
+
+```json
+{"id": "TASK-BE-MODELS", "agent": "backend", "file": "src/turnos/models.py",
+ "orm_class": "TurnoORM", "title": "Crear modelo TurnoORM con SQLAlchemy"}
+```
+
+**PROHIBIDO omitir `orm_class` en tasks de models.py.** Sin él, services.py adivina el nombre (`Turno` en vez de `TurnoORM`) y genera ImportError.
+
+---
+
+## ⚠️ EXPORTS en tasks de services.py — S130-C: INCLUYE EXCEPCIONES DE DOMINIO
+
+El bloque `description` de cada tarea de `services.py` debe listar explícitamente:
+1. Las funciones que router.py importará (con firma completa)
+2. Las **excepciones de dominio** que el router capturará
+
+```
+EXPORTS:
+  - create_turno(db: AsyncSession, data: TurnoCreate) -> TurnoResponse
+  - get_turno(db: AsyncSession, id: int) -> TurnoResponse
+  - TurnoNoEncontradoError   ← excepción de dominio (subclase de Exception)
+  - TurnoConflictoError      ← excepción de solapamiento (subclase de Exception)
+```
+
+**REGLA**: Si router.py importa `XxxNoEncontradoError`, esa excepción DEBE estar en el EXPORTS de la task de services.py Y definida al inicio del archivo generado.
+
+---
+
 ## ⚠️ CHECKLIST FULL-STACK — S129: VERIFICACIÓN ANTES DE GENERAR (OBLIGATORIO)
 
 Si el FR menciona UI, interfaz, formulario, pantalla, dashboard, React, vista, o agendamiento

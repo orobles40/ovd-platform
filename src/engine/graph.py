@@ -3090,7 +3090,17 @@ def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> st
     El manifest se inyecta al INICIO del prompt de cada tarea para prevenir que el
     LLM importe módulos fantasma (src.database, src.auth.middleware) que no existen.
     Basado en De-Hallucinator: Iterative Grounding (arXiv:2401.01701).
+
+    S130-A: si la task declara orm_class, el hint de import incluye el nombre exacto
+    de la clase ORM para evitar el naming clash TurnoORM vs Turno.
     """
+    # S130-A: construir mapa file → orm_class para hints precisos
+    _orm_class_by_file: dict[str, str] = {
+        t["file"]: t["orm_class"]
+        for t in sdd.get("tasks", [])
+        if t.get("file") and t.get("orm_class")
+    }
+
     from_sdd: set[str] = set()
     for t in sdd.get("tasks", []):
         f = t.get("file", "")
@@ -3107,10 +3117,14 @@ def _build_sdd_module_manifest(sdd: dict, written_files: list[str] | None) -> st
     if not all_mods:
         return ""
 
-    lines = "\n".join(
-        f"  {m}  →  from {m.replace('/', '.').removesuffix('.py')} import <nombre>"
-        for m in all_mods
-    )
+    def _import_hint(m: str) -> str:
+        import_module = m.replace("/", ".").removesuffix(".py")
+        if m in _orm_class_by_file:
+            # S130-A: nombre exacto declarado en el SDD → no hay ambigüedad
+            return f"  {m}  →  from {import_module} import {_orm_class_by_file[m]}"
+        return f"  {m}  →  from {import_module} import <nombre>"
+
+    lines = "\n".join(_import_hint(m) for m in all_mods)
     return (
         "[S64-B — MÓDULOS QUE EXISTEN O EXISTIRÁN EN ESTE PROYECTO]\n"
         "Importa SOLO de estos módulos. Cualquier otro no existe en disco:\n"
@@ -3235,17 +3249,54 @@ def _build_architecture_contract_text(sdd: dict) -> str:
             }
         )
 
-    if not entities:
+    # S130-A2: agregar contratos de ORM class names al contrato de arquitectura
+    orm_contracts: list[dict] = []
+    for task in sdd.get("tasks", []):
+        _orm_cls = task.get("orm_class")
+        _file = task.get("output_file", task.get("file", ""))
+        if _orm_cls and _file and _file.endswith("models.py"):
+            _import_mod = _file.removesuffix(".py").replace("/", ".")
+            orm_contracts.append(
+                {
+                    "file": _file,
+                    "orm_class": _orm_cls,
+                    "import_as": f"from {_import_mod} import {_orm_cls}",
+                    "REGLA": (
+                        f"services.py, router.py y tests DEBEN importar exactamente "
+                        f"`{_orm_cls}` — no `{_orm_cls.removesuffix('ORM')}`, "
+                        f"no `{_orm_cls.removesuffix('ORM')}Model`. "
+                        "El sufijo ORM es parte del nombre canónico."
+                    ),
+                }
+            )
+
+    if not entities and not orm_contracts:
         return ""
 
-    contract = {"architecture_contract": entities, "version": "S107-P1"}
+    contract: dict = {"version": "S130-A2"}
+    if entities:
+        contract["architecture_contract"] = entities
+    if orm_contracts:
+        contract["orm_contracts"] = orm_contracts
+
+    sections: list[str] = []
+    if entities:
+        sections.append(
+            "router.py y tests DEBEN importar exactamente estos nombres de service.py"
+        )
+    if orm_contracts:
+        sections.append(
+            "services.py, router.py y tests DEBEN usar el orm_class declarado para cada models.py"
+        )
+
     return (
-        "\n[ARCHITECTURE CONTRACT — S107-P1 — VINCULANTE]\n"
-        "Las siguientes firmas son el ÚNICO contrato válido para este ciclo.\n"
-        "router.py y tests DEBEN importar exactamente estos nombres de service.py:\n\n"
+        "\n[ARCHITECTURE CONTRACT — S107-P1/S130-A2 — VINCULANTE]\n"
+        + " | ".join(sections)
+        + ":\n\n"
         f"```json\n{_json.dumps(contract, ensure_ascii=False, indent=2)}\n```\n\n"
         "CRÍTICO: Si router.py importa `delete_contrato` pero service.py define `deactivate_contrato`"
-        " → ImportError en pytest. Respeta el contrato sin excepción.\n\n"
+        " → ImportError en pytest. Si services importa `Turno` pero models define `TurnoORM`"
+        " → ImportError. Respeta el contrato sin excepción.\n\n"
     )
 
 
@@ -7277,12 +7328,14 @@ async def run_tests(state: OVDState) -> dict:
             )
 
     # S79-A: verificar consistencia de nombres ORM antes de pytest (S80-A: incluye manifest vacío)
+    # S130-B: sin restricción retry_round==0 — correr en todas las rondas para re-detectar
+    # si el retry anterior no corrigió el naming clash (misma lógica que S80-B para db_url).
     _orm_feedback_s79a = ""
-    if runner == "pytest" and work_dir and retry_round == 0:
+    if runner == "pytest" and work_dir:
         _orm_ok, _orm_feedback_s79a = _verify_orm_class_names(work_dir)
         if not _orm_ok:
             log.warning(
-                "run_tests: S79-A/S80-A ORM naming inconsistencies detectadas — agregando al retry_feedback"
+                "run_tests: S79-A/S80-A/S130-B ORM naming inconsistencies detectadas — agregando al retry_feedback"
             )
 
     # S79-C: verificar que DATABASE_URL en database.py sea coherente con el FR

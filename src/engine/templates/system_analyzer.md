@@ -33,5 +33,30 @@ Debes emitir el campo `frontend_required` (boolean):
   componente React, página, frontend, tsx, agendamiento (con pantalla), registro visual, listado
 - `false` si el FR es exclusivamente backend, job, script, migración de BD, o CLI sin UI
 
+**Ejemplos obligatorios — S130-D:**
+
+FR con UI (formulario React, listado, pantalla de agendamiento):
+```json
+{
+  "type": "fullstack",
+  "frontend_required": true,
+  "components": ["FastAPI backend", "React frontend", "PostgreSQL"],
+  "complexity": "medium"
+}
+```
+
+FR exclusivamente backend (API REST, job, migración, CLI):
+```json
+{
+  "type": "backend",
+  "frontend_required": false,
+  "components": ["FastAPI backend", "PostgreSQL"],
+  "complexity": "low"
+}
+```
+
+Si el FR menciona "formulario", "pantalla", "interfaz", "vista", "listado", "dashboard" o
+cualquier interacción visual → `"frontend_required": true` SIEMPRE.
+
 Sigue estrictamente el schema de salida solicitado.
 {project_context}

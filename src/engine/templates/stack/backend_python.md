@@ -647,3 +647,49 @@ async def create_item(db: AsyncSession, data: dict) -> MyModel:
 - `db.commit()` sin `await` → silently ignores the commit in async context
 - Múltiples operaciones sin transacción → inconsistencia si falla a mitad
 - `session.execute(text("..."))` con parámetros string concatenados → SQL injection
+
+---
+
+### Excepciones de dominio — S130-C
+
+Define excepciones propias en `services.py` y expórtalas para que `router.py` las capture.
+
+```python
+# En services.py
+class TurnoNoEncontradoError(Exception):
+    pass
+
+class TurnoConflictoError(Exception):
+    pass
+
+async def get_turno(db: AsyncSession, turno_id: int) -> TurnoORM:
+    obj = await db.get(TurnoORM, turno_id)
+    if obj is None:
+        raise TurnoNoEncontradoError(f"Turno {turno_id} no existe")
+    return obj
+```
+
+```python
+# En router.py — capturar excepciones de dominio y convertir a HTTP
+from src.turnos.services import TurnoNoEncontradoError, TurnoConflictoError
+
+@router.get("/{turno_id}")
+async def read_turno(turno_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        return await services.get_turno(db, turno_id)
+    except TurnoNoEncontradoError:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    except TurnoConflictoError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+```
+
+**REGLA CRÍTICA:** NUNCA lanzar HTTPException desde services.py.
+`services.py` no conoce HTTP — lanza excepciones de dominio, `router.py` las convierte.
+
+**EXPORTS obligatorios en tasks de services.py (SDD):**
+```
+EXPORTS:
+  - create_turno(db, data) -> TurnoResponse
+  - TurnoNoEncontradoError      ← debe aparecer aquí
+  - TurnoConflictoError         ← debe aparecer aquí
+```
