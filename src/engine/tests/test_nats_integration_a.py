@@ -130,6 +130,7 @@ async def _collect(nats_lib, subject: str, publish_coro, wait: float = 0.4) -> l
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_publish_started_llega_a_nats():
     import nats as nats_lib
 
@@ -156,6 +157,7 @@ def test_publish_started_llega_a_nats():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_publish_approved_llega_a_nats():
     import nats as nats_lib
 
@@ -182,6 +184,7 @@ def test_publish_approved_llega_a_nats():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_publish_done_llega_a_nats():
     import nats as nats_lib
 
@@ -211,6 +214,7 @@ def test_publish_done_llega_a_nats():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_publish_escalated_llega_a_nats():
     import nats as nats_lib
 
@@ -264,6 +268,7 @@ def test_fire_and_forget_no_interrumpe_al_llamador():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_close_permite_reconexion():
     async def _run():
         import nats_client as nc
