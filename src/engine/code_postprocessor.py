@@ -203,6 +203,29 @@ def _fix_pydantic_v1(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# S133-C — Eliminar @classmethod duplicados consecutivos
+# ---------------------------------------------------------------------------
+
+
+def _fix_duplicate_classmethod(code: str) -> str:
+    """S133-C: elimina @classmethod duplicados consecutivos.
+
+    El LLM genera ocasionalmente @field_validator + @classmethod + @classmethod,
+    lo que produce TypeError al importar el módulo. Reduce N repeticiones a 1.
+    """
+    if code.count("@classmethod") < 2:
+        return code
+    new_code = re.sub(
+        r"(@classmethod[ \t]*\n)([ \t]*@classmethod[ \t]*\n)+",
+        r"\1",
+        code,
+    )
+    if new_code != code:
+        log.warning("[S133-C] @classmethod duplicado eliminado")
+    return new_code
+
+
+# ---------------------------------------------------------------------------
 # S77-B — Fix orden decoradores Pydantic v2
 # ---------------------------------------------------------------------------
 
@@ -1770,6 +1793,9 @@ def postprocess_python_file(content: str, rel_path: str, work_dir: str = "") -> 
     # S77-B: reordenar decoradores Pydantic (field_validator ANTES de classmethod)
     if not is_conftest:
         content = _fix_pydantic_decorator_order(content)
+
+    # S133-C: eliminar @classmethod duplicados consecutivos (debe correr post-S72B+S77B)
+    content = _fix_duplicate_classmethod(content)
 
     # S80-C: fix declarative_base() anti-pattern en modelos que no son database.py
     # DEBE correr ANTES de S73-A para interceptar el patrón crudo antes de que se transforme

@@ -128,6 +128,11 @@ Si una función de negocio debe existir, defínela en **UN SOLO ARCHIVO**. Los t
 
 **SIEMPRE usa Pydantic v2.** El decorador `@validator` está DEPRECADO. Usa `@field_validator`.
 
+> **ALERTA S133-A — @classmethod duplicado mata el módulo:**
+> El único patrón válido es `@field_validator(...)` seguido de UN SOLO `@classmethod`.
+> Dos `@classmethod` consecutivos generan `TypeError` al importar y rompen todo el ciclo.
+> Ver sección "PROHIBIDO: @classmethod duplicado" más abajo.
+
 ❌ **INCORRECTO (Pydantic v1 — deprecado):**
 ```python
 from pydantic import BaseModel, validator

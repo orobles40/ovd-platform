@@ -4114,7 +4114,8 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     "REINTENTO DE CORRECCIÓN (ronda {round}) — IMPORTANTE:\n"
                     "Lee el feedback QA al FINAL de este mensaje ANTES de generar código.\n"
                     "{files_block}"
-                    "Aplica correcciones quirúrgicas: cambia SOLO lo que el feedback indica.\n\n"
+                    "Aplica correcciones quirúrgicas: cambia SOLO lo que el feedback indica.\n"
+                    "S133-B: Entrega TODOS tus archivos asignados — tanto los corregidos como los no modificados.\n\n"
                 ).format(round=_qa_retry_round, files_block=_files_block)
                 task_sdd_content = _retry_preamble + task_sdd_content
                 log.info(
