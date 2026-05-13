@@ -8,10 +8,10 @@
 
 ## Estado actual
 
-- **Sprint activo:** S128 (correctivos post-ciclo 92c6641f)
+- **Sprint activo:** S129 ✅ (full-stack SDD coverage — COMPLETADO)
 - **Rama de trabajo:** `main`
-- **Sprints completados:** S3 → S127
-- **Tests:** 2121+ pass (unit, +28 S128) | 14 integration | 5 docker | 74 frontend (Vitest) | 26 Rust inline
+- **Sprints completados:** S3 → S128
+- **Tests:** 2171 pass (unit, +20 S129) | 14 integration | 5 docker | 74 frontend (Vitest) | 26 Rust inline
 - **RAG:** 5235 chunks activos (3630 codebase + 1605 docs) — re-bootstrap S96-H completo 2026-05-04
 - **Cobertura baseline:** 88% TOTAL (2026-04-28)
 
@@ -39,11 +39,52 @@
 - Issues: SDD generó solo backend (sin frontend tasks) → frontend ausente → QA falla REQ-005
 - Informe: `docs/INFORME_S128_CICLO_7bfecf37.md`
 
-## Próxima sesión: SDD full-stack
+## Última sesión (2026-05-12 — S025: S129 — Full-Stack SDD Coverage)
 
-**Prioridad única S129:** `generate_sdd` debe incluir tareas de frontend en FRs full-stack. Regla: si FR menciona "frontend"/"React"/"UI"/"formulario", el SDD debe incluir ≥1 tarea frontend obligatoria. Sin esto, S128-C2 (App.tsx) nunca se activa y QA siempre falla por REQ-005.
+**S129 — COMPLETADO:**
 
-**Gap secundario S128-D2:** `_adaptive_timeout` no considera `qa_retry_count`. Fórmula correcta: `_SSE_STREAM_TIMEOUT + (test_retry + qa_retry) × 900`.
+- **S129-A** (`graph.py`): `FRAnalysisOutput.frontend_required: bool = False` + `system_analyzer.md` instrucción para emitirlo
+- **S129-B** (`system_sdd.md`): Checklist full-stack obligatorio — "NO generes solo tareas backend para FR full-stack"
+- **S129-C** (`graph.py`): `_ensure_frontend_tasks_if_fullstack()` + `_infer_entity_name_from_fr()` — injector determinístico de tareas frontend
+- **S129-D** (`api.py`): Timeout adaptativo suma `test_retry_count + qa_retry_count`
+- **S129-E** (`templates/stack/backend_python.md`): Patrón SQLAlchemy async con `async with db.begin()` + commit/rollback
+- **20 tests** (`test_s129.py`) — 20/20 PASS. Regresión: 2171 pass, 0 nuevas regresiones.
+- **Commit:** `acb6a38f4` | **Push:** origin/main ✓ | **Deploy DO:** ACTIVE
+
+**Ciclo validación `732d6b91` (2026-05-12 18:17–18:34):**
+- FR: "Implementar módulo de agendamiento de turnos médicos"
+- Resultado: **DONE** ✅ (vs S128: ERROR timeout)
+- QA: 75/100 | Security: 100/100 | Artefactos: 8 | Duración: 881s (14m41s)
+- Agentes: devops + backend + **frontend** (3 — vs S128: 1 solo backend)
+- Retries: 2 test retries (naming clash `TurnoORM` vs `Turno`)
+- Informe: `docs/INFORME_S129_CICLO_732d6b91.md`
+
+## Próxima sesión: S130 — Naming consistency cross-agent
+
+**Prioridad S130-A:** Naming clash entre agentes — `models.py` genera `TurnoORM` pero `services.py` importa `Turno`. Causa 2 test retries sin resolución. Fix: `_ensure_orm_name_consistency()` post-execute que detecta y corrige discrepancias de nombre entre archivos del mismo módulo.
+
+**Prioridad S130-B:** QA 75→90 — reforzar import consistency entre agentes. El SDD debe declarar el nombre canónico de cada clase ORM para que todos los agentes lo usen.
+
+**Prioridad S130-C:** `frontend_required` no emitido por LLM — falta ejemplo concreto en `system_analyzer.md`.
+
+## Última sesión (2026-05-13 — S026: S130+S131 — Retry overwrite semántics)
+
+**S130 — ORM Naming + Custom Exceptions + frontend_required — COMPLETADO:**
+- S130-A/A2/B/C/C2/D: 14 tests PASS. Ciclo `071ce4f4` incompleto por re-deploy DO mid-cycle.
+- Informe: `docs/INFORME_S130_CICLO_071ce4f4.md`
+- Commits: `ed468b326`, `7d193ee8c`
+
+**S131 — Retry Overwrite Semántics — COMPLETADO:**
+- **S131-A** (`graph.py` `_write_artifacts`): eliminada protección < 50% (S55-B). Solo protege output vacío (`strip()==0`). Root cause del QA stuck en 62.
+- **S131-B** (`graph.py` `agent_executor`): preamble retry extiende S97-C con `ARCHIVOS A SOBRESCRIBIR` — lista rutas canónicas del agente. LLM sabe exactamente qué sobrescribir.
+- **S131-C** (`code_postprocessor.py` `deduplicate_module_files`): elimina copias en rutas no canónicas. Llamado en `run_tests` antes de `sync_service_imports`.
+- **S131-D** (`code_postprocessor.py` `_build_service_alias_map`): 14 patrones ES/EN: `crear_→create_`, `obtener_→get_`, `eliminar_→delete_`, `actualizar_→update_`, etc.
+- **S131-E** (`graph.py` `_run_agent_with_tools`): escribe `debug_frontend_initial.txt`/`debug_frontend_retry.txt` cuando frontend entrega 0 artefactos.
+- **16 tests** (`test_s131.py`) — 16/16 PASS.
+
+## Próxima sesión: Ciclo de validación S131
+
+Lanzar ciclo "Implementar módulo de agendamiento de turnos médicos" y verificar si QA supera 75 (baseline S129). Objetivo: ≥80/100. Foco en "múltiples versiones no consolidadas" que no debe aparecer en QA issues.
 
 ## Última sesión (2026-05-12 — S023: OVD Desktop S126 — Telemetría T3+T4+T6)
 

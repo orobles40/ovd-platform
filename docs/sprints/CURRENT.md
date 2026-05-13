@@ -245,6 +245,38 @@ Reemplaza TUI Rust + Dashboard React por una sola app Flutter (web + macOS + Lin
 
 ---
 
+## S130 — ORM Naming + Custom Exceptions + frontend_required (2026-05-12)
+
+| Fix | Descripción | Estado |
+|-----|-------------|--------|
+| **S130-A** | `orm_class` en task del SDD → `_build_sdd_module_manifest` genera import exacto | ✅ |
+| **S130-A2** | `_build_architecture_contract_text` incluye `orm_contracts` en el contrato | ✅ |
+| **S130-B** | `_verify_orm_class_names` corre en todos los retry rounds (sin guard `retry_round==0`) | ✅ |
+| **S130-C** | `system_sdd.md` exige excepciones de dominio en EXPORTS | ✅ |
+| **S130-C2** | `backend_python.md` incluye patrón `TurnoNoEncontradoError` + `NUNCA HTTPException desde services` | ✅ |
+| **S130-D** | `system_analyzer.md` incluye ejemplo JSON con `frontend_required: true` | ✅ |
+
+Tests: 14/14 PASS. Ciclo `071ce4f4` — QA 62/100 (incompleto por re-deploy DO mid-cycle).
+Informe: `docs/INFORME_S130_CICLO_071ce4f4.md`
+
+---
+
+## S131 — Retry Overwrite Semántics + Deduplicar módulos + Alias ES/EN (2026-05-12)
+
+**Causa raíz abordada:** `preserve_nonempty` (S55-B) bloqueaba fixes válidos cuando el archivo corregido era < 50% del original → LLM escribía en rutas alternativas → QA penalizaba "múltiples versiones no consolidadas".
+
+| Fix | Descripción | Estado |
+|-----|-------------|--------|
+| **S131-A** | `_write_artifacts`: elimina protección `< 50%`. Solo protege output vacío (`strip() == 0`) | ✅ |
+| **S131-B** | Preamble retry incluye `ARCHIVOS A SOBRESCRIBIR` con rutas canónicas del agente | ✅ |
+| **S131-C** | `deduplicate_module_files(work_dir, sdd_tasks)` elimina copias en rutas no canónicas | ✅ |
+| **S131-D** | `_build_service_alias_map` extiende patrones: `crear_→create_`, `obtener_→get_`, etc. | ✅ |
+| **S131-E** | Diagnóstico: escribe `debug_frontend_*.txt` cuando frontend entrega 0 artefactos | ✅ |
+
+Tests: 16/16 PASS. Pendiente: ciclo de validación S131.
+
+---
+
 ## Fallos pre-existentes (no investigar salvo /fix-test)
 
 | Test | Causa | Prioridad |

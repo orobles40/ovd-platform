@@ -94,7 +94,12 @@ def test_write_artifacts_preserves_existing_when_new_content_empty(tmp_path):
 
 
 def test_write_artifacts_preserves_existing_when_new_content_truncated(tmp_path):
-    """S55-B: si nuevo contenido es <50% del original, preserva el existente."""
+    """S131-A: nuevo contenido no vacío sobreescribe siempre (protección <50% eliminada).
+
+    S55-B protegía con umbral <50%. S131-A lo eliminó porque bloqueaba fixes válidos
+    en retries (root cause del QA 62/100). Solo se preserva si el nuevo contenido es
+    vacío o solo whitespace.
+    """
     target = tmp_path / "src" / "imc" / "service.py"
     target.parent.mkdir(parents=True)
     original_content = (
@@ -102,20 +107,21 @@ def test_write_artifacts_preserves_existing_when_new_content_truncated(tmp_path)
         * 10
     )
     target.write_text(original_content)
-    original_size = target.stat().st_size
 
-    # Nuevo output con contenido muy pequeño (simulando truncación LLM)
-    small_content = "# truncado"
+    # Nuevo output con contenido pequeño pero válido — S131-A lo sobreescribe
+    # Usa nombre en inglés para evitar renombrado por postprocessor S72-B
+    small_content = "def calculate_bmi(weight, height):\n    return round(weight / height**2, 2)\n"
     output = f"```python:src/imc/service.py\n{small_content}\n```"
 
     result = graph._write_artifacts(
         output, str(tmp_path), "backend", preserve_nonempty=True
     )
 
-    assert target.read_text() == original_content, (
-        "El archivo existente fue sobreescrito con contenido truncado"
+    # S131-A: se sobreescribe (no se preserva el original aunque sea < 50%)
+    written = target.read_text()
+    assert "calculate_bmi" in written, (
+        "S131-A: nuevo contenido no vacío debe sobreescribir incluso si es < 50% del original"
     )
-    assert result[0]["size"] == original_size
 
 
 def test_write_artifacts_overwrites_when_new_content_larger(tmp_path):

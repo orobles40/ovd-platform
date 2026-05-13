@@ -1078,14 +1078,48 @@ def _extract_defined_functions(filepath: str) -> set[str]:
         return set()
 
 
+_ES_EN_VERB_PATTERNS: list[tuple[str, str]] = [
+    ("crear_", "create_"),
+    ("obtener_", "get_"),
+    ("eliminar_", "delete_"),
+    ("actualizar_", "update_"),
+    ("listar_", "list_"),
+    ("buscar_", "search_"),
+    ("verificar_", "verify_"),
+    ("registrar_", "register_"),
+    ("calcular_", "calculate_"),
+    ("guardar_", "save_"),
+    ("modificar_", "update_"),
+    ("agregar_", "add_"),
+]
+
+_EN_ES_VERB_PATTERNS: list[tuple[str, str]] = [
+    (en, es) for es, en in _ES_EN_VERB_PATTERNS
+]
+
+
 def _build_service_alias_map(defined_fns: set[str]) -> dict[str, str]:
     """Construye mapeo alias→nombre_real basado en patrones de naming cross-language.
 
-    El agente usa español para services.py (deactivate_X, get_Xs) e inglés/REST
-    para router.py y tests (delete_X, list_Xs). Este mapa corrige las divergencias.
+    El agente puede usar español (crear_turno) o inglés (create_turno) en services.py.
+    Router y tests generalmente usan inglés. El mapa cubre ambas direcciones.
     """
     alias_map: dict[str, str] = {}
     for fn in defined_fns:
+        # S131-D: patrones español→inglés (services usa ES, router usa EN)
+        for es_prefix, en_prefix in _ES_EN_VERB_PATTERNS:
+            if fn.startswith(es_prefix):
+                entity = fn[len(es_prefix) :]
+                alias_map[f"{en_prefix}{entity}"] = fn
+                break
+        # S131-D: patrones inglés→español (services usa EN, router usa EN diferente)
+        for en_prefix, es_prefix in _EN_ES_VERB_PATTERNS:
+            if fn.startswith(en_prefix):
+                entity = fn[len(en_prefix) :]
+                alias_map[f"{es_prefix}{entity}"] = fn
+                break
+
+        # Patrones pre-existentes
         if fn.startswith("deactivate_"):
             entity = fn[len("deactivate_") :]
             for alt in (f"delete_{entity}", f"disable_{entity}", f"remove_{entity}"):
@@ -1096,8 +1130,6 @@ def _build_service_alias_map(defined_fns: set[str]) -> dict[str, str]:
             rest = fn[len("calcular_") :]
             for alt in (f"get_{rest}", f"calculate_{rest}", "get_contract_total"):
                 alias_map[alt] = fn
-        if fn.startswith("create_") and not fn.startswith("create_access"):
-            pass  # create_ es generalmente consistente
     return alias_map
 
 
@@ -1257,6 +1289,86 @@ def _fix_sqlalchemy_date_in_pydantic_schemas(content: str, rel_path: str) -> str
         types_replaced,
     )
     return new_content
+
+
+# ---------------------------------------------------------------------------
+# S131-C — Deduplicar archivos de módulo: elimina copias en rutas incorrectas
+# ---------------------------------------------------------------------------
+
+
+def deduplicate_module_files(work_dir: str, sdd_tasks: list[dict]) -> list[str]:
+    """S131-C: elimina copias de archivos de módulo en rutas no canónicas.
+
+    Cuando el LLM hace retry, puede escribir el mismo archivo en una ruta
+    diferente (p.ej. src/services.py + src/turnos/services.py). El SDD define
+    las rutas canónicas; las copias en otras rutas se eliminan si la canónica
+    tiene contenido.
+
+    Retorna lista de archivos eliminados (para logging).
+    """
+    import pathlib
+
+    removed: list[str] = []
+    base = pathlib.Path(work_dir)
+    if not base.exists() or not sdd_tasks:
+        return removed
+
+    # Construir set de rutas canónicas (relativas al work_dir)
+    canonical_rel: set[str] = set()
+    for task in sdd_tasks:
+        fpath = task.get("file") or task.get("output_file") or ""
+        if fpath:
+            canonical_rel.add(fpath.lstrip("/"))
+
+    if not canonical_rel:
+        return removed
+
+    # Agrupar por basename los archivos .py presentes en el work_dir
+    basename_to_paths: dict[str, list[pathlib.Path]] = {}
+    for py in base.rglob("*.py"):
+        rel = str(py.relative_to(base)).replace("\\", "/")
+        if "test" in py.name or ".venv" in rel or "__pycache__" in rel:
+            continue
+        bname = py.name
+        basename_to_paths.setdefault(bname, []).append(py)
+
+    for bname, paths in basename_to_paths.items():
+        if len(paths) < 2:
+            continue
+        # Encontrar cuáles de estos paths son canónicos según el SDD
+        canonical_paths = [
+            p
+            for p in paths
+            if str(p.relative_to(base)).replace("\\", "/") in canonical_rel
+        ]
+        if not canonical_paths:
+            continue
+        canonical_path = canonical_paths[0]
+        try:
+            canonical_size = canonical_path.stat().st_size
+        except OSError:
+            continue
+        if canonical_size == 0:
+            continue  # canónico vacío — no eliminar ninguno
+
+        for stray in paths:
+            if stray == canonical_path:
+                continue
+            stray_rel = str(stray.relative_to(base)).replace("\\", "/")
+            try:
+                stray.unlink()
+                removed.append(
+                    f"S131-C: eliminado {stray_rel} (copia fuera de ruta canónica {str(canonical_path.relative_to(base)).replace(chr(92), '/')})"
+                )
+                log.warning(
+                    "[S131-C] eliminado %s (canónico: %s)",
+                    stray_rel,
+                    canonical_path.relative_to(base),
+                )
+            except OSError as exc:
+                log.warning("[S131-C] no se pudo eliminar %s: %s", stray_rel, exc)
+
+    return removed
 
 
 # ---------------------------------------------------------------------------

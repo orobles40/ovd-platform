@@ -4094,20 +4094,34 @@ async def _agent_executor_impl(state: OVDState) -> dict:
                     i + 1,
                     len(agent_tasks),
                 )
-            # S97-C: en retry de QA, añadir preamble Superpowers al inicio del HumanMessage
+            # S97-C + S131-B: en retry de QA, añadir preamble con archivos objetivo
             _qa_retry_round = state.get("qa_retry_count", 0)
             if _qa_retry_round > 0 and retry_feedback:
+                # S131-B: construir lista de archivos que este agente debe sobrescribir
+                _agent_file_targets: list[str] = []
+                for _at in agent_tasks:
+                    _f = _at.get("file") or _at.get("output_file") or ""
+                    if _f:
+                        _agent_file_targets.append(_f.lstrip("/"))
+                _files_block = ""
+                if _agent_file_targets:
+                    _files_block = (
+                        "ARCHIVOS A SOBRESCRIBIR (usa exactamente estas rutas — no crees copias en rutas distintas):\n"
+                        + "\n".join(f"  - {_fp}" for _fp in _agent_file_targets)
+                        + "\n\n"
+                    )
                 _retry_preamble = (
-                    "⚠️ REINTENTO DE CORRECCIÓN (ronda {round}) — IMPORTANTE:\n"
+                    "REINTENTO DE CORRECCIÓN (ronda {round}) — IMPORTANTE:\n"
                     "Lee el feedback QA al FINAL de este mensaje ANTES de generar código.\n"
-                    "No regeneres archivos que no tienen issues en el feedback.\n"
+                    "{files_block}"
                     "Aplica correcciones quirúrgicas: cambia SOLO lo que el feedback indica.\n\n"
-                ).format(round=_qa_retry_round)
+                ).format(round=_qa_retry_round, files_block=_files_block)
                 task_sdd_content = _retry_preamble + task_sdd_content
                 log.info(
-                    "agent_executor[%s]: S97-C preamble Superpowers inyectado (ronda %d)",
+                    "agent_executor[%s]: S97-C+S131-B preamble inyectado (ronda %d, %d archivo(s) objetivo)",
                     agent_name,
                     _qa_retry_round,
+                    len(_agent_file_targets),
                 )
             # S51-A: tarea de tests → instrucción de prioridad máxima
             _task_desc_lower = (
@@ -4899,6 +4913,28 @@ async def _run_agent_with_tools(
         agent_name,
         len(artifacts),
     )
+
+    # S131-E: diagnóstico cuando frontend entrega 0 artefactos
+    if agent_name == "frontend" and not artifacts and directory:
+        _is_retry = bool(retry_feedback)
+        _debug_label = "retry" if _is_retry else "initial"
+        _debug_path = os.path.join(directory, f"debug_frontend_{_debug_label}.txt")
+        try:
+            import pathlib as _pl
+
+            _pl.Path(_debug_path).write_text(
+                f"=== S131-E: frontend 0 artifacts ({_debug_label}) ===\n"
+                f"len(final_output)={len(final_output)}\n"
+                f"output[:3000]:\n{final_output[:3000]}\n",
+                encoding="utf-8",
+            )
+            log.warning(
+                "S131-E: frontend agente entregó 0 artefactos (%s) — diagnóstico en %s",
+                _debug_label,
+                _debug_path,
+            )
+        except Exception:
+            pass
 
     uncertainties = _extract_uncertainties(final_output, agent_name)
 
@@ -6980,6 +7016,19 @@ async def run_tests(state: OVDState) -> dict:
                 _renamed_services,
             )
 
+    # S131-C: eliminar copias de módulos en rutas no canónicas antes de correr tests
+    if runner == "pytest" and work_dir:
+        from code_postprocessor import deduplicate_module_files
+
+        _sdd_tasks_131 = state.get("sdd", {}).get("tasks", [])
+        _dedup_removed = deduplicate_module_files(work_dir, _sdd_tasks_131)
+        if _dedup_removed:
+            log.warning(
+                "run_tests: S131-C — %d archivo(s) duplicado(s) eliminado(s): %s",
+                len(_dedup_removed),
+                _dedup_removed[:10],
+            )
+
     # S107-P3: sincronizar imports service→router→tests post-fan-out
     if runner == "pytest" and work_dir:
         from code_postprocessor import sync_service_imports
@@ -8485,14 +8534,17 @@ def _write_artifacts(
             target.parent.mkdir(parents=True, exist_ok=True)
             content_bytes = content.encode("utf-8")
 
-            # S55-B: guard de no-sobreescritura en rondas de retry
+            # S55-B: guard de no-sobreescritura — S131-A: solo protege output VACÍO.
+            # La protección por tamaño (<50%) fue eliminada: bloqueaba fixes válidos
+            # cuando el LLM generaba versiones corregidas más compactas, causando que
+            # el archivo roto se preservara y el work_dir acumulara versiones duplicadas.
             if preserve_nonempty and target.exists():
                 existing_size = target.stat().st_size
                 if existing_size > 0:
                     new_size = len(content_bytes)
-                    if new_size == 0:
+                    if new_size == 0 or len(content_bytes.strip()) == 0:
                         log.warning(
-                            "_write_artifacts[%s]: S55-B — '%s' ya existe (%d bytes), "
+                            "_write_artifacts[%s]: S55-B/S131-A — '%s' ya existe (%d bytes), "
                             "nuevo contenido VACÍO — preservando archivo existente",
                             agent,
                             rel_path,
@@ -8502,22 +8554,9 @@ def _write_artifacts(
                             {"path": rel_path, "size": existing_size, "lang": lang_name}
                         )
                         continue
-                    elif new_size < existing_size // 2:
-                        log.warning(
-                            "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
-                            "nuevo contenido (%d bytes) es <50%% del original — preservando",
-                            agent,
-                            rel_path,
-                            existing_size,
-                            new_size,
-                        )
-                        written.append(
-                            {"path": rel_path, "size": existing_size, "lang": lang_name}
-                        )
-                        continue
                     else:
-                        log.warning(
-                            "_write_artifacts[%s]: S55-B — '%s' existente (%d bytes) → "
+                        log.info(
+                            "_write_artifacts[%s]: S131-A — '%s' existente (%d bytes) → "
                             "sobreescribiendo con nuevo contenido (%d bytes)",
                             agent,
                             rel_path,
