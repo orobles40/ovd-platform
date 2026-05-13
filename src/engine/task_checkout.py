@@ -94,16 +94,27 @@ def list_active_sessions(org_id: str | None = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _threshold_for_session(meta: dict, default: int = _STALE_THRESHOLD_MINUTES) -> int:
+    """S132-H1: retorna el umbral de stale en minutos según la complejidad del ciclo."""
+    complexity = meta.get("complexity", "")
+    _s = get_settings()
+    if complexity == "critical":
+        return _s.ovd_stale_session_minutes_critical or default
+    if complexity in ("high", "medium"):
+        return _s.ovd_stale_session_minutes_high or default
+    return default
+
+
 def detect_stale_sessions(
     threshold_minutes: int = _STALE_THRESHOLD_MINUTES,
 ) -> list[dict]:
     """
     Revisa _active_sessions y marca como stale las que superan el umbral.
+    S132-H1: el umbral es adaptativo según la complejidad del ciclo.
     Retorna la lista de sesiones colgadas detectadas en esta pasada.
     Llamar periódicamente desde el watcher de background.
     """
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=threshold_minutes)
     detected = []
 
     for tid, meta in list(_active_sessions.items()):
@@ -113,18 +124,24 @@ def detect_stale_sessions(
         except (ValueError, TypeError):
             continue
 
+        # S132-H1: umbral adaptativo por complejidad
+        effective_threshold = _threshold_for_session(meta, threshold_minutes)
+        cutoff = now - timedelta(minutes=effective_threshold)
+
         if started < cutoff and tid not in _stale_sessions:
             stale_entry = {
                 **meta,
                 "detected_at": now.isoformat(),
                 "elapsed_minutes": int((now - started).total_seconds() / 60),
-                "threshold_minutes": threshold_minutes,
+                "threshold_minutes": effective_threshold,
             }
             _stale_sessions[tid] = stale_entry
             log.warning(
-                "heartbeat: sesión colgada detectada — thread=%s elapsed=%dmin org=%s fr=%r",
+                "heartbeat: sesión colgada detectada — thread=%s elapsed=%dmin (umbral=%dmin complexity=%s) org=%s fr=%r",
                 tid,
                 stale_entry["elapsed_minutes"],
+                effective_threshold,
+                meta.get("complexity", "?"),
                 meta.get("org_id", ""),
                 (meta.get("feature_request") or "")[:60],
             )

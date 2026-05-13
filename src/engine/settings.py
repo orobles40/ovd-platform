@@ -97,6 +97,9 @@ class OVDSettings(BaseSettings):
     ovd_sse_stream_timeout_secs: float = 900.0
     ovd_heartbeat_timeout_secs: int = 0
     ovd_stale_session_minutes: int = 30
+    # S132-H1: umbrales por complejidad (minutos). 0 = usar ovd_stale_session_minutes
+    ovd_stale_session_minutes_high: int = 60
+    ovd_stale_session_minutes_critical: int = 90
     ovd_watcher_interval_secs: int = 60
 
     # ── Ciclo y calidad ────────────────────────────────────────────────────────

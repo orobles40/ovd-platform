@@ -6866,6 +6866,81 @@ def _ensure_python_infrastructure(work_dir: str) -> list[str]:
     return created
 
 
+def _s132_ensure_router_registration(work_dir: str) -> list[str]:
+    """S132-H2: garantiza que main.py incluye include_router para cada router.py generado.
+
+    Escanea src/*/router.py y verifica que main.py tenga include_router para cada uno.
+    Si falta alguno, lo inyecta al final del bloque de routers existente.
+    Retorna lista de prefijos de módulo que fueron inyectados.
+    """
+    import pathlib as _pl
+    import re as _re2
+
+    base = _pl.Path(work_dir)
+    src_dir = base / "src"
+    if not src_dir.exists():
+        return []
+
+    # Localizar main.py
+    main_candidates = [base / "src" / "main.py", base / "main.py"]
+    main_path = next((p for p in main_candidates if p.exists()), None)
+    if not main_path:
+        return []
+
+    main_text = main_path.read_text(encoding="utf-8", errors="replace")
+
+    # No aplica si no es FastAPI
+    if "FastAPI" not in main_text and "include_router" not in main_text:
+        return []
+
+    # Descubrir router.py en src/*/router.py
+    router_files = list(src_dir.glob("*/router.py"))
+    if not router_files:
+        return []
+
+    injected: list[str] = []
+    for rf in sorted(router_files):
+        module_name = rf.parent.name  # e.g. "pacientes", "turnos"
+        # Verificar si ya está incluido (cualquier variante de include_router ... module_name)
+        if module_name in main_text and "include_router" in main_text:
+            # Comprobar que hay al menos una línea con ambos
+            has_include = any(
+                module_name in line and "include_router" in line
+                for line in main_text.splitlines()
+            )
+            if has_include:
+                continue
+
+        # Inferir alias para evitar colisiones: pacientes_router, turnos_router
+        alias = f"{module_name}_router"
+        import_line = f"from src.{module_name}.router import router as {alias}"
+        include_line = f"app.include_router({alias})"
+
+        # Agregar import si no existe
+        if (
+            f"from src.{module_name}.router" not in main_text
+            and f"from .{module_name}.router" not in main_text
+        ):
+            # Insertar import tras el último import existente
+            lines = main_text.splitlines(keepends=True)
+            last_import_idx = 0
+            for i, ln in enumerate(lines):
+                if ln.startswith(("import ", "from ")):
+                    last_import_idx = i
+            lines.insert(last_import_idx + 1, import_line + "\n")
+            main_text = "".join(lines)
+
+        # Agregar include_router al final
+        if include_line not in main_text:
+            main_text = main_text.rstrip() + f"\n{include_line}\n"
+            injected.append(module_name)
+
+    if injected:
+        main_path.write_text(main_text, encoding="utf-8")
+
+    return injected
+
+
 # ---------------------------------------------------------------------------
 # S22 — Nodo run_tests: ejecución real de tests generados
 # ---------------------------------------------------------------------------
@@ -7047,6 +7122,16 @@ async def run_tests(state: OVDState) -> dict:
         if _infra_created:
             log.warning(
                 "run_tests: S65-E infraestructura mínima creada: %s", _infra_created
+            )
+
+    # S132-H2: garantizar que main.py registra todos los routers generados
+    if runner == "pytest" and work_dir:
+        _missing_routers = _s132_ensure_router_registration(work_dir)
+        if _missing_routers:
+            log.warning(
+                "run_tests: S132-H2 — main.py parcheado con %d router(s) faltante(s): %s",
+                len(_missing_routers),
+                _missing_routers,
             )
 
     # S27-A / S43-B: inyectar conftest.py solo para proyectos Python (pytest).
@@ -8530,6 +8615,14 @@ def _write_artifacts(
             )
             continue
 
+        # S132-H3: frontend no escribe archivos Python
+        if agent == "frontend" and rel_path.endswith(".py"):
+            log.warning(
+                "_write_artifacts[frontend]: S132-H3 — '%s' es .py, frontend no escribe Python. Ignorado.",
+                rel_path,
+            )
+            continue
+
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             content_bytes = content.encode("utf-8")
@@ -8578,6 +8671,8 @@ def _write_artifacts(
                     content, rel_path, oracle_involved=oracle_involved
                 )
 
+            # S132-H5: recalcular content_bytes post-postprocessing para verificación correcta
+            content_bytes = content.encode("utf-8")
             target.write_text(content, encoding="utf-8")
             # S54-A: verificación post-write — confirmar que el archivo existe en disco
             if not target.exists():

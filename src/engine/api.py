@@ -823,7 +823,7 @@ async def start_session(
             async with await _psycopg47.AsyncConnection.connect(
                 _db_url_for_cycle
             ) as _c47:
-                await _c47.execute("SET app.current_org_id = %s", (body.org_id,))
+                # S132-H6: SET no acepta parámetros en psycopg3 y doadmin bypass RLS — omitido
                 await _c47.execute(
                     """INSERT INTO ovd_cycles
                          (id, org_id, project_id, session_id, thread_id,
@@ -915,6 +915,10 @@ async def _run_graph_background(thread_id: str, config: dict) -> None:
                             "project_id": v.get("project_id", ""),
                             "feature_request": v.get("feature_request", ""),
                             "session_id": v.get("session_id", ""),
+                            # S132-H1: complexity para umbral adaptativo de heartbeat
+                            "complexity": (v.get("fr_analysis") or {}).get(
+                                "complexity", ""
+                            ),
                         }
                 except Exception:
                     pass
@@ -1061,20 +1065,15 @@ async def _ensure_cycle_registered(thread_id: str, config: dict) -> None:
             return
         import psycopg as _psycopg47b
 
-        # Leer checkpoint antes de abrir conexión (org_id necesario para RLS SET)
         _snap_pre: object = None
-        _rls_org_id = ""
         if _graph:
             try:
                 _snap_pre = await _graph.aget_state(config)
-                if _snap_pre and _snap_pre.values:  # type: ignore[union-attr]
-                    _rls_org_id = _snap_pre.values.get("org_id", "")  # type: ignore[union-attr]
             except Exception:
                 pass
 
         async with await _psycopg47b.AsyncConnection.connect(_db_url) as _conn:
-            if _rls_org_id:
-                await _conn.execute("SET app.current_org_id = %s", (_rls_org_id,))
+            # S132-H6: SET no acepta parámetros en psycopg3 y doadmin bypass RLS — omitido
             cur = await _conn.execute(
                 "SELECT status FROM ovd_cycles WHERE thread_id = %s", (thread_id,)
             )
