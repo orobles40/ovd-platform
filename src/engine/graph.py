@@ -5378,17 +5378,34 @@ async def security_audit(state: OVDState) -> dict:
                 res = _parse_security_fallback(raw_text)
         except Exception as exc:
             log.warning(
-                "security_audit: invoke_structured falló (%s) — usando fallback", exc
+                "security_audit: invoke_structured falló (%s) — usando streaming (S135-A)",
+                exc,
             )
+            # S135-A: usar streaming en lugar de ainvoke para compatibilidad con DO
+            # GenAI Platform — el endpoint non-streaming tiene timeout estricto con
+            # workspaces grandes (≥30 archivos). El streaming no tiene ese límite.
             try:
-                raw_resp = await llm.ainvoke(messages)
-                raw_text = (
-                    raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)
+                _schema_hint_s135 = _json.dumps(
+                    SecurityAuditOutput.model_json_schema(), indent=2
                 )
-                res = _parse_security_fallback(raw_text)
+                _hint_s135 = HumanMessage(
+                    content=(
+                        "IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido "
+                        f"que cumpla exactamente este schema:\n```json\n{_schema_hint_s135}\n```\n"
+                        "Sin texto adicional, sin markdown, sin explicaciones."
+                    )
+                )
+                _stream_chunks: list[str] = []
+                async for _chunk in llm.astream(messages + [_hint_s135]):
+                    if hasattr(_chunk, "content") and _chunk.content:
+                        _stream_chunks.append(_chunk.content)
+                res = _parse_security_fallback("".join(_stream_chunks))
+                log.info(
+                    "security_audit: S135-A streaming completado — score=%d", res.score
+                )
             except Exception as exc2:
                 log.error(
-                    "security_audit: fallback también falló (%s) — resultado neutro",
+                    "security_audit: streaming también falló (%s) — resultado neutro",
                     exc2,
                 )
                 res = SecurityAuditOutput(
